@@ -332,6 +332,9 @@ type Server struct {
 	// TODO (jmorganca): make this n_batch
 	batchSize int
 
+	// whether flash attention is enabled for this model
+	flashAttention bool
+
 	// Simple counter used only for trace logging batches
 	batchID int
 
@@ -1045,7 +1048,19 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 		mmCtx := s.model.Backend().NewContext()
 		defer mmCtx.Close()
 
-		img := image.NewGray(image.Rect(0, 0, 2048, 2048))
+		// Determine max image size for vision reservation.
+		// Without flash attention (e.g. K80 compute 3.7), large images produce
+		// impractical attention matrices in the vision encoder (e.g. 1540px mistral3
+		// = 12,100 patches = 8.7 GiB). Default to 512px without flash attention.
+		maxPixels := int(envconfig.VisionMaxPixels())
+		if maxPixels == 0 {
+			if s.flashAttention {
+				maxPixels = 2048
+			} else {
+				maxPixels = 512
+			}
+		}
+		img := image.NewGray(image.Rect(0, 0, maxPixels, maxPixels))
 		var buf bytes.Buffer
 		bmp.Encode(&buf, img)
 
@@ -1272,6 +1287,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.batchSize = req.BatchSize
+		s.flashAttention = req.FlashAttention
 
 		err := s.allocModel(s.modelPath, params, req.LoraPath, req.Parallel, req.KvCacheType, req.KvSize, req.MultiUserCache)
 		if err != nil {
