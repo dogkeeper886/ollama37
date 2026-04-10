@@ -2,6 +2,8 @@
  * TypeScript interfaces for the ollama37 test framework v2.
  */
 
+import type { MemoryProfile } from './log-parser.js';
+
 // ============================================
 // Test Case Definitions (from YAML)
 // ============================================
@@ -167,6 +169,8 @@ export interface TestReport {
   simpleJudge: Judgment;
   /** LLM judge verdict */
   llmJudge: Judgment;
+  /** Parsed memory profile from container logs (if available) */
+  memoryProfile?: MemoryProfile;
 }
 
 /**

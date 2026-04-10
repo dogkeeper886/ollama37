@@ -6,6 +6,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { hostname } from 'os';
 import path from 'path';
 import { TestResult, TestReport, TestSummary, Judgment, StepReportEntry } from '../types.js';
+import { parseMemoryProfile } from '../log-parser.js';
 
 export class JsonReporter {
   private outputDir: string;
@@ -61,6 +62,8 @@ export class JsonReporter {
         pass: step.exitCode === 0,
       }));
 
+      const memoryProfile = parseMemoryProfile(result.logs) || undefined;
+
       return {
         testId: result.testCase.id,
         name: result.testCase.name,
@@ -74,6 +77,7 @@ export class JsonReporter {
         logFile: result.logFile,
         simpleJudge: simple,
         llmJudge: llm,
+        memoryProfile,
       };
     });
 
@@ -141,6 +145,7 @@ export class JsonReporter {
         steps: r.steps,
         simpleJudge: r.simpleJudge,
         llmJudge: r.llmJudge,
+        memoryProfile: r.memoryProfile,
       })),
     };
     console.log(JSON.stringify(output, null, 2));
