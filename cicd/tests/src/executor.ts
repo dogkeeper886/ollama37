@@ -174,6 +174,16 @@ export class TestExecutor {
 
       stepResults.push(result);
 
+      // Reconnect log collector if step signals container restart
+      if (step.reconnectLogs && this.logCollector) {
+        try {
+          await this.logCollector.reconnect();
+          this.progress(`    [LOG] Reconnected log collector`);
+        } catch (err) {
+          this.progress(`    [WARN] Failed to reconnect log collector: ${err}`);
+        }
+      }
+
       // Log step result
       const status = result.exitCode === 0 ? '[PASS]' : '[FAIL]';
       const duration = `${(result.duration / 1000).toFixed(1)}s`;

@@ -12,6 +12,7 @@ steps:
 
   - name: Start container
     command: cd ${OLLAMA37_ROOT}/docker && docker compose up -d
+    reconnectLogs: true
     rejectPatterns:
       - "error"
       - "Error"

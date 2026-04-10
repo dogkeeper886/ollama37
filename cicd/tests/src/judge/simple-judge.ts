@@ -59,10 +59,12 @@ export class SimpleJudge {
       }
     }
 
-    // Check 4: No CUDA errors in logs
-    const combinedLogs = result.logs + '\n' + result.steps.map((s) => s.stdout + s.stderr).join('\n');
+    // Check 4: No CUDA errors in step output
+    // Only check step stdout/stderr, not container logs — container logs may contain
+    // expected cudaMalloc failures from Ollama's iterative memory backoff process.
+    const stepOutput = result.steps.map((s) => s.stdout + s.stderr).join('\n');
     for (const pattern of CUDA_ERROR_PATTERNS) {
-      if (pattern.test(combinedLogs)) {
+      if (pattern.test(stepOutput)) {
         pass = false;
         reasons.push(`CUDA error pattern detected: ${pattern.source}`);
         break; // Only report first CUDA error

@@ -27,6 +27,8 @@ import path from 'path';
 interface TestMarkerState {
   startWritten: boolean;
   endWritten: boolean;
+  startTime: string;
+  endTime: string;
 }
 
 export class LogCollector {
@@ -155,6 +157,62 @@ export class LogCollector {
   }
 
   /**
+   * Reconnect the log stream after a container restart.
+   * Kills the old process and spawns a new one, appending to the same session file.
+   */
+  async reconnect(): Promise<void> {
+    if (this.process) {
+      this.process.kill('SIGTERM');
+      this.process = null;
+      this.isRunning = false;
+    }
+
+    // Flush remaining buffer
+    if (this.lineBuffer) {
+      this.queueWrite(this.lineBuffer + '\n');
+      this.lineBuffer = '';
+    }
+
+    return new Promise((resolve, reject) => {
+      this.process = spawn(
+        'docker',
+        ['compose', 'logs', '--follow', '--timestamps', '--since', '1s'],
+        {
+          cwd: this.dockerComposeDir,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+
+      this.isRunning = true;
+
+      this.process.stdout?.on('data', (data: Buffer) => {
+        this.processLogData(data, false);
+      });
+
+      this.process.stderr?.on('data', (data: Buffer) => {
+        this.processLogData(data, true);
+      });
+
+      this.process.on('error', (err) => {
+        this.isRunning = false;
+        reject(err);
+      });
+
+      this.process.on('close', () => {
+        this.isRunning = false;
+      });
+
+      setTimeout(() => {
+        if (this.isRunning) {
+          resolve();
+        } else {
+          reject(new Error('Log collector failed to reconnect'));
+        }
+      }, 500);
+    });
+  }
+
+  /**
    * Mark the start of a test.
    */
   markTestStart(testId: string): void {
@@ -169,7 +227,7 @@ export class LogCollector {
     }
 
     const timestamp = new Date().toISOString();
-    this.testMarkers.set(testId, { startWritten: true, endWritten: false });
+    this.testMarkers.set(testId, { startWritten: true, endWritten: false, startTime: timestamp, endTime: '' });
     this.queueWrite(`===TEST:${testId}:START:${timestamp}===\n`);
   }
 
@@ -181,6 +239,7 @@ export class LogCollector {
     const state = this.testMarkers.get(testId);
     if (state) {
       state.endWritten = true;
+      state.endTime = timestamp;
     }
     this.queueWrite(`===TEST:${testId}:END:${timestamp}===\n`);
   }
@@ -225,9 +284,26 @@ export class LogCollector {
       });
 
       // Strip ANSI codes to reduce log size
-      const cleaned = this.stripAnsi(result);
+      let cleaned = this.stripAnsi(result);
+
+      // Fallback: if session stream had no data (e.g. container restarted),
+      // query docker logs directly using the stored timestamps.
+      if (cleaned.trim().length === 0 && markerState.startTime) {
+        cleaned = this.fallbackDockerLogs(markerState.startTime, markerState.endTime);
+      }
+
       writeFileSync(outputPath, cleaned);
     } catch {
+      // Even on sed failure, try fallback
+      try {
+        if (markerState.startTime) {
+          const fallback = this.fallbackDockerLogs(markerState.startTime, markerState.endTime);
+          writeFileSync(outputPath, fallback);
+          return outputPath;
+        }
+      } catch {
+        // Ignore fallback errors
+      }
       writeFileSync(outputPath, '');
     }
 
@@ -335,6 +411,22 @@ export class LogCollector {
           // Ignore fsync errors
         }
       }
+    }
+  }
+
+  private fallbackDockerLogs(sinceTime: string, untilTime: string): string {
+    try {
+      const args = ['logs', 'ollama37', '--since', sinceTime];
+      if (untilTime) {
+        args.push('--until', untilTime);
+      }
+      const result = execSync(`docker ${args.join(' ')}`, {
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return this.stripAnsi(result);
+    } catch {
+      return '';
     }
   }
 

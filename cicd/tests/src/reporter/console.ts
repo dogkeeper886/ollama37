@@ -4,6 +4,7 @@
 
 import chalk from 'chalk';
 import { TestReport, TestSummary } from '../types.js';
+import { formatMemoryProfile } from '../log-parser.js';
 
 export class ConsoleReporter {
   /**
@@ -45,6 +46,13 @@ export class ConsoleReporter {
       console.log(`  LLM Judge: ${llmStatus} - ${report.llmJudge.reason}`);
       if (!report.llmJudge.pass && report.llmJudge.evidence) {
         console.log(`  ${chalk.yellow('Evidence:')} ${report.llmJudge.evidence}`);
+      }
+
+      if (report.memoryProfile) {
+        console.log(chalk.dim('  Memory:'));
+        for (const line of formatMemoryProfile(report.memoryProfile)) {
+          console.log(chalk.dim(`    ${line}`));
+        }
       }
 
       if (report.logFile) {
