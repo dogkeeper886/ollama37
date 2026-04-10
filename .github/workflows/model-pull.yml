@@ -4,8 +4,6 @@ on:
   schedule:
     # Saturday — pull remaining models
     - cron: '0 1 * * 6'
-    - cron: '0 2 * * 6'
-    - cron: '0 3 * * 6'   # catch-up for any missed pulls
   workflow_dispatch:
     inputs:
       model:
@@ -25,14 +23,7 @@ jobs:
           if [ -n "${{ inputs.model }}" ]; then
             echo "model=${{ inputs.model }}" >> $GITHUB_OUTPUT
           else
-            # Map schedule time (UTC) to model
-            HOUR=$(date -u +%H)
-            case "$HOUR" in
-              01) MODEL="deepseek-r1:32b" ;;
-              02) MODEL="gemma4:e4b" ;;
-              03) MODEL="deepseek-r1:32b gemma4:e4b" ;;  # catch-up
-              *)  MODEL="" ;;
-            esac
+            MODEL="deepseek-r1:32b"
             echo "model=$MODEL" >> $GITHUB_OUTPUT
           fi
 
