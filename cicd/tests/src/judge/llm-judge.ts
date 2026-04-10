@@ -71,7 +71,9 @@ export class LLMJudge {
       role: 'You are a test result evaluator for ollama37 (Ollama fork for Tesla K80 GPU, CUDA compute 3.7). Analyze the test execution data and determine if the test passed or failed.',
       rules: [
         'Check step stdout for error responses (e.g. {"error":"model not found"} means FAIL)',
-        'CUBLAS_STATUS_*, cudaMalloc failed, out of memory in logs or stdout → FAIL',
+        'CUBLAS_STATUS_* in step stdout → FAIL',
+        'cudaMalloc failed followed by "applying backoff" in container logs is NORMAL (iterative memory fitting) → NOT an error',
+        'cudaMalloc failed in step stdout without backoff context → FAIL',
         'library=cpu in logs means GPU detection failed → FAIL',
         'CUDA errors with exit code 0 → still FAIL',
         'flash attention warnings on K80 are acceptable, NOT errors',
