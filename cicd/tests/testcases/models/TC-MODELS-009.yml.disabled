@@ -1,0 +1,49 @@
+id: TC-MODELS-009
+name: deepseek-r1:32b Inference
+suite: models
+priority: 4
+timeout: 1200000
+dependencies: []
+testlink_id: ollama37-30
+issue: 55
+goal: "Validate deepseek-r1:32b runs on K80 compute 3.7 (multi-GPU)"
+
+steps:
+  - name: Test inference
+    command: |
+      curl -s http://localhost:11434/api/generate \
+        -d '{"model":"deepseek-r1:32b","prompt":"What is 2+2? Answer briefly.","stream":false}' \
+        | head -c 2000
+    expectPatterns:
+      - "response"
+    rejectPatterns:
+      - "CUBLAS_STATUS"
+      - "CUDA error"
+
+  - name: Check GPU memory
+    command: docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
+    expectPatterns:
+      - "[0-9]+ MiB"
+
+  - name: Unload model
+    command: |
+      curl -s http://localhost:11434/api/generate \
+        -d '{"model":"deepseek-r1:32b","keep_alive":0}'
+      echo "Model unloaded"
+    expectPatterns:
+      - "Model unloaded"
+
+criteria: |
+  Validate deepseek-r1:32b (~20GB VRAM, multi-GPU layer splitting) runs on K80 (compute 3.7).
+  Model exceeds single K80 GPU (12GB), requires splitting across 2x K80 GPUs.
+  Prerequisite: Model must be pre-pulled before running this test.
+
+  Expected:
+  - API returns JSON with "response" field containing coherent text
+  - GPU memory is allocated on multiple GPUs (visible in nvidia-smi)
+  - No CUDA/CUBLAS errors in output
+  - Model unloads successfully
+
+  Acceptable warnings (NOT errors):
+  - "flash attention enabled but not supported by gpu" - K80 does not support
+    flash attention, this is a normal fallback warning, NOT an error
