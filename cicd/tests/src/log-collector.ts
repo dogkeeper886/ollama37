@@ -27,6 +27,8 @@ import path from 'path';
 interface TestMarkerState {
   startWritten: boolean;
   endWritten: boolean;
+  startTime: string;
+  endTime: string;
 }
 
 export class LogCollector {
@@ -169,7 +171,7 @@ export class LogCollector {
     }
 
     const timestamp = new Date().toISOString();
-    this.testMarkers.set(testId, { startWritten: true, endWritten: false });
+    this.testMarkers.set(testId, { startWritten: true, endWritten: false, startTime: timestamp, endTime: '' });
     this.queueWrite(`===TEST:${testId}:START:${timestamp}===\n`);
   }
 
@@ -181,6 +183,7 @@ export class LogCollector {
     const state = this.testMarkers.get(testId);
     if (state) {
       state.endWritten = true;
+      state.endTime = timestamp;
     }
     this.queueWrite(`===TEST:${testId}:END:${timestamp}===\n`);
   }
@@ -225,9 +228,26 @@ export class LogCollector {
       });
 
       // Strip ANSI codes to reduce log size
-      const cleaned = this.stripAnsi(result);
+      let cleaned = this.stripAnsi(result);
+
+      // Fallback: if session stream had no data (e.g. container restarted),
+      // query docker logs directly using the stored timestamps.
+      if (cleaned.trim().length === 0 && markerState.startTime) {
+        cleaned = this.fallbackDockerLogs(markerState.startTime, markerState.endTime);
+      }
+
       writeFileSync(outputPath, cleaned);
     } catch {
+      // Even on sed failure, try fallback
+      try {
+        if (markerState.startTime) {
+          const fallback = this.fallbackDockerLogs(markerState.startTime, markerState.endTime);
+          writeFileSync(outputPath, fallback);
+          return outputPath;
+        }
+      } catch {
+        // Ignore fallback errors
+      }
       writeFileSync(outputPath, '');
     }
 
@@ -335,6 +355,22 @@ export class LogCollector {
           // Ignore fsync errors
         }
       }
+    }
+  }
+
+  private fallbackDockerLogs(sinceTime: string, untilTime: string): string {
+    try {
+      const args = ['logs', 'ollama37', '--since', sinceTime];
+      if (untilTime) {
+        args.push('--until', untilTime);
+      }
+      const result = execSync(`docker ${args.join(' ')}`, {
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return this.stripAnsi(result);
+    } catch {
+      return '';
     }
   }
 
