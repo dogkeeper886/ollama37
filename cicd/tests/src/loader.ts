@@ -215,6 +215,7 @@ export class TestLoader {
         timeout: typeof step.timeout === 'number' ? step.timeout : undefined,
         expectPatterns: Array.isArray(step.expectPatterns) ? step.expectPatterns : undefined,
         rejectPatterns: Array.isArray(step.rejectPatterns) ? step.rejectPatterns : undefined,
+        reconnectLogs: step.reconnectLogs === true ? true : undefined,
       });
     }
 

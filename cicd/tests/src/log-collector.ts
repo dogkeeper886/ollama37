@@ -157,6 +157,62 @@ export class LogCollector {
   }
 
   /**
+   * Reconnect the log stream after a container restart.
+   * Kills the old process and spawns a new one, appending to the same session file.
+   */
+  async reconnect(): Promise<void> {
+    if (this.process) {
+      this.process.kill('SIGTERM');
+      this.process = null;
+      this.isRunning = false;
+    }
+
+    // Flush remaining buffer
+    if (this.lineBuffer) {
+      this.queueWrite(this.lineBuffer + '\n');
+      this.lineBuffer = '';
+    }
+
+    return new Promise((resolve, reject) => {
+      this.process = spawn(
+        'docker',
+        ['compose', 'logs', '--follow', '--timestamps', '--since', '1s'],
+        {
+          cwd: this.dockerComposeDir,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+
+      this.isRunning = true;
+
+      this.process.stdout?.on('data', (data: Buffer) => {
+        this.processLogData(data, false);
+      });
+
+      this.process.stderr?.on('data', (data: Buffer) => {
+        this.processLogData(data, true);
+      });
+
+      this.process.on('error', (err) => {
+        this.isRunning = false;
+        reject(err);
+      });
+
+      this.process.on('close', () => {
+        this.isRunning = false;
+      });
+
+      setTimeout(() => {
+        if (this.isRunning) {
+          resolve();
+        } else {
+          reject(new Error('Log collector failed to reconnect'));
+        }
+      }, 500);
+    });
+  }
+
+  /**
    * Mark the start of a test.
    */
   markTestStart(testId: string): void {

@@ -22,6 +22,8 @@ export interface TestStep {
   expectPatterns?: string[];
   /** Regex patterns that must NOT appear in stdout/stderr */
   rejectPatterns?: string[];
+  /** Signal LogCollector to reconnect after this step (e.g. after container restart) */
+  reconnectLogs?: boolean;
 }
 
 /**
