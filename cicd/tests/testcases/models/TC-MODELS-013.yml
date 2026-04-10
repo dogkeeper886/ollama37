@@ -10,17 +10,6 @@ issue: ""
 goal: "Verify ministral-3:3b loads and runs inference on K80"
 
 steps:
-  - name: Pull model
-    command: |
-      curl -sf http://localhost:11434/api/pull \
-        -d '{"name":"ministral-3:3b"}' --no-buffer \
-        | tail -1
-    timeout: 300000
-    expectPatterns:
-      - "success"
-    rejectPatterns:
-      - "error"
-
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
@@ -43,8 +32,9 @@ steps:
 criteria: |
   Verify ministral-3:3b loads and runs inference on K80.
 
+  Prerequisite: Model must be pre-pulled before running this test.
+
   Expected:
-  - Model pulls successfully
   - API returns JSON with "response" field
   - No CUDA/CUBLAS errors
   - Model unloads successfully
