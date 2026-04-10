@@ -114,6 +114,7 @@ jobs:
           curl -s http://localhost:11434/api/generate -d '{"model":"gemma4:e4b","keep_alive":0}' || true
           curl -s http://localhost:11434/api/generate -d '{"model":"gemma4:26b","keep_alive":0}' || true
           curl -s http://localhost:11434/api/generate -d '{"model":"functiongemma:270m","keep_alive":0}' || true
+          curl -s http://localhost:11434/api/generate -d '{"model":"ministral-3:3b","keep_alive":0}' || true
           echo "Models unloaded"
 
       - name: Upload models results
