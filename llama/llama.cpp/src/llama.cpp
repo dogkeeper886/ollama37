@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <set>
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -286,6 +287,30 @@ static struct llama_model * llama_model_load_from_file_impl(
 
         llama_model_free(model);
         return nullptr;
+    }
+
+    // prune model->devices to only GPUs that have layers assigned
+    // this prevents creating CUDA contexts on unused GPUs when the
+    // scheduler enables pipeline parallelism (which creates events on
+    // all devices in the list)
+    if (params.split_mode == LLAMA_SPLIT_MODE_LAYER && !model->devices.empty()) {
+        std::set<ggml_backend_dev_t> used_devs;
+        const int n_layer = (int) model->hparams.n_layer;
+        for (int il = 0; il < n_layer; ++il) {
+            used_devs.insert(model->dev_layer(il));
+        }
+        used_devs.insert(model->dev_output());
+
+        auto it = std::remove_if(model->devices.begin(), model->devices.end(),
+            [&used_devs](ggml_backend_dev_t dev) {
+                return used_devs.find(dev) == used_devs.end();
+            });
+        if (it != model->devices.end()) {
+            size_t old_size = model->devices.size();
+            model->devices.erase(it, model->devices.end());
+            LLAMA_LOG_INFO("%s: pruned devices from %zu to %zu (only GPUs with layers)\n",
+                    __func__, old_size, model->devices.size());
+        }
     }
 
     return model;
