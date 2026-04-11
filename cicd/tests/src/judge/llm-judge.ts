@@ -80,6 +80,7 @@ export class LLMJudge {
         'For AI-generated text, accept reasonable variations (e.g. "4", "four", "The answer is 4")',
         'Long durations within timeout are acceptable',
         'Build times are expected to be long for CUDA compilation',
+        'GPU_COUNT_EXCEEDED in step output means the model is using more GPUs than its total VRAM requires (each K80 has 11441 MiB) → FAIL',
       ],
       test: {
         id: r.testCase.id,
