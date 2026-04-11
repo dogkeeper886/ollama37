@@ -1469,6 +1469,83 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Exp(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_exp(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Softplus(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_softplus(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Cumsum(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_cumsum(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Conv1D(ctx ml.Context, kernel ml.Tensor, stride, padding, dilation int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_conv_1d(ctx.(*Context).ctx, kernel.(*Tensor).t, t.t, C.int(stride), C.int(padding), C.int(dilation)),
+	}
+}
+
+func (t *Tensor) SSMConv(ctx ml.Context, kernel ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_ssm_conv(ctx.(*Context).ctx, t.t, kernel.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Fill(ctx ml.Context, value float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_fill(ctx.(*Context).ctx, t.t, C.float(value)),
+	}
+}
+
+func (t *Tensor) Diag(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_diag(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Tri(ctx ml.Context, triType int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tri(ctx.(*Context).ctx, t.t, C.enum_ggml_tri_type(triType)),
+	}
+}
+
+func (t *Tensor) SolveTri(ctx ml.Context, b ml.Tensor, left, lower, unitDiag bool) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_solve_tri(ctx.(*Context).ctx, t.t, b.(*Tensor).t, C._Bool(left), C._Bool(lower), C._Bool(unitDiag)),
+	}
+}
+
+func (t *Tensor) Repeat4D(ctx ml.Context, ne0, ne1, ne2, ne3 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_repeat_4d(ctx.(*Context).ctx, t.t, C.int64_t(ne0), C.int64_t(ne1), C.int64_t(ne2), C.int64_t(ne3)),
+	}
+}
+
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:

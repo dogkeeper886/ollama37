@@ -172,7 +172,9 @@ type Tensor interface {
 
 	Sin(ctx Context) Tensor
 	Cos(ctx Context) Tensor
+	Exp(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
+	Softplus(ctx Context) Tensor
 	GELU(ctx Context, up ...Tensor) Tensor
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
@@ -180,6 +182,16 @@ type Tensor interface {
 
 	// AlphaLimitSILU is a variant of SILU that clamps the input to the range [-limit, limit]
 	SILUAlphaLimit(ctx Context, up Tensor, alpha, limit float32) Tensor
+
+	Cumsum(ctx Context) Tensor
+	Conv1D(ctx Context, kernel Tensor, stride, padding, dilation int) Tensor
+	SSMConv(ctx Context, kernel Tensor) Tensor
+	Neg(ctx Context) Tensor
+	Fill(ctx Context, value float32) Tensor
+	Diag(ctx Context) Tensor
+	Tri(ctx Context, triType int) Tensor
+	SolveTri(ctx Context, b Tensor, left, lower, unitDiag bool) Tensor
+	Repeat4D(ctx Context, ne0, ne1, ne2, ne3 int) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
