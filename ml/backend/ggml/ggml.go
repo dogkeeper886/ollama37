@@ -1469,34 +1469,6 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Exp(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_exp(ctx.(*Context).ctx, t.t),
-	}
-}
-
-func (t *Tensor) Softplus(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_softplus(ctx.(*Context).ctx, t.t),
-	}
-}
-
-func (t *Tensor) Cumsum(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_cumsum(ctx.(*Context).ctx, t.t),
-	}
-}
-
-func (t *Tensor) Conv1D(ctx ml.Context, kernel ml.Tensor, stride, padding, dilation int) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_conv_1d(ctx.(*Context).ctx, kernel.(*Tensor).t, t.t, C.int(stride), C.int(padding), C.int(dilation)),
-	}
-}
-
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:

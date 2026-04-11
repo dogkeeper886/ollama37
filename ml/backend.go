@@ -172,9 +172,7 @@ type Tensor interface {
 
 	Sin(ctx Context) Tensor
 	Cos(ctx Context) Tensor
-	Exp(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
-	Softplus(ctx Context) Tensor
 	GELU(ctx Context, up ...Tensor) Tensor
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
@@ -182,12 +180,6 @@ type Tensor interface {
 
 	// AlphaLimitSILU is a variant of SILU that clamps the input to the range [-limit, limit]
 	SILUAlphaLimit(ctx Context, up Tensor, alpha, limit float32) Tensor
-
-	// Cumsum computes the cumulative sum along the first axis
-	Cumsum(ctx Context) Tensor
-
-	// Conv1D performs 1D convolution: kernel convolved with data
-	Conv1D(ctx Context, kernel Tensor, stride, padding, dilation int) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
