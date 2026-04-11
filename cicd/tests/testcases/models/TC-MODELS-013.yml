@@ -3,11 +3,10 @@ name: "ministral-3:3b Inference"
 suite: models
 priority: 2
 timeout: 600000
-dependencies:
-  - TC-RUNTIME-001
+dependencies: []
 testlink_id: ""
 issue: ""
-goal: "Verify ministral-3:3b loads and runs inference on K80"
+goal: "Validate ministral-3:3b runs on K80 compute 3.7 (single GPU)"
 
 steps:
   - name: Test inference
@@ -21,6 +20,11 @@ steps:
       - "CUBLAS_STATUS"
       - "CUDA error"
 
+  - name: Check GPU memory
+    command: docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
+    expectPatterns:
+      - "[0-9]+ MiB"
+
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
@@ -30,11 +34,15 @@ steps:
       - "Model unloaded"
 
 criteria: |
-  Verify ministral-3:3b loads and runs inference on K80.
-
+  Validate ministral-3:3b (~2GB VRAM, single GPU) runs on K80 (compute 3.7).
   Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:
   - API returns JSON with "response" field
-  - No CUDA/CUBLAS errors
+  - GPU memory is allocated (visible in nvidia-smi)
+  - No CUDA/CUBLAS errors in output
   - Model unloads successfully
+
+  Acceptable warnings (NOT errors):
+  - "flash attention enabled but not supported by gpu" - K80 does not support
+    flash attention, this is a normal fallback warning, NOT an error
