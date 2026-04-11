@@ -31,6 +31,25 @@ steps:
     expectPatterns:
       - "[0-9]+ MiB"
 
+  - name: Check GPU count
+    command: |
+      output=$(docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
+      echo "$output"
+      active=$(echo "$output" | grep -c 'MiB')
+      total=$(echo "$output" | grep -oP '[0-9]+(?= MiB)' | paste -sd+ | bc)
+      echo "Active GPUs: $active, Total VRAM: ${total} MiB"
+      if [ "$active" -le 1 ]; then
+        echo "GPU_COUNT_OK"
+      elif [ "$total" -le $(( (active - 1) * 11441 )) ]; then
+        echo "GPU_COUNT_EXCEEDED: total ${total} MiB fits in $((active - 1)) GPUs but using $active"
+      else
+        echo "GPU_COUNT_OK"
+      fi
+    expectPatterns:
+      - "GPU_COUNT_OK"
+    rejectPatterns:
+      - "GPU_COUNT_EXCEEDED"
+
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
@@ -48,5 +67,7 @@ criteria: |
   - Model maps natural language intent to the correct function (get_weather)
   - Model extracts the correct argument (San Francisco) from context
   - GPU memory is allocated (visible in nvidia-smi)
+  - GPU count: model must not use more GPUs than needed. Each K80 GPU has 11441 MiB.
+    If total VRAM fits in (active_gpus - 1) GPUs, the model is wasting GPUs.
   - No CUDA/CUBLAS errors in output
   - Model unloads successfully
