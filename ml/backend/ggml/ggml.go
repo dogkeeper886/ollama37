@@ -350,6 +350,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
+	// INSTRUMENT: dump blk.0 and blk.1 tensor names to debug gguf mapping
+	for name := range tensors {
+		if strings.HasPrefix(name, "blk.0.") || strings.HasPrefix(name, "blk.1.") {
+			slog.Info("INSTRUMENT: tensor", "name", name)
+		}
+	}
+	slog.Info("INSTRUMENT: total tensors in backend", "count", len(tensors))
+
 	// map devices to backend buffer types so new tensors can be assigned to the correct device
 	deviceBufferTypes := make(map[C.ggml_backend_dev_t]C.ggml_backend_buffer_type_t)
 
@@ -378,7 +386,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	maxGraphNodes := max(1024, len(meta.Tensors().Items())*8)
+	maxGraphNodes := max(1024, len(meta.Tensors().Items())*32)
 
 	sched := C.ggml_backend_sched_new_ext(
 		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
@@ -1350,6 +1358,13 @@ func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1469,6 +1484,83 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SigmoidOut(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sigmoid(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Exp(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_exp(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Softplus(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_softplus(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) CumSum(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_cumsum(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Conv1D(ctx ml.Context, kernel ml.Tensor, stride, padding, dilation int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_conv_1d(ctx.(*Context).ctx, kernel.(*Tensor).t, t.t, C.int(stride), C.int(padding), C.int(dilation)),
+	}
+}
+
+func (t *Tensor) SSMConv(ctx ml.Context, kernel ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_ssm_conv(ctx.(*Context).ctx, t.t, kernel.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) Fill(ctx ml.Context, value float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_fill(ctx.(*Context).ctx, t.t, C.float(value)),
+	}
+}
+
+func (t *Tensor) Diag(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_diag(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Tri(ctx ml.Context, triType int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tri(ctx.(*Context).ctx, t.t, C.enum_ggml_tri_type(triType)),
+	}
+}
+
+func (t *Tensor) SolveTri(ctx ml.Context, b ml.Tensor, left, lower, unitDiag bool) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_solve_tri(ctx.(*Context).ctx, t.t, b.(*Tensor).t, C._Bool(left), C._Bool(lower), C._Bool(unitDiag)),
+	}
+}
+
+func (t *Tensor) Repeat4D(ctx ml.Context, ne0, ne1, ne2, ne3 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_repeat_4d(ctx.(*Context).ctx, t.t, C.int64_t(ne0), C.int64_t(ne1), C.int64_t(ne2), C.int64_t(ne3)),
+	}
+}
+
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
@@ -1505,55 +1597,39 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	}
 }
 
+// Slice returns a view of the tensor sliced along dim from start to end with stride.
+// Slice panics if the dimension is invalid or the slice parameters are out of range.
+// If dim=0 and stride>1, the tensor is a copy rather than a view to ensure proper shape.
 func (t *Tensor) Slice(ctx ml.Context, dim, start, end, stride int) ml.Tensor {
-	nDims := int(C.ggml_n_dims(t.t))
-	if dim < 0 || dim >= nDims {
-		panic("Slice: dimension out of range")
+	if dim < 0 || dim >= C.GGML_MAX_DIMS {
+		panic("invalid dimension")
+	} else if start < 0 || end > t.Dim(dim) || start >= end || stride < 1 {
+		panic("invalid slice parameters")
 	}
 
-	sliceLen := (end - start + stride - 1) / stride
-	offset := start * t.Stride(dim)
+	if dim == 0 && stride > 1 {
+		return t.View(ctx,
+			start*t.Stride(0), 1,
+			stride*t.Stride(0), (end-start+1)/stride,
+			t.Stride(1), t.Dim(1),
+			t.Stride(2), t.Dim(2)*t.Dim(3),
+		).Contiguous(ctx, (end-start+1)/stride, t.Dim(1), t.Dim(2), t.Dim(3))
+	}
 
-	// Build shape/stride pairs for View: [ne0, nb1, ne1, nb2, ne2, ...]
-	// View expects interleaved (shape, stride) pairs after the first dimension
-	switch nDims {
-	case 1:
-		return t.View(ctx, offset, sliceLen)
-	case 2:
-		ne := [2]int{t.Dim(0), t.Dim(1)}
-		nb := [2]int{t.Stride(0), t.Stride(1)}
-		ne[dim] = sliceLen
-		return &Tensor{
-			b: t.b,
-			t: C.ggml_view_2d(ctx.(*Context).ctx, t.t,
-				C.int64_t(ne[0]), C.int64_t(ne[1]),
-				C.size_t(nb[1]),
-				C.size_t(offset)),
-		}
-	case 3:
-		ne := [3]int{t.Dim(0), t.Dim(1), t.Dim(2)}
-		nb := [3]int{t.Stride(0), t.Stride(1), t.Stride(2)}
-		ne[dim] = sliceLen
-		return &Tensor{
-			b: t.b,
-			t: C.ggml_view_3d(ctx.(*Context).ctx, t.t,
-				C.int64_t(ne[0]), C.int64_t(ne[1]), C.int64_t(ne[2]),
-				C.size_t(nb[1]), C.size_t(nb[2]),
-				C.size_t(offset)),
-		}
-	case 4:
-		ne := [4]int{t.Dim(0), t.Dim(1), t.Dim(2), t.Dim(3)}
-		nb := [4]int{t.Stride(0), t.Stride(1), t.Stride(2), t.Stride(3)}
-		ne[dim] = sliceLen
-		return &Tensor{
-			b: t.b,
-			t: C.ggml_view_4d(ctx.(*Context).ctx, t.t,
-				C.int64_t(ne[0]), C.int64_t(ne[1]), C.int64_t(ne[2]), C.int64_t(ne[3]),
-				C.size_t(nb[1]), C.size_t(nb[2]), C.size_t(nb[3]),
-				C.size_t(offset)),
-		}
-	default:
-		panic("Slice: unsupported number of dimensions")
+	args := []int{
+		start * t.Stride(dim), t.Dim(0),
+		t.Stride(1), t.Dim(1),
+		t.Stride(2), t.Dim(2),
+		t.Stride(3), t.Dim(3),
+	}
+
+	if stride == 1 {
+		args[dim*2+1] = end - start
+		return t.View(ctx, args[0], args[1:]...)
+	} else {
+		args[dim*2] = stride * t.Stride(dim)
+		args[dim*2+1] = (end - start + 1) / stride
+		return t.View(ctx, args[0], args[1:]...)
 	}
 }
 
