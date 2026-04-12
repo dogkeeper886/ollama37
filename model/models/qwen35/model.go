@@ -13,11 +13,6 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
-const chunkSize = 64
-
-// triTypeLower corresponds to GGML_TRI_TYPE_LOWER
-const triTypeLower = 3
-
 type Options struct {
 	hiddenSize int
 	numHeads   int
@@ -56,13 +51,6 @@ func (o *Options) headDim() int {
 	return o.hiddenSize / o.numHeads
 }
 
-func (o *Options) ssmHeadVDim() int {
-	if o.ssmDtRank > 0 {
-		return o.ssmDInner / o.ssmDtRank
-	}
-	return 0
-}
-
 // Attention layer (standard grouped-query attention with RoPE)
 type Attention struct {
 	Query     *nn.Linear  `gguf:"attn_q"`
@@ -99,95 +87,33 @@ func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, 
 
 // DeltaNet layer (linear attention with recurrent state)
 type DeltaNet struct {
-	WQkv     *nn.Linear `gguf:"attn_qkv"`
-	WQkvGate *nn.Linear `gguf:"attn_qkv_gate"`
-	SSMAlpha *nn.Linear `gguf:"ssm_alpha"`
-	SSMBeta  *nn.Linear `gguf:"ssm_beta"`
-	SSMDt    ml.Tensor  // bias vector for decay
-	SSMA     ml.Tensor  // decay weight matrix
-	SSMConv  ml.Tensor  // 1D conv kernel
+	WQkv     *nn.Linear  `gguf:"attn_qkv"`
+	WQkvGate *nn.Linear  `gguf:"attn_gate"`
+	SSMAlpha *nn.Linear  `gguf:"ssm_alpha"`
+	SSMBeta  *nn.Linear  `gguf:"ssm_beta"`
+	SSMDt    ml.Tensor   `gguf:"ssm_dt"`
+	SSMA     ml.Tensor   `gguf:"ssm_a"`
+	SSMConv1D ml.Tensor  `gguf:"ssm_conv1d"`
 	SSMNorm  *nn.RMSNorm `gguf:"ssm_norm"`
 	SSMOut   *nn.Linear  `gguf:"ssm_out"`
 }
 
-// Forward for DeltaNet layer - autoregressive single-token path
-// This is the most common path during generation (one token at a time)
+// Forward for DeltaNet layer
+// TODO: Full DeltaNet implementation with recurrent state, conv1d, chunked attention.
+// Currently a stub that passes through the output projection to maintain valid shapes
+// for memory measurement. This allows the ollama engine's iterative Load loop to
+// correctly estimate GPU count, even though inference output is not correct.
 func (dn *DeltaNet) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
-	nTokens := hiddenStates.Dim(1)
-	headKDim := opts.ssmDState
-	numKHeads := opts.ssmNGroup
-	numVHeads := opts.ssmDtRank
-	headVDim := opts.ssmHeadVDim()
+	// Use output projection to produce correct output shape (hiddenSize, nTokens)
+	// Input: (hiddenSize, nTokens), SSMOut weight: (hiddenSize, d_inner)
+	// We need an intermediate of size (d_inner, nTokens)
+	// Use WQkvGate which projects hiddenSize -> d_inner
+	intermediate := dn.WQkvGate.Forward(ctx, hiddenStates)
 
-	// Input projections
-	qkvMixed := dn.WQkv.Forward(ctx, hiddenStates)
-	z := dn.WQkvGate.Forward(ctx, hiddenStates)
+	// Gated normalization stub: just use SSMNorm on intermediate
+	normalized := dn.SSMNorm.Forward(ctx, intermediate, opts.eps)
 
-	beta := dn.SSMBeta.Forward(ctx, hiddenStates)
-	alpha := dn.SSMAlpha.Forward(ctx, hiddenStates)
-
-	// Decay computation: softplus(alpha + dt_bias) * ssm_a
-	alphaBiased := alpha.Add(ctx, dn.SSMDt)
-	alphaSoftplus := alphaBiased.Softplus(ctx)
-	_ = alphaSoftplus.Mul(ctx, dn.SSMA) // gate - used in DeltaNet state update (TODO)
-
-	// TODO: convolution state management and SSM conv
-	// For now, apply SSM conv directly
-	convOutput := qkvMixed.SSMConv(ctx, dn.SSMConv)
-	convOutput = convOutput.SILU(ctx)
-
-	// Extract Q, K, V from conv output
-	qkvDim := headKDim*numKHeads*2 + headVDim*numVHeads
-	_ = qkvDim
-
-	// Q: first portion
-	qConv := convOutput.View(ctx, 0, headKDim*numKHeads, nTokens)
-	qConv = qConv.Reshape(ctx, headKDim, numKHeads, nTokens)
-
-	// K: second portion
-	kConv := convOutput.View(ctx, headKDim*numKHeads*4, headKDim*numKHeads, nTokens)
-	kConv = kConv.Reshape(ctx, headKDim, numKHeads, nTokens)
-
-	// V: third portion
-	vConv := convOutput.View(ctx, 2*headKDim*numKHeads*4, headVDim*numVHeads, nTokens)
-	vConv = vConv.Reshape(ctx, headVDim, numVHeads, nTokens)
-
-	// Repeat Q/K if head counts differ
-	if numKHeads != numVHeads {
-		qConv = qConv.Repeat4D(ctx, headKDim, numVHeads, nTokens, 1)
-		kConv = kConv.Repeat4D(ctx, headKDim, numVHeads, nTokens, 1)
-	}
-
-	// L2 normalize Q and K
-	qConv = qConv.L2Norm(ctx, opts.eps)
-	kConv = kConv.L2Norm(ctx, opts.eps)
-
-	// Scale Q
-	scale := 1.0 / math.Sqrt(float64(headVDim))
-	qConv = qConv.Scale(ctx, float64(scale))
-
-	// Sigmoid beta
-	beta = beta.Sigmoid(ctx)
-
-	// TODO: DeltaNet state update (requires recurrent state cache)
-	// For single token decode:
-	// 1. state = state * exp(gate)
-	// 2. kv_mem = (state * k).sum(-2)
-	// 3. delta = (v - kv_mem) * beta
-	// 4. state = state + k * delta
-	// 5. output = (state * q).sum(-2)
-
-	// Gated normalization: rms_norm(output) * silu(z)
-	output := qConv // placeholder until state management is implemented
-	output2d := output.Reshape(ctx, headVDim, numVHeads*nTokens)
-	z2d := z.Reshape(ctx, headVDim, numVHeads*nTokens)
-
-	normalized := dn.SSMNorm.Forward(ctx, output2d, opts.eps)
-	gatedSilu := z2d.SILU(ctx)
-	attnOut := normalized.Mul(ctx, gatedSilu)
-
-	finalOutput := attnOut.Reshape(ctx, headVDim*numVHeads, nTokens)
-	return dn.SSMOut.Forward(ctx, finalOutput)
+	return dn.SSMOut.Forward(ctx, normalized)
 }
 
 // FFN (feed-forward network)
@@ -204,7 +130,7 @@ func (ffn *FFN) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
 // Layer can be either attention or DeltaNet
 type Layer struct {
 	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	PostAttnNorm  *nn.RMSNorm `gguf:"attn_post_norm"`
+	PostAttnNorm  *nn.RMSNorm `gguf:"post_attention_norm"`
 
 	// Only one of these is used per layer
 	Attention *Attention
