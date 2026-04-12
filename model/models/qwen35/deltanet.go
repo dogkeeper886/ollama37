@@ -235,8 +235,10 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	// Choose computation mode based on sequence length
 	var attnOut ml.Tensor
 	if nSeqTokens == 1 {
+		slog.Debug("deltanet forward", "layer", layer, "path", "autoregressive", "n_seqs", nSeqs)
 		attnOut = gdn.deltaNetAutoregressive(ctx, qConv, kConv, vConv, gate, beta, state, opts, layer, cache)
 	} else {
+		slog.Debug("deltanet forward", "layer", layer, "path", "chunked", "seq_tokens", nSeqTokens, "n_seqs", nSeqs)
 		if opts.masks == nil {
 			opts.masks = createMasks(ctx)
 		}

@@ -3,8 +3,10 @@ package qwen35
 import (
 	"cmp"
 	"fmt"
+	"log/slog"
 	"math"
 	"slices"
+	"sync"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
@@ -232,6 +234,8 @@ type Model struct {
 	Layers []Layer `gguf:"blk"`
 
 	*Options
+
+	logOnce sync.Once
 }
 
 func (m *Model) buildPositions(ctx ml.Context, batch input.Batch) ml.Tensor {
@@ -258,6 +262,10 @@ func (m *Model) buildPositions(ctx ml.Context, batch input.Batch) ml.Tensor {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+	m.logOnce.Do(func() {
+		slog.Debug("first forward", "batch_size", len(batch.Positions), "layers", len(m.Layers))
+	})
+
 	positions := m.buildPositions(ctx, batch)
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
@@ -498,6 +506,25 @@ func New(c fs.Config) (model.Model, error) {
 		headVDim = opts.ssmDInner / numVHeads
 	}
 	deltaStateSize := headVDim * headVDim * numVHeads
+
+	recurrentCount := 0
+	for _, r := range isRecurrent {
+		if r {
+			recurrentCount++
+		}
+	}
+	slog.Debug("model config", "arch", "qwen35", "layers", numLayers,
+		"recurrent", recurrentCount, "attention", numLayers-recurrentCount, "moe", isMoE)
+	slog.Debug("ssm config", "d_inner", opts.ssmDInner, "d_state", opts.ssmDState,
+		"n_group", opts.ssmNGroup, "dt_rank", opts.ssmDtRank, "conv_kernel", opts.convKernelSize)
+	slog.Debug("cache dimensions", "conv_dim", convDim, "conv_channels", convChannels,
+		"delta_state_size", deltaStateSize, "head_v_dim", headVDim, "num_v_heads", numVHeads)
+	if len(opts.mropeSections) > 0 {
+		slog.Debug("rope config", "type", "mrope", "sections", opts.mropeSections,
+			"base", opts.ropeBase, "scale", opts.ropeScale)
+	} else {
+		slog.Debug("rope config", "type", "neox", "base", opts.ropeBase, "scale", opts.ropeScale)
+	}
 
 	// Validate dimension assumption: headKDim == headVDim is required for state computations
 	headKDim := opts.ssmDState

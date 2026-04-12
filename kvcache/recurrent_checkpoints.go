@@ -324,6 +324,7 @@ func (c *Recurrent) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 		idx:  idx,
 		pos:  pos,
 	}
+	slog.Debug(c.checkpointTag()+": checkpoint hit", "seq", seq, "slot", slot, "target", targetPos, "restore_pos", pos)
 	return pos + 1, true
 }
 
@@ -332,6 +333,8 @@ func (c *Recurrent) applyCheckpointRestore(restore checkpointRestore) error {
 	if !ok {
 		return ErrNotSupported
 	}
+	slog.Debug(c.checkpointTag()+": checkpoint restored", "slot", restore.slot, "pos", restore.pos,
+		"conv_layers", len(entry.conv), "recurrent_layers", len(entry.recurrent))
 
 	ctx := c.backend.NewContext()
 	defer ctx.Close()

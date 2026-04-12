@@ -149,6 +149,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	var llamaModel *llama.Model
 	var textProcessor model.TextProcessor
 	var err error
+	arch := f.KV().Architecture()
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
 		if len(projectors) == 0 {
 			textProcessor, err = model.NewTextProcessor(modelPath)
@@ -157,7 +158,9 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 		if err != nil {
 			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
-			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
+			slog.Debug("engine selected", "engine", "llama_compat", "arch", arch, "reason", err)
+		} else {
+			slog.Debug("engine selected", "engine", "ollama", "arch", arch)
 		}
 	}
 	if textProcessor == nil {
