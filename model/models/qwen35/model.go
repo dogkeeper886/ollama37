@@ -147,12 +147,15 @@ func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Op
 	tokenStride := convOutput.Stride(1)
 
 	q := convOutput.View(ctx, 0, qDim, tokenStride, nTokens)
+	q = q.Contiguous(ctx)
 	q = q.Reshape(ctx, headKDim, numKHeads, nTokens)
 
 	k := convOutput.View(ctx, elemSize*qDim, kDim, tokenStride, nTokens)
+	k = k.Contiguous(ctx)
 	k = k.Reshape(ctx, headKDim, numKHeads, nTokens)
 
 	v := convOutput.View(ctx, elemSize*(qDim+kDim), dInner, tokenStride, nTokens)
+	v = v.Contiguous(ctx)
 	v = v.Reshape(ctx, headVDim, numVHeads, nTokens)
 
 	// 5. Repeat Q/K if head counts differ
