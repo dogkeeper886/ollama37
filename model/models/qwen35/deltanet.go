@@ -185,7 +185,7 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	convInput := convStates.Concat(ctx, qkvMixed, 0)
 
 	// Save new conv state (last convKernelSize-1 tokens)
-	lastConvStates := convInput.Slice(ctx, 0, nSeqTokens, nSeqTokens+convKernelSize-1, 1)
+	lastConvStates := convInput.Slice(ctx, 0, nSeqTokens, nSeqTokens+convKernelSize-1, 1).Contiguous(ctx)
 	cache.UpdateConvState(ctx, layer, lastConvStates)
 
 	// Apply SSM convolution (kernel must be F32 for Metal)
