@@ -1,6 +1,7 @@
 package qwen35
 
 import (
+	"log/slog"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -122,6 +123,11 @@ func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Op
 	headVDim := dInner / numVHeads // 256
 
 	// 1. Input projections
+	if l.WQkv == nil || l.WQkvGate == nil || l.SSMOut == nil {
+		slog.Warn("INSTRUMENT: DeltaNet layer missing tensors, returning identity",
+			"WQkv", l.WQkv != nil, "WQkvGate", l.WQkvGate != nil, "SSMOut", l.SSMOut != nil)
+		return hiddenStates
+	}
 	qkvMixed := l.WQkv.Forward(ctx, hiddenStates)   // (convDim, nTokens)
 	z := l.WQkvGate.Forward(ctx, hiddenStates)       // (dInner, nTokens)
 
@@ -269,6 +275,21 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	for i, layer := range m.Layers {
 		if m.Cache != nil {
 			m.Cache.SetLayer(i)
+		}
+
+		// INSTRUMENT: check tensor mapping for first DeltaNet layer
+		if i == 0 {
+			slog.Info("INSTRUMENT: layer 0 tensors",
+				"AttentionNorm", layer.AttentionNorm != nil,
+				"WQkv", layer.WQkv != nil,
+				"WQkvGate", layer.WQkvGate != nil,
+				"SSMAlpha", layer.SSMAlpha != nil,
+				"SSMBeta", layer.SSMBeta != nil,
+				"SSMNorm", layer.SSMNorm != nil,
+				"SSMOut", layer.SSMOut != nil,
+				"Query", layer.Query != nil,
+				"FFNGate", layer.FFNGate != nil,
+				"isRecurrent", m.Options.isRecurrent(i))
 		}
 
 		var outputs ml.Tensor
