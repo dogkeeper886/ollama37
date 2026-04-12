@@ -234,8 +234,31 @@ type Model struct {
 	*Options
 }
 
+func (m *Model) buildPositions(ctx ml.Context, batch input.Batch) ml.Tensor {
+	if len(m.mropeSections) == 0 {
+		return ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	}
+
+	// MRoPE expects [time, height, width, extra] for each token.
+	// For text-only, all four components are the same position.
+	positionSlice := [][]int32{
+		make([]int32, len(batch.Positions)),
+		make([]int32, len(batch.Positions)),
+		make([]int32, len(batch.Positions)),
+		make([]int32, len(batch.Positions)),
+	}
+
+	for i, id := range batch.Positions {
+		positionSlice[0][i] = id
+		positionSlice[1][i] = id
+		positionSlice[2][i] = id
+	}
+
+	return ctx.Input().FromInts(slices.Concat(positionSlice...), len(positionSlice[0])*len(positionSlice))
+}
+
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	positions := m.buildPositions(ctx, batch)
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
@@ -304,6 +327,9 @@ func (m *Model) Validate() error {
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	if len(m.mropeSections) > 0 {
+		shift = shift.Repeat(ctx, 1, 4).Reshape(ctx, -1)
+	}
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
