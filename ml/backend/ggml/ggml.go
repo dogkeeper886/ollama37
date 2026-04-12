@@ -350,6 +350,13 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
+	// INSTRUMENT: dump blk.0 tensor names to debug gguf mapping
+	for name := range tensors {
+		if strings.HasPrefix(name, "blk.0.") {
+			slog.Info("INSTRUMENT: tensor", "name", name)
+		}
+	}
+
 	// map devices to backend buffer types so new tensors can be assigned to the correct device
 	deviceBufferTypes := make(map[C.ggml_backend_dev_t]C.ggml_backend_buffer_type_t)
 
