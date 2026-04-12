@@ -213,14 +213,6 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				for _, name := range names {
 					fullName := strings.Join(name, ".")
 					tensor := base.Backend().Get(fullName)
-					// INSTRUMENT: log tensor lookups for blk.0 to debug qwen35 mapping
-					if strings.HasPrefix(fullName, "blk.0.") {
-						if tensor != nil {
-							slog.Info("INSTRUMENT: tensor found", "name", fullName)
-						} else {
-							slog.Info("INSTRUMENT: tensor NOT found", "name", fullName)
-						}
-					}
 					if tensor != nil {
 						logutil.Trace("found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
