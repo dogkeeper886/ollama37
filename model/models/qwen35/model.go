@@ -113,9 +113,20 @@ func (l *Layer) forwardAttention(ctx ml.Context, hiddenStates, positions ml.Tens
 // Currently passes through output projection to maintain valid shapes for
 // memory measurement by the iterative Load loop.
 func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
-	intermediate := l.WQkvGate.Forward(ctx, hiddenStates)
-	normalized := l.SSMNorm.Forward(ctx, intermediate, opts.eps)
-	return l.SSMOut.Forward(ctx, normalized)
+	// Stub: use available projections to produce correct output dimensions
+	if l.WQkvGate != nil && l.SSMNorm != nil && l.SSMOut != nil {
+		intermediate := l.WQkvGate.Forward(ctx, hiddenStates)
+		normalized := l.SSMNorm.Forward(ctx, intermediate, opts.eps)
+		return l.SSMOut.Forward(ctx, normalized)
+	}
+	// Fallback: if tensors not mapped, use WQkv path or return input
+	if l.WQkv != nil && l.SSMOut != nil {
+		projected := l.WQkv.Forward(ctx, hiddenStates)
+		// SSMOut expects d_inner input; WQkv output is conv_dim which may differ
+		// Just return the input as identity for memory measurement
+		_ = projected
+	}
+	return hiddenStates
 }
 
 func (l *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options, il int) ml.Tensor {
