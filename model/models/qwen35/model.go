@@ -277,15 +277,13 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			m.Cache.SetLayer(i)
 		}
 
-		// INSTRUMENT: check tensor mapping for first DeltaNet layer
-		if i == 0 {
-			slog.Info("INSTRUMENT: layer 0 tensors",
+		// INSTRUMENT: check tensor mapping for first 5 layers
+		if i < 5 {
+			slog.Info("INSTRUMENT: layer tensors",
+				"layer", i,
 				"AttentionNorm", layer.AttentionNorm != nil,
 				"WQkv", layer.WQkv != nil,
 				"WQkvGate", layer.WQkvGate != nil,
-				"SSMAlpha", layer.SSMAlpha != nil,
-				"SSMBeta", layer.SSMBeta != nil,
-				"SSMNorm", layer.SSMNorm != nil,
 				"SSMOut", layer.SSMOut != nil,
 				"Query", layer.Query != nil,
 				"FFNGate", layer.FFNGate != nil,
