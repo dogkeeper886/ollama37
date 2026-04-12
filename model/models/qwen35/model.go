@@ -129,7 +129,7 @@ func (dn *DeltaNet) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Option
 	// Decay computation: softplus(alpha + dt_bias) * ssm_a
 	alphaBiased := alpha.Add(ctx, dn.SSMDt)
 	alphaSoftplus := alphaBiased.Softplus(ctx)
-	gate := alphaSoftplus.Mul(ctx, dn.SSMA)
+	_ = alphaSoftplus.Mul(ctx, dn.SSMA) // gate - used in DeltaNet state update (TODO)
 
 	// TODO: convolution state management and SSM conv
 	// For now, apply SSM conv directly
