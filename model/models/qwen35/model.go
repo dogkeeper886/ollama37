@@ -53,23 +53,18 @@ func (o *Options) headDim() int {
 	return o.hiddenSize / o.numHeads
 }
 
-// Attention layer (standard grouped-query attention with RoPE)
-// Layer contains all possible tensors for both attention and DeltaNet layers.
-// The gguf auto-populator fills whichever tensors exist in the GGUF file.
-// At runtime, isRecurrent() determines which path to take.
-type Layer struct {
-	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	PostAttnNorm  *nn.RMSNorm `gguf:"post_attention_norm"`
-
-	// Attention layer tensors
+// Attention sub-struct for standard GQA layers
+type Attention struct {
 	Query     *nn.Linear  `gguf:"attn_q"`
 	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
 	Key       *nn.Linear  `gguf:"attn_k"`
 	KeyNorm   *nn.RMSNorm `gguf:"attn_k_norm"`
 	Value     *nn.Linear  `gguf:"attn_v"`
-	AttnOutput *nn.Linear `gguf:"attn_output"`
+	Output    *nn.Linear  `gguf:"attn_output"`
+}
 
-	// DeltaNet layer tensors
+// DeltaNetBlock sub-struct for DeltaNet layers
+type DeltaNetBlock struct {
 	WQkv      *nn.Linear  `gguf:"attn_qkv"`
 	WQkvGate  *nn.Linear  `gguf:"attn_gate"`
 	SSMAlpha  *nn.Linear  `gguf:"ssm_alpha"`
@@ -79,27 +74,47 @@ type Layer struct {
 	SSMConv1D *nn.Linear  `gguf:"ssm_conv1d"`
 	SSMNorm   *nn.RMSNorm `gguf:"ssm_norm"`
 	SSMOut    *nn.Linear  `gguf:"ssm_out"`
+}
 
-	// FFN tensors (shared by both layer types)
-	FFNGate *nn.Linear `gguf:"ffn_gate"`
-	FFNUp   *nn.Linear `gguf:"ffn_up"`
-	FFNDown *nn.Linear `gguf:"ffn_down"`
+// FFN sub-struct
+type FFN struct {
+	Gate *nn.Linear `gguf:"ffn_gate"`
+	Up   *nn.Linear `gguf:"ffn_up"`
+	Down *nn.Linear `gguf:"ffn_down"`
+}
+
+// Layer uses nested pointer sub-structs so populateFields can match
+// tensors correctly per layer. Only the sub-struct whose tensors exist
+// in the GGUF will be non-nil.
+type Layer struct {
+	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
+	PostAttnNorm  *nn.RMSNorm `gguf:"post_attention_norm"`
+
+	Attention *Attention
+	DeltaNet  *DeltaNetBlock
+
+	FFN *FFN
 }
 
 func (l *Layer) forwardAttention(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options, il int) ml.Tensor {
+	a := l.Attention
+	if a == nil {
+		return hiddenStates
+	}
+
 	batchSize := hiddenStates.Dim(1)
 	kvHeads := opts.kvHeadsPerLayer[il]
 
-	query := l.Query.Forward(ctx, hiddenStates)
-	key := l.Key.Forward(ctx, hiddenStates)
-	value := l.Value.Forward(ctx, hiddenStates)
+	query := a.Query.Forward(ctx, hiddenStates)
+	key := a.Key.Forward(ctx, hiddenStates)
+	value := a.Value.Forward(ctx, hiddenStates)
 
 	query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
 	key = key.Reshape(ctx, opts.headDim(), kvHeads, batchSize)
 	value = value.Reshape(ctx, opts.headDim(), kvHeads, batchSize)
 
-	query = l.QueryNorm.Forward(ctx, query, opts.eps)
-	key = l.KeyNorm.Forward(ctx, key, opts.eps)
+	query = a.QueryNorm.Forward(ctx, query, opts.eps)
+	key = a.KeyNorm.Forward(ctx, key, opts.eps)
 
 	ropeOpts := []func(*rope.Options){rope.WithTypeNeoX()}
 	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, ropeOpts...)
@@ -107,7 +122,7 @@ func (l *Layer) forwardAttention(ctx ml.Context, hiddenStates, positions ml.Tens
 
 	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
-	return l.AttnOutput.Forward(ctx, attention)
+	return a.Output.Forward(ctx, attention)
 }
 
 // forwardDeltaNet implements the DeltaNet linear attention layer.
@@ -122,20 +137,21 @@ func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Op
 	numVHeads := opts.ssmDtRank  // 24
 	headVDim := dInner / numVHeads // 256
 
-	// 1. Input projections
-	if l.WQkv == nil || l.WQkvGate == nil || l.SSMOut == nil {
-		slog.Warn("INSTRUMENT: DeltaNet layer missing tensors, returning identity",
-			"WQkv", l.WQkv != nil, "WQkvGate", l.WQkvGate != nil, "SSMOut", l.SSMOut != nil)
+	dn := l.DeltaNet
+	if dn == nil {
+		slog.Warn("INSTRUMENT: DeltaNet sub-struct nil, returning identity")
 		return hiddenStates
 	}
-	qkvMixed := l.WQkv.Forward(ctx, hiddenStates)   // (convDim, nTokens)
-	z := l.WQkvGate.Forward(ctx, hiddenStates)       // (dInner, nTokens)
+
+	// 1. Input projections
+	qkvMixed := dn.WQkv.Forward(ctx, hiddenStates)   // (convDim, nTokens)
+	z := dn.WQkvGate.Forward(ctx, hiddenStates)       // (dInner, nTokens)
 
 	// 2. Alpha/Beta/Gate computation
-	beta := l.SSMBeta.Forward(ctx, hiddenStates)     // (numVHeads, nTokens)
-	alpha := l.SSMAlpha.Forward(ctx, hiddenStates)   // (numVHeads, nTokens)
-	alphaBiased := alpha.Add(ctx, l.SSMDt)           // + dt bias
-	gate := alphaBiased.Softplus(ctx).Mul(ctx, l.SSMA) // decay gate
+	beta := dn.SSMBeta.Forward(ctx, hiddenStates)     // (numVHeads, nTokens)
+	alpha := dn.SSMAlpha.Forward(ctx, hiddenStates)   // (numVHeads, nTokens)
+	alphaBiased := alpha.Add(ctx, dn.SSMDt)           // + dt bias
+	gate := alphaBiased.Softplus(ctx).Mul(ctx, dn.SSMA) // decay gate
 
 	// 3. Conv1d — skip conv state, just apply SiLU to the projection directly
 	// Without conv state padding, SSMConv would fail on single tokens.
@@ -203,14 +219,12 @@ func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Op
 	z2d := z.Reshape(ctx, headVDim, numVHeads*nTokens)
 
 	var normalized ml.Tensor
-	if l.SSMNorm != nil {
-		// SSMNorm weight dim may be ssm_d_state, not headVDim
-		// Group the output to match: (ssm_d_state, headVDim/ssm_d_state * numVHeads * nTokens)
+	if dn.SSMNorm != nil {
 		normDim := opts.ssmDState
 		if headVDim%normDim == 0 {
 			groupSize := headVDim / normDim
 			output3d := output2d.Reshape(ctx, normDim, groupSize*numVHeads*nTokens)
-			norm3d := l.SSMNorm.Forward(ctx, output3d, opts.eps)
+			norm3d := dn.SSMNorm.Forward(ctx, output3d, opts.eps)
 			normalized = norm3d.Reshape(ctx, headVDim, numVHeads*nTokens)
 		} else {
 			normalized = output2d
@@ -223,7 +237,7 @@ func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Op
 
 	// 11. Output projection
 	finalOutput := attnOut.Reshape(ctx, dInner, nTokens)
-	return l.SSMOut.Forward(ctx, finalOutput)
+	return dn.SSMOut.Forward(ctx, finalOutput)
 }
 
 func (l *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options, il int) ml.Tensor {
@@ -251,7 +265,9 @@ func (l *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tens
 	// FFN with pre-norm and residual
 	ffnResidual := hiddenStates
 	hiddenStates = l.PostAttnNorm.Forward(ctx, hiddenStates, opts.eps)
-	hiddenStates = l.FFNDown.Forward(ctx, l.FFNGate.Forward(ctx, hiddenStates).SILU(ctx, l.FFNUp.Forward(ctx, hiddenStates)))
+	if l.FFN != nil {
+		hiddenStates = l.FFN.Down.Forward(ctx, l.FFN.Gate.Forward(ctx, hiddenStates).SILU(ctx, l.FFN.Up.Forward(ctx, hiddenStates)))
+	}
 	return hiddenStates.Add(ctx, ffnResidual)
 }
 
@@ -282,11 +298,9 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			slog.Info("INSTRUMENT: layer tensors",
 				"layer", i,
 				"AttentionNorm", layer.AttentionNorm != nil,
-				"WQkv", layer.WQkv != nil,
-				"WQkvGate", layer.WQkvGate != nil,
-				"SSMOut", layer.SSMOut != nil,
-				"Query", layer.Query != nil,
-				"FFNGate", layer.FFNGate != nil,
+				"Attention", layer.Attention != nil,
+				"DeltaNet", layer.DeltaNet != nil,
+				"FFN", layer.FFN != nil,
 				"isRecurrent", m.Options.isRecurrent(i))
 		}
 
