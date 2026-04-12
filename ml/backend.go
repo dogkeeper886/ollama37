@@ -179,11 +179,13 @@ type Tensor interface {
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
 	Sigmoid(ctx Context) Tensor
+	SigmoidOut(ctx Context) Tensor
 
 	// AlphaLimitSILU is a variant of SILU that clamps the input to the range [-limit, limit]
 	SILUAlphaLimit(ctx Context, up Tensor, alpha, limit float32) Tensor
 
-	Cumsum(ctx Context) Tensor
+	// CumSum computes cumulative sum along dimension 0
+	CumSum(ctx Context) Tensor
 	Conv1D(ctx Context, kernel Tensor, stride, padding, dilation int) Tensor
 	SSMConv(ctx Context, kernel Tensor) Tensor
 	Fill(ctx Context, value float32) Tensor
@@ -206,6 +208,7 @@ type Tensor interface {
 	Repeat(ctx Context, dim, n int) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
+	SetRows(ctx Context, src Tensor, idxs Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
 

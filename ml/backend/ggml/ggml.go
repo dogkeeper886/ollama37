@@ -1358,6 +1358,13 @@ func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1477,6 +1484,13 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SigmoidOut(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sigmoid(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Exp(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1491,7 +1505,7 @@ func (t *Tensor) Softplus(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Cumsum(ctx ml.Context) ml.Tensor {
+func (t *Tensor) CumSum(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_cumsum(ctx.(*Context).ctx, t.t),

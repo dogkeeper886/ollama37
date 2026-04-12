@@ -1,276 +1,226 @@
 package qwen35
 
 import (
-	"log/slog"
+	"cmp"
+	"fmt"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/fs"
-	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 )
 
+// Options contains model configuration
 type Options struct {
-	hiddenSize int
-	numHeads   int
-	numKVHeads int
-	keyLength  int
+	hiddenSize  int
+	numHeads    int
+	numKVHeads  int
+	keyLength   int
 	valueLength int
+	ropeDim     int
 
-	// DeltaNet SSM parameters
-	ssmDInner int
-	ssmDState int
-	ssmDConv  int
-	ssmNGroup int
-	ssmDtRank int
+	eps                   float32
+	ropeBase              float32
+	ropeScale             float32
+	ropeType              string
+	originalContextLength int
+	attentionScale        float64
 
-	eps       float32
-	ropeBase  float32
-	ropeScale float32
+	// MoE config
+	numExperts     int
+	numExpertsUsed int
+	normTopKProb   bool
 
-	// Per-layer head_count_kv array: 0 = DeltaNet, >0 = attention
-	kvHeadsPerLayer []int
+	// Linear attention (Gated Delta Net) config
+	ssmDInner      int // d_inner = head_v_dim * num_v_heads
+	ssmDState      int // head_k_dim
+	ssmNGroup      int // num_k_heads
+	ssmDtRank      int // num_v_heads
+	convKernelSize int // SSM conv kernel size
+	vHeadReordered bool
+
+	// Per-layer type from GGUF metadata
+	isRecurrent []bool
+
+	// RoPE mode config
+	mropeSections    []int
+	mropeInterleaved bool
+
+	// Pre-computed masks for chunked attention (created once per forward pass)
+	masks *Masks
 }
 
-func (o *Options) isRecurrent(il int) bool {
-	if il < len(o.kvHeadsPerLayer) {
-		return o.kvHeadsPerLayer[il] == 0
+func (o Options) headDim() int {
+	return cmp.Or(o.keyLength, o.valueLength, o.hiddenSize/o.numHeads)
+}
+
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	var opts []func(*rope.Options)
+	if len(o.mropeSections) > 0 {
+		if o.mropeInterleaved {
+			opts = append(opts, rope.WithInterleaveMRoPE(o.mropeSections))
+		} else {
+			opts = append(opts, rope.WithMRoPE(o.mropeSections))
+		}
+	} else {
+		opts = append(opts, rope.WithTypeNeoX())
 	}
-	return false
-}
 
-func (o *Options) headDim() int {
-	if o.keyLength > 0 {
-		return o.keyLength
+	if o.ropeType == "yarn" {
+		attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
+		opts = append(opts,
+			rope.WithOriginalContextLength(o.originalContextLength),
+			rope.WithExtrapolationFactor(1.),
+			rope.WithAttentionFactor(attnFactor),
+		)
 	}
-	if o.valueLength > 0 {
-		return o.valueLength
+	ropeDim := cmp.Or(o.ropeDim, o.headDim())
+	return nn.RoPE(ctx, states, positions, ropeDim, o.ropeBase, 1./o.ropeScale, opts...)
+}
+
+// Operator is the interface for attention-like operators
+type Operator interface {
+	Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error)
+}
+
+// MLP is the interface for feedforward networks
+type MLP interface {
+	Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor
+}
+
+// sparse implements MoE with shared experts
+type sparse struct {
+	Router *nn.Linear      `gguf:"ffn_gate_inp"`
+	Gate   *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up     *nn.LinearBatch `gguf:"ffn_up_exps"`
+	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
+
+	// Shared experts
+	SharedGateInp *nn.Linear `gguf:"ffn_gate_inp_shexp"`
+	SharedGate    *nn.Linear `gguf:"ffn_gate_shexp"`
+	SharedUp      *nn.Linear `gguf:"ffn_up_shexp"`
+	SharedDown    *nn.Linear `gguf:"ffn_down_shexp"`
+}
+
+func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
+	hiddenDim, sequenceLength, batchSize := hiddenStates.Dim(0), hiddenStates.Dim(1), hiddenStates.Dim(2)
+	if batchSize == 0 {
+		batchSize = 1
 	}
-	return o.hiddenSize / o.numHeads
+	hiddenStates2D := hiddenStates.Reshape(ctx, hiddenDim, sequenceLength*batchSize)
+
+	// Router logits
+	routerLogits := mlp.Router.Forward(ctx, hiddenStates2D)
+
+	// Softmax routing weights
+	routingWeights := routerLogits.Softmax(ctx)
+	selectedExperts := routingWeights.TopK(ctx, opts.numExpertsUsed)
+	routingWeights = routingWeights.Reshape(ctx, 1, opts.numExperts, hiddenStates2D.Dim(1)).Rows(ctx, selectedExperts)
+	if opts.normTopKProb {
+		routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, hiddenStates2D.Dim(1))
+		routingWeights = routingWeights.Div(ctx, routingWeights.SumRows(ctx))
+		routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenStates2D.Dim(1))
+	}
+
+	hiddenStates3D := hiddenStates2D.Reshape(ctx, hiddenStates2D.Dim(0), 1, hiddenStates2D.Dim(1))
+
+	// Expert computation with SILU activation
+	gateOut := mlp.Gate.Forward(ctx, hiddenStates3D, selectedExperts)
+	upOut := mlp.Up.Forward(ctx, hiddenStates3D, selectedExperts)
+	experts := gateOut.SILU(ctx, upOut)
+	experts = mlp.Down.Forward(ctx, experts, selectedExperts)
+	experts = experts.Mul(ctx, routingWeights)
+
+	// Sum over experts
+	moeOut := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
+	for i := 1; i < opts.numExpertsUsed; i++ {
+		moeOut = moeOut.Add(ctx, experts.View(ctx, i*experts.Stride(1), experts.Dim(0), experts.Stride(2), experts.Dim(2)))
+	}
+
+	// Add shared experts if present
+	if mlp.SharedUp != nil {
+		sharedGate := mlp.SharedGate.Forward(ctx, hiddenStates2D)
+		sharedUp := mlp.SharedUp.Forward(ctx, hiddenStates2D)
+		sharedOut := sharedGate.SILU(ctx, sharedUp)
+		sharedOut = mlp.SharedDown.Forward(ctx, sharedOut)
+
+		// Apply shared expert gating
+		if mlp.SharedGateInp != nil {
+			sharedGateVal := mlp.SharedGateInp.Forward(ctx, hiddenStates2D)
+			sharedGateVal = sharedGateVal.SigmoidOut(ctx)
+			// Broadcast gate to match dimensions
+			sharedGateVal = sharedGateVal.Repeat(ctx, 0, sharedOut.Dim(0))
+			sharedOut = sharedOut.Mul(ctx, sharedGateVal)
+		}
+
+		moeOut = moeOut.Add(ctx, sharedOut)
+	}
+
+	return moeOut
 }
 
-// Attention sub-struct for standard GQA layers
-type Attention struct {
-	Query     *nn.Linear  `gguf:"attn_q"`
-	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
-	Key       *nn.Linear  `gguf:"attn_k"`
-	KeyNorm   *nn.RMSNorm `gguf:"attn_k_norm"`
-	Value     *nn.Linear  `gguf:"attn_v"`
-	Output    *nn.Linear  `gguf:"attn_output"`
-}
-
-// DeltaNetBlock sub-struct for DeltaNet layers
-type DeltaNetBlock struct {
-	WQkv      *nn.Linear  `gguf:"attn_qkv"`
-	WQkvGate  *nn.Linear  `gguf:"attn_gate"`
-	SSMAlpha  *nn.Linear  `gguf:"ssm_alpha"`
-	SSMBeta   *nn.Linear  `gguf:"ssm_beta"`
-	SSMDt     ml.Tensor   `gguf:"ssm_dt"`
-	SSMA      ml.Tensor   `gguf:"ssm_a"`
-	SSMConv1D *nn.Linear  `gguf:"ssm_conv1d"`
-	SSMNorm   *nn.RMSNorm `gguf:"ssm_norm"`
-	SSMOut    *nn.Linear  `gguf:"ssm_out"`
-}
-
-// FFN sub-struct
-type FFN struct {
+// dense implements standard feedforward
+type dense struct {
 	Gate *nn.Linear `gguf:"ffn_gate"`
 	Up   *nn.Linear `gguf:"ffn_up"`
 	Down *nn.Linear `gguf:"ffn_down"`
 }
 
-// Layer uses nested pointer sub-structs so populateFields can match
-// tensors correctly per layer. Only the sub-struct whose tensors exist
-// in the GGUF will be non-nil.
+func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *Options) ml.Tensor {
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	return mlp.Down.Forward(ctx, hiddenStates)
+}
+
+// Layer represents a single transformer layer
 type Layer struct {
-	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	PostAttnNorm  *nn.RMSNorm `gguf:"post_attention_norm"`
+	AttentionNorm     *nn.RMSNorm `gguf:"attn_norm"`
+	AttentionPostNorm *nn.RMSNorm `gguf:"post_attention_norm"` // Post-attention norm before FFN
+	Operator          Operator
 
-	Attention *Attention
-	DeltaNet  *DeltaNetBlock
-
-	FFN *FFN
+	FFNNorm *nn.RMSNorm `gguf:"ffn_norm"`
+	MLP     MLP
 }
 
-func (l *Layer) forwardAttention(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options, il int) ml.Tensor {
-	a := l.Attention
-	if a == nil {
-		return hiddenStates
-	}
-
-	batchSize := hiddenStates.Dim(1)
-	kvHeads := opts.kvHeadsPerLayer[il]
-
-	query := a.Query.Forward(ctx, hiddenStates)
-	key := a.Key.Forward(ctx, hiddenStates)
-	value := a.Value.Forward(ctx, hiddenStates)
-
-	query = query.Reshape(ctx, opts.headDim(), opts.numHeads, batchSize)
-	key = key.Reshape(ctx, opts.headDim(), kvHeads, batchSize)
-	value = value.Reshape(ctx, opts.headDim(), kvHeads, batchSize)
-
-	query = a.QueryNorm.Forward(ctx, query, opts.eps)
-	key = a.KeyNorm.Forward(ctx, key, opts.eps)
-
-	ropeOpts := []func(*rope.Options){rope.WithTypeNeoX()}
-	query = fast.RoPE(ctx, query, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, ropeOpts...)
-	key = fast.RoPE(ctx, key, positions, opts.headDim(), opts.ropeBase, 1./opts.ropeScale, ropeOpts...)
-
-	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim())), cache)
-	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
-	return a.Output.Forward(ctx, attention)
-}
-
-// forwardDeltaNet implements the DeltaNet linear attention layer.
-// Currently without persistent recurrent state — each call starts with zero state.
-// This means DeltaNet layers don't remember across tokens, but attention layers (16/64)
-// do via KV cache, providing some coherence.
-func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
-	nTokens := hiddenStates.Dim(1)
-	dInner := opts.ssmDInner
-	headKDim := opts.ssmDState   // 128
-	numKHeads := opts.ssmNGroup  // 8
-	numVHeads := opts.ssmDtRank  // 24
-	headVDim := dInner / numVHeads // 256
-
-	dn := l.DeltaNet
-	if dn == nil {
-		slog.Warn("INSTRUMENT: DeltaNet sub-struct nil, returning identity")
-		return hiddenStates
-	}
-
-	// 1. Input projections
-	qkvMixed := dn.WQkv.Forward(ctx, hiddenStates)   // (convDim, nTokens)
-	z := dn.WQkvGate.Forward(ctx, hiddenStates)       // (dInner, nTokens)
-
-	// 2. Alpha/Beta/Gate computation
-	beta := dn.SSMBeta.Forward(ctx, hiddenStates)     // (numVHeads, nTokens)
-	alpha := dn.SSMAlpha.Forward(ctx, hiddenStates)   // (numVHeads, nTokens)
-	alphaBiased := alpha.Add(ctx, dn.SSMDt)           // + dt bias
-	gate := alphaBiased.Softplus(ctx).Mul(ctx, dn.SSMA) // decay gate
-
-	// 3. Conv1d — skip conv state, just apply SiLU to the projection directly
-	// Without conv state padding, SSMConv would fail on single tokens.
-	// For now, apply SiLU directly to qkvMixed as a simplified path.
-	convOutput := qkvMixed.SILU(ctx) // (convDim, nTokens)
-
-	// 4. Extract Q, K, V from conv output
-	// convOutput shape: (convDim, nTokens), dim0=channels, dim1=tokens
-	// Q = first qDim channels, K = next kDim, V = next vDim
-	qDim := headKDim * numKHeads // 1024
-	kDim := headKDim * numKHeads // 1024
-
-	// View as 2D slices then reshape to 3D
-	elemSize := convOutput.Stride(0)
-	tokenStride := convOutput.Stride(1)
-
-	q := convOutput.View(ctx, 0, qDim, tokenStride, nTokens)
-	q = q.Contiguous(ctx)
-	q = q.Reshape(ctx, headKDim, numKHeads, nTokens)
-
-	k := convOutput.View(ctx, elemSize*qDim, kDim, tokenStride, nTokens)
-	k = k.Contiguous(ctx)
-	k = k.Reshape(ctx, headKDim, numKHeads, nTokens)
-
-	v := convOutput.View(ctx, elemSize*(qDim+kDim), dInner, tokenStride, nTokens)
-	v = v.Contiguous(ctx)
-	v = v.Reshape(ctx, headVDim, numVHeads, nTokens)
-
-	// 5. Repeat Q/K if head counts differ
-	if numKHeads != numVHeads {
-		q = q.Repeat4D(ctx, headKDim, numVHeads, nTokens, 1)
-		k = k.Repeat4D(ctx, headKDim, numVHeads, nTokens, 1)
-	}
-
-	// 6. L2 normalize Q and K
-	q = q.L2Norm(ctx, opts.eps)
-	k = k.L2Norm(ctx, opts.eps)
-
-	// 7. Scale Q
-	scale := 1.0 / math.Sqrt(float64(headVDim))
-	q = q.Scale(ctx, scale)
-
-	// 8. Sigmoid beta
-	beta = beta.Sigmoid(ctx)
-
-	// 9. DeltaNet autoregressive attention (stateless — zero initial state)
-	// Without state: output ≈ 0 for first token, builds up within batch
-	// For single-token decode, this effectively returns near-zero
-	// The 16 attention layers carry the sequence memory via KV cache
-
-	// Create zero output matching expected shape
-	// output shape: (headVDim, numVHeads, nTokens) → but we need (headVDim, numVHeads*nTokens)
-	// Use gate and beta to produce some signal rather than pure zeros
-	_ = gate
-	_ = beta
-
-	// Simplified: v already has the right content, just pass it through
-	// This is wrong but produces non-zero output that won't cause infinite generation
-	output := v // (headVDim, numVHeads, nTokens)
-
-	// 10. Gated normalization: rms_norm(output) * silu(z)
-	// SSMNorm weight has shape (ssm_d_state) which may differ from headVDim
-	// Reshape output to match norm weight, apply norm, then reshape back
-	output2d := output.Reshape(ctx, headVDim, numVHeads*nTokens)
-	z2d := z.Reshape(ctx, headVDim, numVHeads*nTokens)
-
-	var normalized ml.Tensor
-	if dn.SSMNorm != nil {
-		normDim := opts.ssmDState
-		if headVDim%normDim == 0 {
-			groupSize := headVDim / normDim
-			output3d := output2d.Reshape(ctx, normDim, groupSize*numVHeads*nTokens)
-			norm3d := dn.SSMNorm.Forward(ctx, output3d, opts.eps)
-			normalized = norm3d.Reshape(ctx, headVDim, numVHeads*nTokens)
-		} else {
-			normalized = output2d
-		}
-	} else {
-		normalized = output2d
-	}
-	gatedSilu := z2d.SILU(ctx)
-	attnOut := normalized.Mul(ctx, gatedSilu)
-
-	// 11. Output projection
-	finalOutput := attnOut.Reshape(ctx, dInner, nTokens)
-	return dn.SSMOut.Forward(ctx, finalOutput)
-}
-
-func (l *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options, il int) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, layer int, hiddenStates, positions, outputs ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error) {
 	residual := hiddenStates
 
 	// Pre-attention norm
 	hiddenStates = l.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
 
-	// Attention or DeltaNet based on layer type
-	if opts.isRecurrent(il) {
-		hiddenStates = l.forwardDeltaNet(ctx, hiddenStates, opts)
-	} else {
-		hiddenStates = l.forwardAttention(ctx, hiddenStates, positions, cache, opts, il)
+	// Attention (full or linear)
+	var err error
+	hiddenStates, err = l.Operator.Forward(ctx, hiddenStates, positions, cache, opts)
+	if err != nil {
+		return nil, err
 	}
 
-	// Output filtering on last layer
+	// Output projection for last layer
 	if outputs != nil {
 		hiddenStates = hiddenStates.Rows(ctx, outputs)
 		residual = residual.Rows(ctx, outputs)
 	}
 
-	// Residual connection
+	// First residual connection
 	hiddenStates = hiddenStates.Add(ctx, residual)
 
-	// FFN with pre-norm and residual
+	// Save for FFN residual
 	ffnResidual := hiddenStates
-	hiddenStates = l.PostAttnNorm.Forward(ctx, hiddenStates, opts.eps)
-	if l.FFN != nil {
-		hiddenStates = l.FFN.Down.Forward(ctx, l.FFN.Gate.Forward(ctx, hiddenStates).SILU(ctx, l.FFN.Up.Forward(ctx, hiddenStates)))
-	}
-	return hiddenStates.Add(ctx, ffnResidual)
+
+	// Post-attention norm (before FFN)
+	hiddenStates = l.AttentionPostNorm.Forward(ctx, hiddenStates, opts.eps)
+
+	// FFN
+	hiddenStates = l.MLP.Forward(ctx, hiddenStates, opts)
+
+	// Second residual connection
+	return hiddenStates.Add(ctx, ffnResidual), nil
 }
 
+// Model is the main qwen35 model
 type Model struct {
 	model.Base
 	model.BytePairEncoding
@@ -286,77 +236,247 @@ type Model struct {
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
-	for i, layer := range m.Layers {
-		if m.Cache != nil {
-			m.Cache.SetLayer(i)
-		}
+	cache := m.Cache.(*HybridCache)
 
-		// INSTRUMENT: check tensor mapping for first 5 layers
-		if i < 5 {
-			slog.Info("INSTRUMENT: layer tensors",
-				"layer", i,
-				"AttentionNorm", layer.AttentionNorm != nil,
-				"Attention", layer.Attention != nil,
-				"DeltaNet", layer.DeltaNet != nil,
-				"FFN", layer.FFN != nil,
-				"isRecurrent", m.Options.isRecurrent(i))
-		}
+	// Masks are allocated lazily only for chunked recurrent prefill.
+	m.Options.masks = nil
+
+	for i, layer := range m.Layers {
+		cache.SetLayer(i)
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
 			outputs = batch.Outputs
 		}
 
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options, i)
+		var err error
+		hiddenStates, err = layer.Forward(ctx, i, hiddenStates, positions, outputs, cache, m.Options)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
 	return m.Output.Forward(ctx, hiddenStates), nil
 }
 
+func (m *Model) Validate() error {
+	if m.Options == nil {
+		return fmt.Errorf("qwen35: missing model options")
+	}
+	if len(m.Layers) != len(m.Options.isRecurrent) {
+		return fmt.Errorf("qwen35: layer config mismatch: have %d layers, %d recurrent flags", len(m.Layers), len(m.Options.isRecurrent))
+	}
+
+	for i, layer := range m.Layers {
+		if !m.Options.isRecurrent[i] {
+			continue
+		}
+
+		gdn, ok := layer.Operator.(*GatedDeltaNet)
+		if !ok || gdn == nil {
+			return fmt.Errorf("qwen35: layer %d expected recurrent operator", i)
+		}
+		if gdn.SSMIn == nil && (gdn.SSMQKV == nil || gdn.SSMQKVGate == nil) {
+			return fmt.Errorf("qwen35: layer %d missing attn_qkv/attn_gate projections", i)
+		}
+		if gdn.SSMBetaAlpha == nil && (gdn.SSMBeta == nil || gdn.SSMAlpha == nil) {
+			return fmt.Errorf("qwen35: layer %d missing linear attention beta/alpha projections", i)
+		}
+		if gdn.SSMDT == nil {
+			return fmt.Errorf("qwen35: layer %d missing ssm_dt tensor", i)
+		}
+		if gdn.SSMA == nil {
+			return fmt.Errorf("qwen35: layer %d missing ssm_a tensor", i)
+		}
+		if gdn.SSMConv1D == nil || gdn.SSMConv1D.Weight == nil {
+			return fmt.Errorf("qwen35: layer %d missing ssm_conv1d tensor", i)
+		}
+		if gdn.SSMNorm == nil || gdn.SSMOut == nil {
+			return fmt.Errorf("qwen35: layer %d missing ssm_norm/ssm_out projections", i)
+		}
+	}
+
+	return nil
+}
+
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	ropeOpts := []func(*rope.Options){rope.WithTypeNeoX()}
-	return fast.RoPE(ctx, key, shift, m.headDim(), m.ropeBase, 1./m.ropeScale, ropeOpts...), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 var _ model.Model = (*Model)(nil)
 
-func New(c fs.Config) (model.Model, error) {
-	blockCount := int(c.Uint("block_count"))
+func defaultVHeadReordered(arch string) bool {
+	return arch == "qwen35" || arch == "qwen35moe"
+}
 
-	// Read per-layer head_count_kv to determine which layers are DeltaNet vs attention
-	kvHeadsRaw := c.Ints("attention.head_count_kv")
-	kvHeadsPerLayer := make([]int, blockCount)
-	if len(kvHeadsRaw) >= blockCount {
-		for i := 0; i < blockCount; i++ {
-			kvHeadsPerLayer[i] = int(kvHeadsRaw[i])
+func inferRecurrentLayers(headCountKV []uint64, numLayers int, fullAttentionInterval uint32) ([]bool, error) {
+	isRecurrent := make([]bool, numLayers)
+
+	hasZero := false
+	hasFull := false
+	for i := range numLayers {
+		if i >= len(headCountKV) {
+			continue
 		}
-	} else if len(kvHeadsRaw) == 1 {
-		// scalar: all layers have same kv heads
-		for i := range kvHeadsPerLayer {
-			kvHeadsPerLayer[i] = int(kvHeadsRaw[0])
+
+		if headCountKV[i] == 0 {
+			isRecurrent[i] = true
+			hasZero = true
+		} else {
+			hasFull = true
+		}
+	}
+	if hasZero && hasFull {
+		return isRecurrent, nil
+	}
+	if !hasFull {
+		return nil, fmt.Errorf("qwen35: attention.head_count_kv must include at least one non-zero value")
+	}
+
+	// Compatibility path: older imports store a scalar KV head count and omit
+	// per-layer recurrent flags. Derive the hybrid layout from the interval.
+	interval := int(fullAttentionInterval)
+	if interval == 0 {
+		interval = min(4, numLayers)
+	}
+	if interval <= 0 {
+		return nil, fmt.Errorf("qwen35: invalid block_count (%d)", numLayers)
+	}
+	if interval > numLayers {
+		return nil, fmt.Errorf("qwen35: full_attention_interval (%d) exceeds block_count (%d)", interval, numLayers)
+	}
+
+	hasZero = false
+	hasFull = false
+	for i := range numLayers {
+		isRecurrent[i] = (i+1)%interval != 0
+		if isRecurrent[i] {
+			hasZero = true
+		} else {
+			hasFull = true
+		}
+	}
+	if !hasZero || !hasFull {
+		return nil, fmt.Errorf("qwen35: full_attention_interval (%d) does not produce a mixed recurrent/full layout", interval)
+	}
+
+	return isRecurrent, nil
+}
+
+func New(c fs.Config) (model.Model, error) {
+	numLayers := int(c.Uint("block_count"))
+	layers := make([]Layer, numLayers)
+
+	// Get per-layer head counts (for detecting layer type)
+	type headCounts interface {
+		HeadCount() []uint64
+		HeadCountKV() []uint64
+	}
+
+	var headCountKV []uint64
+	if hc, ok := c.(headCounts); ok {
+		headCountKV = hc.HeadCountKV()
+	}
+
+	isRecurrent, err := inferRecurrentLayers(headCountKV, numLayers, c.Uint("full_attention_interval"))
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine if MoE
+	isMoE := c.Uint("expert_count") > 0
+
+	for i := range layers {
+		if isRecurrent[i] {
+			layers[i].Operator = &GatedDeltaNet{Layer: i}
+		} else {
+			layers[i].Operator = &FullAttention{}
+		}
+
+		if isMoE {
+			layers[i].MLP = &sparse{}
+		} else {
+			layers[i].MLP = &dense{}
 		}
 	}
 
-	layers := make([]Layer, blockCount)
+	mropeSections := c.Ints("mrope_sections", nil)
+	if len(mropeSections) == 0 {
+		mropeSections = c.Ints("rope.mrope_section", nil)
+	}
+	if len(mropeSections) == 0 {
+		mropeSections = c.Ints("rope.dimension_sections", nil)
+	}
+	if len(mropeSections) > 4 {
+		mropeSections = mropeSections[:4]
+	}
+
+	ropeType := c.String("rope.scaling.type")
+	if ropeType == "" {
+		ropeType = c.String("rope.type")
+	}
 
 	opts := &Options{
-		hiddenSize:      int(c.Uint("embedding_length")),
-		numHeads:        int(c.Uint("attention.head_count")),
-		numKVHeads:      int(c.Uint("attention.head_count_kv")),
-		keyLength:       int(c.Uint("attention.key_length")),
-		valueLength:     int(c.Uint("attention.value_length")),
-		ssmDInner:       int(c.Uint("ssm.inner_size")),
-		ssmDState:       int(c.Uint("ssm.state_size")),
-		ssmDConv:        int(c.Uint("ssm.conv_kernel")),
-		ssmNGroup:       int(c.Uint("ssm.group_count")),
-		ssmDtRank:       int(c.Uint("ssm.time_step_rank")),
-		eps:             c.Float("attention.layer_norm_rms_epsilon"),
-		ropeBase:        c.Float("rope.freq_base"),
-		ropeScale:       c.Float("rope.scaling.factor", 1),
-		kvHeadsPerLayer: kvHeadsPerLayer,
+		hiddenSize: int(c.Uint("embedding_length")),
+		numHeads:   int(c.Uint("attention.head_count")),
+		numKVHeads: func() int {
+			for _, v := range headCountKV {
+				if v > 0 {
+					return int(v)
+				}
+			}
+			return 0
+		}(),
+		keyLength:             int(c.Uint("attention.key_length")),
+		valueLength:           int(c.Uint("attention.value_length")),
+		ropeDim:               int(c.Uint("rope.dimension_count")),
+		eps:                   c.Float("attention.layer_norm_rms_epsilon"),
+		ropeType:              ropeType,
+		ropeBase:              c.Float("rope.freq_base"),
+		ropeScale:             c.Float("rope.scaling.factor", 1),
+		originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
+		attentionScale:        float64(c.Float("attention.scale")),
+		numExperts:            int(c.Uint("expert_count")),
+		numExpertsUsed:        int(c.Uint("expert_used_count")),
+		normTopKProb:          c.Bool("norm_top_k_prob", true),
+		ssmDInner:             int(c.Uint("ssm.inner_size")),
+		ssmDState:             int(c.Uint("ssm.state_size")),
+		ssmNGroup:             int(c.Uint("ssm.group_count")),
+		ssmDtRank:             int(c.Uint("ssm.time_step_rank")),
+		convKernelSize:        int(c.Uint("ssm.conv_kernel")),
+		vHeadReordered:        c.Bool("ssm.v_head_reordered", defaultVHeadReordered(c.Architecture())),
+		isRecurrent:           isRecurrent,
+		mropeSections: slices.Collect(func(yield func(int) bool) {
+			for _, section := range mropeSections {
+				if !yield(int(section)) {
+					return
+				}
+			}
+		}),
+		mropeInterleaved: c.Bool("rope.mrope_interleaved", c.Bool("mrope_interleaved", false)),
+	}
+	if opts.numKVHeads == 0 {
+		return nil, fmt.Errorf("qwen35: attention.head_count_kv must include at least one non-zero value")
+	}
+
+	// Calculate cache dimensions
+	convDim := max(0, opts.convKernelSize-1)
+	convChannels := opts.ssmDInner + 2*opts.ssmNGroup*opts.ssmDState
+	headVDim := 0
+	numVHeads := opts.ssmDtRank
+	if numVHeads > 0 {
+		headVDim = opts.ssmDInner / numVHeads
+	}
+	deltaStateSize := headVDim * headVDim * numVHeads
+
+	// Validate dimension assumption: headKDim == headVDim is required for state computations
+	headKDim := opts.ssmDState
+	if headKDim != headVDim && headKDim > 0 && headVDim > 0 {
+		return nil, fmt.Errorf("qwen35: headKDim (%d) != headVDim (%d) not supported; state computations require equal dimensions", headKDim, headVDim)
 	}
 
 	m := Model{
@@ -365,7 +485,7 @@ func New(c fs.Config) (model.Model, error) {
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
 				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
 				EOS: append(
@@ -379,10 +499,7 @@ func New(c fs.Config) (model.Model, error) {
 		Options: opts,
 	}
 
-	// For now, use CausalCache for the attention layers
-	// TODO: implement HybridCache with recurrent state for DeltaNet layers
-	m.Cache = kvcache.NewCausalCache(m.Shift)
-
+	m.Cache = NewHybridCache(m.Shift, convDim, convChannels, deltaStateSize)
 	return &m, nil
 }
 
