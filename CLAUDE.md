@@ -231,6 +231,66 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 - **Trigger**: After confirming behavior through tracing, profiling, or debugging
 - **Rules**: Only annotate verified behavior. Comment "why" not "what". Tags: `// VERIFIED:`, `// ASSUMPTION:`, `// NOTE:`. Architecture docs in `docs/arch/`.
 
+## Logging Guidelines
+
+All debug logging must be **level-gated and permanent** — never add temporary log lines that need manual removal.
+
+### Levels
+
+| Level | Use for | Default |
+|-------|---------|---------|
+| ERROR | User-visible failures | On |
+| WARN | Unexpected but recovered | On |
+| INFO | Major state changes (model loaded, GPU count) | On |
+| DEBUG | Internal decisions (layer routing, cache hits, tensor lookups) | Off |
+
+### Go code (`slog`)
+
+```go
+// Good — silent unless OLLAMA_DEBUG=1
+slog.Debug("layer uses recurrent path", "layer", i, "kvHeads", 0)
+
+// Good — important state, always visible
+slog.Info("model loaded", "gpus", 2, "vram", "21.5 GiB")
+
+// Bad — temporary, requires manual removal
+slog.Info("INSTRUMENT: tensor", "name", name)
+```
+
+Gate expensive debug work:
+```go
+if slog.Default().Enabled(nil, slog.LevelDebug) {
+    slog.Debug("tensor details", "names", getAllTensorNames())
+}
+```
+
+### C code (GGML/CUDA)
+
+```c
+// Graph building, model loading — use GGML log macros (level-gated at runtime)
+GGML_LOG_DEBUG("rope: mode=%d dims=%d\n", mode, n_dims);
+
+// CUDA hot paths — use #ifdef (compiled out in release)
+#ifdef GGML_CUDA_DEBUG
+    fprintf(stderr, "CUDA kernel: grid=%d block=%d\n", grid, block);
+#endif
+```
+
+### Activation
+
+```bash
+OLLAMA_DEBUG=1 ollama serve                        # Go debug logs
+GGML_CUDA_DEBUG=1 ollama serve                     # CUDA kernel logs
+OLLAMA_DEBUG=1 GGML_CUDA_DEBUG=1 ollama serve      # Both
+```
+
+### Rules
+
+1. **No marker prefixes** — never use `INSTRUMENT:`, `DEBUG:`, `TEMP:` in messages. Use the correct log level instead.
+2. **Log decisions, not data dumps** — "layer 3 routed to DeltaNet" is useful; dumping all tensor names is not.
+3. **Never remove debug logs** — if it was useful during development, keep it as `slog.Debug`. If it's not useful to anyone, don't add it.
+4. **C code: two tiers** — `GGML_LOG_DEBUG` for always-compiled level-gated logs; `#ifdef GGML_CUDA_DEBUG` for per-kernel-launch tracing that would kill performance.
+
 ## Skills and Commands
 
 When creating or updating skills and commands, follow the format guides in `.claude/references/`:
