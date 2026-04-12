@@ -23,6 +23,7 @@ type Options struct {
 	// DeltaNet SSM parameters
 	ssmDInner int
 	ssmDState int
+	ssmDConv  int
 	ssmNGroup int
 	ssmDtRank int
 
@@ -296,8 +297,9 @@ func New(c fs.Config) (model.Model, error) {
 		valueLength:     int(c.Uint("attention.value_length")),
 		ssmDInner:       int(c.Uint("ssm.inner_size")),
 		ssmDState:       int(c.Uint("ssm.state_size")),
+		ssmDConv:        int(c.Uint("ssm.conv_kernel")),
 		ssmNGroup:       int(c.Uint("ssm.group_count")),
-		ssmDtRank:       int(c.Uint("ssm.dt_rank")),
+		ssmDtRank:       int(c.Uint("ssm.time_step_rank")),
 		eps:             c.Float("attention.layer_norm_rms_epsilon"),
 		ropeBase:        c.Float("rope.freq_base"),
 		ropeScale:       c.Float("rope.scaling.factor", 1),
