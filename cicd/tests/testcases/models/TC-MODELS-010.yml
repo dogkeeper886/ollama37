@@ -12,7 +12,7 @@ steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"qwen3.5:27b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":100}}' \
+        -d '{"model":"qwen3.5:27b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"

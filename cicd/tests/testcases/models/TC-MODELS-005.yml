@@ -17,7 +17,7 @@ steps:
           "messages":[{"role":"user","content":"What is the weather in San Francisco?"}],
           "tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"The city and state"}}}}}],
           "stream":false,
-          "options":{"temperature":0}
+          "options":{"temperature":0,"num_predict":200}
         }' | head -c 4000
     expectPatterns:
       - "get_weather"

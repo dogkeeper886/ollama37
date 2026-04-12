@@ -10,7 +10,7 @@ steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gpt-oss:20b","prompt":"What is 2+2? Answer briefly.","stream":false}' \
+        -d '{"model":"gpt-oss:20b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
