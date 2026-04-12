@@ -1504,13 +1504,6 @@ func (t *Tensor) SSMConv(ctx ml.Context, kernel ml.Tensor) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
-	}
-}
-
 func (t *Tensor) Fill(ctx ml.Context, value float32) ml.Tensor {
 	return &Tensor{
 		b: t.b,

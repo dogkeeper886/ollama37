@@ -186,7 +186,6 @@ type Tensor interface {
 	Cumsum(ctx Context) Tensor
 	Conv1D(ctx Context, kernel Tensor, stride, padding, dilation int) Tensor
 	SSMConv(ctx Context, kernel Tensor) Tensor
-	Neg(ctx Context) Tensor
 	Fill(ctx Context, value float32) Tensor
 	Diag(ctx Context) Tensor
 	Tri(ctx Context, triType int) Tensor
