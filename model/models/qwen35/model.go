@@ -188,10 +188,27 @@ func (l *Layer) forwardDeltaNet(ctx ml.Context, hiddenStates ml.Tensor, opts *Op
 	output := v // (headVDim, numVHeads, nTokens)
 
 	// 10. Gated normalization: rms_norm(output) * silu(z)
+	// SSMNorm weight has shape (ssm_d_state) which may differ from headVDim
+	// Reshape output to match norm weight, apply norm, then reshape back
 	output2d := output.Reshape(ctx, headVDim, numVHeads*nTokens)
 	z2d := z.Reshape(ctx, headVDim, numVHeads*nTokens)
 
-	normalized := l.SSMNorm.Forward(ctx, output2d, opts.eps)
+	var normalized ml.Tensor
+	if l.SSMNorm != nil {
+		// SSMNorm weight dim may be ssm_d_state, not headVDim
+		// Group the output to match: (ssm_d_state, headVDim/ssm_d_state * numVHeads * nTokens)
+		normDim := opts.ssmDState
+		if headVDim%normDim == 0 {
+			groupSize := headVDim / normDim
+			output3d := output2d.Reshape(ctx, normDim, groupSize*numVHeads*nTokens)
+			norm3d := l.SSMNorm.Forward(ctx, output3d, opts.eps)
+			normalized = norm3d.Reshape(ctx, headVDim, numVHeads*nTokens)
+		} else {
+			normalized = output2d
+		}
+	} else {
+		normalized = output2d
+	}
 	gatedSilu := z2d.SILU(ctx)
 	attnOut := normalized.Mul(ctx, gatedSilu)
 
