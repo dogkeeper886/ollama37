@@ -1,0 +1,84 @@
+name: Throughput Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Models to benchmark (space-separated)"
+        required: true
+        default: "gemma3:4b"
+        type: string
+      num_predict:
+        description: "Max tokens to generate"
+        required: false
+        default: "128"
+        type: string
+      context_size:
+        description: "Context window size"
+        required: false
+        default: "2048"
+        type: string
+
+env:
+  OLLAMA_HOST: http://localhost:11434
+
+jobs:
+  throughput:
+    name: Throughput Benchmark
+    runs-on: self-hosted
+    environment: cicd-1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run throughput benchmark
+        run: |
+          bash cicd/scripts/benchmark-throughput.sh \
+            --num-predict "${{ inputs.num_predict || '128' }}" \
+            --context "${{ inputs.context_size || '2048' }}" \
+            --output /tmp/throughput-results.json \
+            ${{ inputs.models }}
+
+      - name: Generate summary
+        if: always()
+        run: |
+          if [ ! -f /tmp/throughput-results.json ]; then
+            echo "No results to summarize" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          SHA=$(jq -r '.git_sha' /tmp/throughput-results.json)
+
+          # GPU info
+          GPU=$(jq -r '.gpu.before' /tmp/throughput-results.json)
+          GPU_NAME=""
+          if [ -n "$GPU" ] && [ "$GPU" != "null" ] && [ "$GPU" != "" ]; then
+            GPU_NAME=$(echo "$GPU" | head -1 | cut -d',' -f2 | xargs)
+          fi
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Throughput Benchmark
+
+          **Commit:** \`${SHA}\` | **GPU:** ${GPU_NAME:-unknown} | **Context:** ${{ inputs.context_size || '2048' }}
+
+          | Model | IN tok | OUT tok | Prompt tok/s | Gen tok/s | GPU% | VRAM (MiB) |
+          |-------|--------|---------|-------------|-----------|------|------------|
+          EOF
+
+          jq -r '.results[] | "| \(.model) | \(.in_tokens) | \(.out_tokens) | \(.prompt_eval_tps) | \(.eval_tps) | \(.gpu_offload_pct)% | \(.gpu_info | split("\n") | map(select(length > 0)) | if length > 0 then map(split(",") | map(gsub("^\\s+|\\s+$";"")) | .[2] + "/" + .[3]) | join("+") else "n/a" end) |"' \
+            /tmp/throughput-results.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Unload models
+        if: always()
+        run: |
+          for MODEL in ${{ inputs.models }}; do
+            curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
+          done
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: throughput-results
+          path: /tmp/throughput-results.json
