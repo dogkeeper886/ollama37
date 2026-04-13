@@ -236,25 +236,64 @@ else
     echo "$REPORT"
 fi
 
+# Detect GPU count and total VRAM from the first result's gpu_info
+GPU_COUNT=0
+GPU_TOTALS=()
+GPU_NAME=""
+if [ "$(echo "$RESULTS" | jq 'length')" -gt 0 ]; then
+    FIRST_GPU_INFO=$(echo "$RESULTS" | jq -r '.[0].gpu_info // ""')
+    if [ -n "$FIRST_GPU_INFO" ] && [ "$FIRST_GPU_INFO" != "null" ]; then
+        while IFS=', ' read -r idx name used total free; do
+            GPU_COUNT=$((GPU_COUNT + 1))
+            GPU_TOTALS+=("$total")
+            GPU_NAME="$name"
+        done <<< "$FIRST_GPU_INFO"
+    fi
+fi
+
 # Print comparison table
 echo "=== Results ===" >&2
 echo "" >&2
-printf "%-25s %6s %7s %12s %10s %5s %12s\n" \
-    "MODEL" "IN" "OUT" "PROMPT tok/s" "GEN tok/s" "GPU%" "VRAM (MiB)" >&2
-printf "%-25s %6s %7s %12s %10s %5s %12s\n" \
-    "-------------------------" "------" "-------" "------------" "----------" "-----" "------------" >&2
+
+# Print GPU info header (constant across all models)
+if [ "$GPU_COUNT" -gt 0 ]; then
+    GPU_LABELS=$(for i in $(seq 0 $((GPU_COUNT - 1))); do printf "GPU%d" "$i"; [ "$i" -lt $((GPU_COUNT - 1)) ] && printf ", "; done)
+    TOTAL_VRAM="${GPU_TOTALS[0]}"
+    echo "GPU: ${GPU_COUNT}x ${GPU_NAME} | VRAM: ${TOTAL_VRAM} MiB each (${GPU_LABELS})" >&2
+    echo "" >&2
+fi
+
+# Build dynamic VRAM column headers
+VRAM_HDR=""
+VRAM_SEP=""
+for i in $(seq 0 $((GPU_COUNT - 1))); do
+    VRAM_HDR="${VRAM_HDR}$(printf " %5s" "GPU$i")"
+    VRAM_SEP="${VRAM_SEP}$(printf " %5s" "-----")"
+done
+
+printf "%-25s %6s %7s %12s %10s %5s %s\n" \
+    "MODEL" "IN" "OUT" "PROMPT tok/s" "GEN tok/s" "GPU%" "VRAM Used (MiB)" >&2
+printf "%-25s %6s %7s %12s %10s %5s" \
+    "-------------------------" "------" "-------" "------------" "----------" "-----" >&2
+printf "%s\n" "$VRAM_SEP" >&2
+
 echo "$RESULTS" | jq -r '.[] |
-    # Extract first GPU VRAM used/total from gpu_info string
     (.gpu_info | split("\n") | map(select(length > 0)) |
         if length > 0 then
-            map(split(",") | map(gsub("^\\s+|\\s+$"; "")) | .[2] + "/" + .[3])
-            | join("+")
+            map(split(",") | map(gsub("^\\s+|\\s+$"; "")) | .[2])
+            | join("|")
         else "n/a"
         end
     ) as $vram |
     "\(.model)|\(.in_tokens)|\(.out_tokens)|\(.prompt_eval_tps)|\(.eval_tps)|\(.gpu_offload_pct)|\($vram)"
-' | while IFS='|' read -r model in_tok out_tok prompt_tps eval_tps gpu_pct vram; do
-    printf "%-25s %6s %7s %12s %10s %4s%% %12s\n" \
-        "$model" "$in_tok" "$out_tok" "$prompt_tps" "$eval_tps" "$gpu_pct" "$vram" >&2
+' | while IFS='|' read -r model in_tok out_tok prompt_tps eval_tps gpu_pct vram_rest; do
+    # Build per-GPU used columns
+    VRAM_COLS=""
+    IFS='|' read -ra USED_VALS <<< "$vram_rest"
+    for val in "${USED_VALS[@]}"; do
+        VRAM_COLS="${VRAM_COLS}$(printf " %5s" "$val")"
+    done
+    printf "%-25s %6s %7s %12s %10s %4s%%%s\n" \
+        "$model" "$in_tok" "$out_tok" "$prompt_tps" "$eval_tps" "$gpu_pct" "$VRAM_COLS" >&2
 done
 echo "" >&2
