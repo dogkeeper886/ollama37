@@ -32,13 +32,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run throughput benchmark
+      - name: Validate inputs
+        env:
+          MODELS: ${{ inputs.models }}
         run: |
+          # Only allow model name characters: alphanumeric, colon, dot, dash, underscore, slash, space
+          if ! echo "$MODELS" | grep -qE '^[a-zA-Z0-9:._/ -]+$'; then
+            echo "ERROR: Invalid characters in model names: $MODELS" >&2
+            exit 1
+          fi
+
+      - name: Run throughput benchmark
+        env:
+          MODELS: ${{ inputs.models }}
+        run: |
+          # shellcheck disable=SC2086 -- intentional word splitting on model names
           bash cicd/scripts/benchmark-throughput.sh \
             --num-predict "${{ inputs.num_predict || '128' }}" \
             --context "${{ inputs.context_size || '2048' }}" \
             --output /tmp/throughput-results.json \
-            ${{ inputs.models }}
+            $MODELS
 
       - name: Generate summary
         if: always()
@@ -71,8 +84,10 @@ jobs:
 
       - name: Unload models
         if: always()
+        env:
+          MODELS: ${{ inputs.models }}
         run: |
-          for MODEL in ${{ inputs.models }}; do
+          for MODEL in $MODELS; do
             curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
           done
 
