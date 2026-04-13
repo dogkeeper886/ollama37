@@ -63,23 +63,42 @@ jobs:
 
           SHA=$(jq -r '.git_sha' /tmp/throughput-results.json)
 
-          # GPU info
+          # GPU info from before-benchmark snapshot
           GPU=$(jq -r '.gpu.before' /tmp/throughput-results.json)
           GPU_NAME=""
+          GPU_COUNT=0
+          GPU_TOTAL=""
           if [ -n "$GPU" ] && [ "$GPU" != "null" ] && [ "$GPU" != "" ]; then
-            GPU_NAME=$(echo "$GPU" | head -1 | cut -d',' -f2 | xargs)
+            GPU_NAME=$(echo "$GPU" | head -1 | cut -d',' -f2 | sed 's/^ *//;s/ *$//')
+            GPU_TOTAL=$(echo "$GPU" | head -1 | cut -d',' -f4 | sed 's/^ *//;s/ *$//')
+            GPU_COUNT=$(echo "$GPU" | grep -c .)
           fi
+
+          # Build per-GPU column headers
+          GPU_HDR=""
+          GPU_SEP=""
+          for i in $(seq 0 $((GPU_COUNT - 1))); do
+            GPU_HDR="${GPU_HDR} GPU${i} |"
+            GPU_SEP="${GPU_SEP} --- |"
+          done
 
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
           ## Throughput Benchmark
 
-          **Commit:** \`${SHA}\` | **GPU:** ${GPU_NAME:-unknown} | **Context:** ${{ inputs.context_size || '2048' }}
+          **Commit:** \`${SHA}\` | **GPU:** ${GPU_COUNT}x ${GPU_NAME:-unknown} | **VRAM:** ${GPU_TOTAL:-?} MiB each | **Context:** ${{ inputs.context_size || '2048' }}
 
-          | Model | IN tok | OUT tok | Prompt tok/s | Gen tok/s | GPU% | VRAM (MiB) |
-          |-------|--------|---------|-------------|-----------|------|------------|
+          | Model | IN tok | OUT tok | Prompt tok/s | Gen tok/s | GPU% |${GPU_HDR}
+          |-------|--------|---------|-------------|-----------|------|${GPU_SEP}
           EOF
 
-          jq -r '.results[] | "| \(.model) | \(.in_tokens) | \(.out_tokens) | \(.prompt_eval_tps) | \(.eval_tps) | \(.gpu_offload_pct)% | \(.gpu_info | split("\n") | map(select(length > 0)) | if length > 0 then map(split(",") | map(gsub("^\\s+|\\s+$";"")) | .[2] + "/" + .[3]) | join("+") else "n/a" end) |"' \
+          jq -r '.results[] |
+            (.gpu_info | split("\n") | map(select(length > 0)) |
+              if length > 0 then
+                map(split(",") | map(gsub("^\\s+|\\s+$";"")) | .[2])
+              else []
+              end
+            ) as $vram |
+            "| \(.model) | \(.in_tokens) | \(.out_tokens) | \(.prompt_eval_tps) | \(.eval_tps) | \(.gpu_offload_pct)% |\($vram | map(" " + . + " |") | join("")) "' \
             /tmp/throughput-results.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Unload models

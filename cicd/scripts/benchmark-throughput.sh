@@ -238,16 +238,15 @@ fi
 
 # Detect GPU count and total VRAM from the first result's gpu_info
 GPU_COUNT=0
-GPU_TOTALS=()
+GPU_TOTAL=""
 GPU_NAME=""
 if [ "$(echo "$RESULTS" | jq 'length')" -gt 0 ]; then
     FIRST_GPU_INFO=$(echo "$RESULTS" | jq -r '.[0].gpu_info // ""')
     if [ -n "$FIRST_GPU_INFO" ] && [ "$FIRST_GPU_INFO" != "null" ]; then
-        while IFS=', ' read -r idx name used total free; do
-            GPU_COUNT=$((GPU_COUNT + 1))
-            GPU_TOTALS+=("$total")
-            GPU_NAME="$name"
-        done <<< "$FIRST_GPU_INFO"
+        # Parse with jq to handle GPU names with spaces (e.g., "Tesla K80")
+        GPU_COUNT=$(echo "$FIRST_GPU_INFO" | grep -c .)
+        GPU_NAME=$(echo "$FIRST_GPU_INFO" | head -1 | cut -d',' -f2 | sed 's/^ *//;s/ *$//')
+        GPU_TOTAL=$(echo "$FIRST_GPU_INFO" | head -1 | cut -d',' -f4 | sed 's/^ *//;s/ *$//')
     fi
 fi
 
@@ -257,9 +256,8 @@ echo "" >&2
 
 # Print GPU info header (constant across all models)
 if [ "$GPU_COUNT" -gt 0 ]; then
-    GPU_LABELS=$(for i in $(seq 0 $((GPU_COUNT - 1))); do printf "GPU%d" "$i"; [ "$i" -lt $((GPU_COUNT - 1)) ] && printf ", "; done)
-    TOTAL_VRAM="${GPU_TOTALS[0]}"
-    echo "GPU: ${GPU_COUNT}x ${GPU_NAME} | VRAM: ${TOTAL_VRAM} MiB each (${GPU_LABELS})" >&2
+    GPU_LABELS=$(for i in $(seq 0 $((GPU_COUNT - 1))); do printf "GPU%d" "$i"; [ "$i" -lt $((GPU_COUNT - 1)) ] && printf ", " || true; done)
+    echo "GPU: ${GPU_COUNT}x ${GPU_NAME} | VRAM: ${GPU_TOTAL} MiB each (${GPU_LABELS})" >&2
     echo "" >&2
 fi
 
