@@ -3,6 +3,7 @@ package kvcache
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"slices"
 
@@ -286,6 +287,7 @@ func (c *Recurrent) startForwardSingleSeq(ctx ml.Context, seq, seqTokens int, ba
 
 		c.slotForSeq[seq] = slot
 		c.refCount[slot] = 1
+		slog.Debug("cache slot allocated", "seq", seq, "slot", slot)
 		slotList := [1]int{slot}
 		c.zeroSlots(ctx, slotList[:])
 	}
@@ -344,6 +346,7 @@ func (c *Recurrent) zeroSlots(ctx ml.Context, slots []int) {
 	if len(slots) == 0 {
 		return
 	}
+	slog.Debug("cache slots zeroed", "slots", slots, "conv_layers", len(c.convStates), "recurrent_layers", len(c.recurrentStates))
 
 	inputCtx := ctx.Input()
 	slotsTensor := c.slotsInput(ctx, slots)

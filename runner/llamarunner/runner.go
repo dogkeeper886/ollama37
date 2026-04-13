@@ -1033,7 +1033,7 @@ func Execute(args []string) error {
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		fmt.Println("Listen error:", err)
+		slog.Error("listen error", "error", err)
 		return err
 	}
 	defer listener.Close()
@@ -1048,7 +1048,7 @@ func Execute(args []string) error {
 		Handler: mux,
 	}
 
-	log.Println("Server listening on", addr)
+	slog.Info("Server listening on", "addr", addr)
 	if err := httpServer.Serve(listener); err != nil {
 		log.Fatal("server error:", err)
 		return err

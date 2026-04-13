@@ -215,6 +215,9 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 					tensor := base.Backend().Get(fullName)
 					if tensor != nil {
 						logutil.Trace("found tensor", "", tensor)
+						if !strings.HasPrefix(fullName, "blk.") || strings.HasPrefix(fullName, "blk.0.") {
+							slog.Debug("tensor mapped", "name", fullName)
+						}
 						vv.Set(reflect.ValueOf(tensor))
 						break
 					}

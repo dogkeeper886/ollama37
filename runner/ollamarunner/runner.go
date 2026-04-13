@@ -1202,7 +1202,7 @@ func (s *Server) allocModel(
 	// Inform user about GPU initialization process
 	// For older GPUs (e.g., Tesla K80 with compute 3.7), this can take 1-3 minutes
 	// on first model load due to CUDA kernel compilation (PTX JIT).
-	fmt.Fprintf(os.Stderr, "initializing GPU compute kernels (may take 1-3 minutes on first load)...\n")
+	slog.Info("initializing GPU compute kernels (may take 1-3 minutes on first load)")
 	slog.Info("allocModel: reserving compute graphs (this tests GPU compatibility and measures memory)")
 
 	err = s.reserveWorstCaseGraph(true)
@@ -1211,7 +1211,7 @@ func (s *Server) allocModel(
 	}
 
 	err = s.reserveWorstCaseGraph(false)
-	fmt.Fprintf(os.Stderr, "GPU initialization complete\n")
+	slog.Info("GPU initialization complete")
 	slog.Info("allocModel: compute graphs reserved", "duration_sec", time.Since(graphStart).Seconds())
 	slog.Info("allocModel: COMPLETE", "total_duration_sec", time.Since(allocStart).Seconds())
 	return err
@@ -1407,7 +1407,7 @@ func Execute(args []string) error {
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		fmt.Println("Listen error:", err)
+		slog.Error("listen error", "error", err)
 		return err
 	}
 	defer listener.Close()
@@ -1424,7 +1424,7 @@ func Execute(args []string) error {
 		Handler: mux,
 	}
 
-	log.Println("Server listening on", addr)
+	slog.Info("Server listening on", "addr", addr)
 	if err := httpServer.Serve(listener); err != nil {
 		log.Fatal("server error:", err)
 		return err

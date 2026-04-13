@@ -48,6 +48,9 @@ type GatedDeltaNet struct {
 
 	// Layer index for cache access (set during model construction)
 	Layer int
+
+	loggedAutoregressive bool
+	loggedChunked        bool
 }
 
 // createMasks builds the constant mask tensors (called once, reused for all chunks)
@@ -235,8 +238,16 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	// Choose computation mode based on sequence length
 	var attnOut ml.Tensor
 	if nSeqTokens == 1 {
+		if !gdn.loggedAutoregressive {
+			slog.Debug("deltanet forward", "layer", layer, "path", "autoregressive", "n_seqs", nSeqs)
+			gdn.loggedAutoregressive = true
+		}
 		attnOut = gdn.deltaNetAutoregressive(ctx, qConv, kConv, vConv, gate, beta, state, opts, layer, cache)
 	} else {
+		if !gdn.loggedChunked {
+			slog.Debug("deltanet forward", "layer", layer, "path", "chunked", "seq_tokens", nSeqTokens, "n_seqs", nSeqs)
+			gdn.loggedChunked = true
+		}
 		if opts.masks == nil {
 			opts.masks = createMasks(ctx)
 		}

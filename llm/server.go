@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+
 	"log/slog"
 	"math/rand"
 	"net"
@@ -149,6 +149,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	var llamaModel *llama.Model
 	var textProcessor model.TextProcessor
 	var err error
+	arch := f.KV().Architecture()
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
 		if len(projectors) == 0 {
 			textProcessor, err = model.NewTextProcessor(modelPath)
@@ -157,7 +158,9 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 		if err != nil {
 			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
-			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
+			slog.Debug("engine selected", "engine", "llama_compat", "arch", arch, "reason", err)
+		} else {
+			slog.Debug("engine selected", "engine", "ollama", "arch", arch)
 		}
 	}
 	if textProcessor == nil {
@@ -1165,7 +1168,7 @@ func (s *llmServer) initModel(ctx context.Context, req LoadRequest, operation Lo
 	}
 
 	if resp.StatusCode >= 400 {
-		log.Printf("llm load error: %s", body)
+		slog.Error("llm load error", "body", string(body))
 		return nil, fmt.Errorf("%s", body)
 	}
 
@@ -1573,7 +1576,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		if err != nil {
 			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
-		log.Printf("llm predict error: %s", bodyBytes)
+		slog.Error("llm predict error", "body", string(bodyBytes))
 		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
 	}
 
@@ -1730,7 +1733,7 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, err
 	}
 
 	if resp.StatusCode >= 400 {
-		log.Printf("llm embedding error: %s", body)
+		slog.Error("llm embedding error", "body", string(body))
 		return nil, fmt.Errorf("%s", body)
 	}
 
