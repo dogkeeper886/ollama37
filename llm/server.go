@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+
 	"log/slog"
 	"math/rand"
 	"net"
@@ -1168,7 +1168,7 @@ func (s *llmServer) initModel(ctx context.Context, req LoadRequest, operation Lo
 	}
 
 	if resp.StatusCode >= 400 {
-		log.Printf("llm load error: %s", body)
+		slog.Error("llm load error", "body", string(body))
 		return nil, fmt.Errorf("%s", body)
 	}
 
@@ -1576,7 +1576,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		if err != nil {
 			return fmt.Errorf("failed reading llm error response: %w", err)
 		}
-		log.Printf("llm predict error: %s", bodyBytes)
+		slog.Error("llm predict error", "body", string(bodyBytes))
 		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: strings.TrimSpace(string(bodyBytes))}
 	}
 
@@ -1733,7 +1733,7 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, err
 	}
 
 	if resp.StatusCode >= 400 {
-		log.Printf("llm embedding error: %s", body)
+		slog.Error("llm embedding error", "body", string(body))
 		return nil, fmt.Errorf("%s", body)
 	}
 
