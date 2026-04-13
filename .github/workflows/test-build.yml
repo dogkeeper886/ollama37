@@ -20,6 +20,11 @@ on:
         required: false
         default: "gemma3:12b-judge"
         type: string
+      debug:
+        description: "Enable OLLAMA_DEBUG=1 in container"
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       judge_mode:
@@ -32,6 +37,11 @@ on:
         required: false
         default: "gemma3:12b-judge"
         type: string
+      debug:
+        description: "Enable OLLAMA_DEBUG=1 in container"
+        required: false
+        default: false
+        type: boolean
     outputs:
       result:
         description: "Build test result"

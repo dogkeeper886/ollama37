@@ -16,6 +16,11 @@ on:
         required: false
         default: "gemma3:12b-judge"
         type: string
+      debug:
+        description: "Enable OLLAMA_DEBUG=1 in container"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -24,6 +29,7 @@ jobs:
     with:
       judge_mode: ${{ inputs.judge_mode }}
       judge_model: ${{ inputs.judge_model }}
+      debug: ${{ inputs.debug }}
 
   runtime:
     name: Runtime Tests
@@ -32,6 +38,7 @@ jobs:
     with:
       judge_mode: ${{ inputs.judge_mode }}
       judge_model: ${{ inputs.judge_model }}
+      debug: ${{ inputs.debug }}
 
   inference:
     name: Inference Tests
@@ -40,6 +47,7 @@ jobs:
     with:
       judge_mode: ${{ inputs.judge_mode }}
       judge_model: ${{ inputs.judge_model }}
+      debug: ${{ inputs.debug }}
 
   models:
     name: Models Tests
@@ -48,3 +56,4 @@ jobs:
     with:
       judge_mode: ${{ inputs.judge_mode }}
       judge_model: ${{ inputs.judge_model }}
+      debug: ${{ inputs.debug }}
