@@ -18,6 +18,8 @@ jobs:
     name: Build & Push Docker Image
     runs-on: self-hosted
     environment: cicd-1
+    env:
+      OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION || '0.0.0' }}
 
     steps:
       - name: Determine version tag
@@ -28,11 +30,9 @@ jobs:
           else
             TAG="${{ inputs.tag }}"
           fi
-          # Strip leading 'v' for the version number (v2.03 -> 2.03)
-          VERSION="${TAG#v}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Building version: ${VERSION} (tag: ${TAG})"
+          echo "version=${OLLAMA_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${OLLAMA_VERSION} (tag: ${TAG})"
 
       - name: Checkout
         uses: actions/checkout@v4
