@@ -231,6 +231,10 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 - **Trigger**: After confirming behavior through tracing, profiling, or debugging
 - **Rules**: Only annotate verified behavior. Comment "why" not "what". Tags: `// VERIFIED:`, `// ASSUMPTION:`, `// NOTE:`. Architecture docs in `docs/arch/`.
 
+### script-review
+- **Trigger**: After writing a video or demo script, before recording
+- **Rules**: Review as spoken narration, not as a document. Check: hook (first 10s), numbers overload, transitions, spoken language, screen directions, pacing. Output uses a scannable table format.
+
 ## Logging Guidelines
 
 All debug logging must be **level-gated and permanent** — never add temporary log lines that need manual removal.
@@ -300,10 +304,11 @@ When creating or updating skills and commands, follow the format guides in `.cla
 **Design principle**: Skills define *when* and *what*. Commands define *how* (invoked via `/slash`). Keep executable content in commands, not skills.
 
 ### Skill files (`.claude/skills/<name>/SKILL.md`)
-`build`, `debug`, `ci`, `test`, `git-flow`, `plan`, `implement`, `add-test`, `trace`, `instrument`, `profile`, `annotate`
+`build`, `debug`, `ci`, `test`, `git-flow`, `plan`, `implement`, `add-test`, `trace`, `instrument`, `profile`, `annotate`, `script-review`
 
 ### Slash commands (`.claude/commands/<category>/`)
 - **dev-workflow/**: `/plan`, `/implement`
 - **build-test/**: `/build`, `/debug`, `/test`, `/ci`, `/add-test`
 - **code-analysis/**: `/trace`, `/instrument`, `/profile`, `/annotate`
+- **project/**: `/script-review`
 - **utility/**: `/session-summary`
