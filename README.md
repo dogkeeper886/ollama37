@@ -4,9 +4,9 @@
 
 ## Demo Video
 
-[![Why I Run AI on 10-Year-Old GPUs](https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
+[![Why I Run AI on 10-Year-Old GPUs](https://img.youtube.com/vi/iYxgGsPu5rM/maxresdefault.jpg)](https://www.youtube.com/watch?v=iYxgGsPu5rM)
 
-**[Why I Run AI on 10-Year-Old GPUs: Ollama K80 Docker Build System & CI/CD Pipeline](https://www.youtube.com/watch?v=VIDEO_ID)**
+**[Why I Run AI on 10-Year-Old GPUs: Ollama K80 Docker Build System & CI/CD Pipeline](https://www.youtube.com/watch?v=iYxgGsPu5rM)**
 
 In this video, I walk through our modern AI CI/CD pipeline built entirely on legacy Nvidia K80 GPUs. Why use old hardware in 2025? Because the hands-on challenges teach you skills you'd never learn otherwise—compiling kernels, managing GCC versions, debugging driver issues, and navigating end-of-life software dependencies.
 
