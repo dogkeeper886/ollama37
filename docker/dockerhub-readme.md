@@ -15,18 +15,25 @@ Run modern LLMs on NVIDIA Tesla K80 and other CUDA Compute Capability 3.7 GPUs. 
 
 | Model | Size | Status |
 |-------|------|--------|
+| gemma4:e4b | 4B | ✅ |
+| gemma4:26b | 26B | ✅ |
 | gemma3:4b | 4B | ✅ |
 | gemma3:27b | 27B | ✅ |
-| deepseek-r1:7b | 7B | ✅ |
 | qwen3.5:9b | 9B | ✅ |
+| qwen3.5:27b | 27B | ✅ |
 | gpt-oss:20b | 20B | ✅ |
+| ministral-3 | 3B | ✅ |
+| functiongemma | 270M | ✅ |
+| deepseek-r1:7b | 7B | ✅ |
+
+🎥 **Demo video:** [Ollama37 v2.0.3 on Tesla K80](https://youtu.be/B1PbLr3rUhc)
 
 ## Quick Start
 
 ### Docker (Recommended)
 ```bash
 # Pull and run
-docker pull dogkeeper886/ollama37
+docker pull dogkeeper886/ollama37:v2.0.3
 docker run --runtime=nvidia --gpus all -p 11434:11434 dogkeeper886/ollama37
 ```
 
