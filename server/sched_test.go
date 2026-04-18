@@ -804,3 +804,5 @@ func (s *mockLlm) GetPort() int                                       { return -
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
+func (s *mockLlm) Engine() string                                     { return "mock" }
+func (s *mockLlm) MemoryBreakdown() *ml.BackendMemory                 { return nil }
