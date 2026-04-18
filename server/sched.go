@@ -349,7 +349,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				}
 				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
 				runner.unload()
-				s.metrics.evictionsIdle.Add(1)
+				s.metrics.evictionsTotal.Add(1)
 				delete(s.loaded, runner.modelPath)
 				s.loadedMu.Unlock()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
@@ -491,9 +491,12 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 	slog.Info("scheduler.load: llama.Load() completed", "duration_sec", time.Since(loadStart).Seconds(), "error", err)
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
-			s.metrics.loadRequireFull.Add(1)
 			if !requireFull {
-				// Model doesn't fit fully on GPU, need to evict other models
+				// Model doesn't fit fully on GPU, need to evict other models.
+				// Only count the case that surfaces an error to the user;
+				// the retry path (requireFull=true) does not increment the
+				// counter, otherwise scheduler retries would inflate it.
+				s.metrics.loadRequireFull.Add(1)
 				slog.Info("model is too large for system memory", "requireFull", requireFull)
 				s.activeLoading.Close()
 				s.activeLoading = nil
