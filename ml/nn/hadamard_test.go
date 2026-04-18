@@ -11,6 +11,24 @@ func TestHadamardMatrix_Sizes(t *testing.T) {
 		if len(h) != n*n {
 			t.Errorf("n=%d: len=%d want %d", n, len(h), n*n)
 		}
+		// Length alone is guaranteed by make(); also verify orthogonality
+		// at every size so a Sylvester recursion bug that only surfaces
+		// at, say, n=128 does not slip through.
+		for i := 0; i < n; i++ {
+			for j := 0; j < n; j++ {
+				var sum float64
+				for k := 0; k < n; k++ {
+					sum += float64(h[i*n+k]) * float64(h[j*n+k])
+				}
+				want := 0.0
+				if i == j {
+					want = 1.0
+				}
+				if math.Abs(sum-want) > 1e-4 {
+					t.Fatalf("n=%d: (H·Hᵀ)[%d,%d] = %v; want %v", n, i, j, sum, want)
+				}
+			}
+		}
 	}
 }
 

@@ -17,6 +17,30 @@ Mirrors ggml-org/llama.cpp#21038 (commit `744c0c73`, merged 2026-04-01), which s
 
 ## What's pending (the actual integration)
 
+### Tensor layout convention
+
+`ml.Tensor` in ollama follows ggml column-major ordering. Shapes for attention
+inputs post-RoPE are:
+
+- Q: `[head_dim, heads, seq_len_q]` — `Dim(0)` is head dim
+- K: `[head_dim, kv_heads, seq_len_k]`
+- V: `[head_dim, kv_heads, seq_len_k]` (or permuted via `PermutedV`; see
+  `kvcache/causal.go:621-625` — the rotation path must match this convention)
+
+The `blockRotate` helper rotates along `Dim(0)` (head dim).
+
+### Ordering: rotation must happen AFTER RoPE
+
+**Critical foot-gun.** Rotation must be applied *after* RoPE has been applied
+to Q and K. Applying the Hadamard before RoPE scrambles the position-dependent
+rotation RoPE introduces, and the resulting transform is not recoverable.
+Upstream llama.cpp commit `744c0c73` applies H after `ggml_rope`; we do the
+same.
+
+Concretely: in the caller's forward pass, the order is
+`q → rope(q) → blockRotate(q)` and likewise for K. V has no RoPE, so just
+`v → blockRotate(v)`.
+
 ### ollamarunner path — `ml/nn/attention.go`
 
 The current `AttentionWithSinks` function (roughly):

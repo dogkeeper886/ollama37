@@ -3,9 +3,10 @@ package nn
 import "math"
 
 // HadamardMatrix returns a row-major normalized Sylvester Hadamard matrix of
-// size n×n. n must be a power of 2 and ≥ 1. Every element is ±1/√n, the matrix
-// is symmetric, and H·Hᵀ = I so it acts as an orthogonal rotation that
-// preserves dot products.
+// size n×n. n must be a power of 2 and ≥ 1. Every element is ±1/√n, the
+// matrix is symmetric under the Sylvester recursion (not all Hadamard
+// matrices are symmetric — Paley construction, for example, is not), and
+// H·Hᵀ = I so it acts as an orthogonal rotation that preserves dot products.
 //
 // This is the rotation used by llama.cpp PR #21038 (commit 744c0c73) and
 // Google DeepMind's TurboQuant (arXiv:2504.19874) to smooth coordinate
@@ -40,6 +41,12 @@ func HadamardMatrix(n int) []float32 {
 // Hadamard matrices, which is the conservative subset of upstream's choice
 // (upstream uses the largest power-of-2 divisor of head_dim for Q/K and a
 // fixed 64×64 for V; we unify on 64 for simplicity in the first cut).
+//
+// Models with head_dim ∈ {80, 96, 112} (some Llama-1/2 variants, MPT-7B)
+// are silently excluded by this gate. When the attention.go integration
+// lands, the caller must emit a one-shot slog.Info at model load if
+// OLLAMA_KV_ROTATE=1 is set but this function returns false, so operators
+// know rotation did nothing even though they asked for it.
 func IsHadamardCompatible(headDim int) bool {
 	return headDim >= 64 && headDim%64 == 0
 }

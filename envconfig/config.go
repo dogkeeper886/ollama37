@@ -302,7 +302,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_VISION_MAX_PIXELS": {"OLLAMA_VISION_MAX_PIXELS", VisionMaxPixels(), "Max image dimension for vision reservation (default: auto, 2048 with flash, 512 without)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
-		"OLLAMA_KV_ROTATE":         {"OLLAMA_KV_ROTATE", KVRotate(), "Apply Walsh-Hadamard rotation to Q/K/V before KV-cache quantization (improves q4/q8 KV quality on K80; off by default)"},
+		"OLLAMA_KV_ROTATE":         {"OLLAMA_KV_ROTATE", KVRotate(), "Apply Walsh-Hadamard rotation to Q/K/V before KV-cache quantization (improves q4_0/q8_0 KV quality; no effect on fp16 KV; off by default)"},
 		"OLLAMA_REMOTES":           {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
