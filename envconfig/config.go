@@ -211,6 +211,10 @@ var (
 	VisionMaxPixels = Uint("OLLAMA_VISION_MAX_PIXELS", 0)
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
+	// KVRotate enables Walsh-Hadamard rotation of Q/K/V before KV-cache
+	// quantization, recovering most of the fp16-vs-quantized quality gap.
+	// See docs/design/kv-rotation.md. Off by default during rollout.
+	KVRotate = Bool("OLLAMA_KV_ROTATE")
 )
 
 func String(s string) func() string {
@@ -298,6 +302,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_VISION_MAX_PIXELS": {"OLLAMA_VISION_MAX_PIXELS", VisionMaxPixels(), "Max image dimension for vision reservation (default: auto, 2048 with flash, 512 without)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_KV_ROTATE":         {"OLLAMA_KV_ROTATE", KVRotate(), "Apply Walsh-Hadamard rotation to Q/K/V before KV-cache quantization (improves q4/q8 KV quality on K80; off by default)"},
 		"OLLAMA_REMOTES":           {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
