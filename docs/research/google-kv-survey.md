@@ -6,7 +6,7 @@
 
 ## 1. Executive Summary
 
-Google/DeepMind's most significant recent KV cache work is **TurboQuant** (arXiv 2504.19874, ICLR 2026), a post-training KV quantization scheme that reaches 3-3.5 bits per channel with near-zero quality loss. Its companion **PolarQuant** (AISTATS 2026) targets the same problem from a polar-coordinate angle. Both are algorithmic — no hardware-specific instructions are required by the core method — which is the primary reason they are interesting for sm_37 (Tesla K80), a pre-Volta architecture without tensor cores, FP8, or native bfloat16.
+Google/DeepMind's most significant recent KV cache work is **TurboQuant** (arXiv 2504.19874, ICLR 2026), a post-training KV quantization scheme that reaches ~3.5 bits/value with neutral quality and ~2.5 bits/value with marginal degradation. Against ollama37's current fp16 KV baseline, this translates to a ~5× VRAM reduction at neutral quality (not the "6-8×" marketing figure, which is measured against int32). Its companion **PolarQuant** (AISTATS 2026) tackles the same problem via polar-coordinate quantization; public sources disagree on whether PolarQuant is a standalone algorithm or the rotation stage inside TurboQuant, so this doc treats it as a separate technique. Both are algorithmic — no hardware-specific instructions are required by the core method — which is the primary reason they are interesting for sm_37 (Tesla K80), a pre-Volta architecture without tensor cores, FP8, or native bfloat16.
 
 The primary risk for K80 is not the algorithm but the **surrounding infrastructure**: every public TurboQuant integration so far targets sm_86+ with Flash Attention MMA kernels. ollama37's K80 path uses the scalar `fattn-vec` kernels, which do not yet have a TurboQuant instance. Landing TurboQuant on sm_37 means porting the quantize/dequantize path into the vec kernels and accepting that the reported end-to-end speed gains (driven by tensor-core-aware MMA paths) will not carry over — the value for K80 is **VRAM reduction**, not tok/s.
 
@@ -20,13 +20,13 @@ The primary risk for K80 is not the algorithm but the **surrounding infrastructu
   1. Apply a random rotation (Walsh-Hadamard Transform, O(d log d)) to each KV vector block. This induces a concentrated Beta distribution on coordinates and makes them approximately independent.
   2. Apply an optimal scalar quantizer (Lloyd-Max) per coordinate at the target bit-width (3 or 4 bits).
   3. Optional: 1-bit Quantized Johnson-Lindenstrauss correction on residuals to compensate for inner-product distortion.
-- **Reported results**: 3.5 bits/channel = neutral quality, 2.5 bits/channel = marginal degradation. 6-8x KV memory reduction on Gemma and Mistral. Downstream benchmarks (LongBench, MMLU, etc.) unchanged at 3.5 bits.
+- **Reported results**: 3.5 bits/value = neutral quality, 2.5 bits/value = marginal degradation. Google reports "at least 6× KV memory reduction"; measured against fp16 (ollama37's baseline) the honest ratio is ~4.6× at 3.5 bits and ~6.4× at 2.5 bits. Downstream benchmarks (LongBench, MMLU, etc.) unchanged at 3.5 bits.
 - **Tested hardware** (paper + public forks): H100, RTX 5090 (sm_120), RTX 3090 (sm_86), Apple M-series. **No sm_37 testing reported.**
 
 ### 2.2 PolarQuant (Google, AISTATS 2026)
 
-- Companion technique. Converts KV vectors from Cartesian to polar form (radius + angles) before quantization, exploiting the concentrated angular distribution that emerges from random rotation.
-- Used as the first stage inside TurboQuant. Standalone performance is weaker than TurboQuant, so TurboQuant is the better integration target.
+- Converts KV vectors from Cartesian to polar form (radius + angles) before quantization, exploiting the concentrated angular distribution that emerges from random rotation.
+- The Google Research blog describes PolarQuant as the rotation-and-quantize stage inside TurboQuant; the arXiv writeup presents it as a standalone algorithm presented alongside TurboQuant at AISTATS 2026. We have not resolved this ambiguity from public sources. For integration purposes it doesn't matter — TurboQuant (which subsumes or uses PolarQuant) is the superior target either way.
 
 ### 2.3 Grouped-Query Attention (Google, 2023)
 
@@ -44,8 +44,8 @@ K80 constraints: compute capability 3.7, CUDA 11.4 (driver 470), GCC 10.5, no te
 
 | Technique | Core op | sm_37 compatible? | Blockers / notes |
 |---|---|---|---|
-| **TurboQuant (vec path)** | WHT rotation + Lloyd-Max quantize/dequantize | **Yes, in principle** | WHT is integer shuffle + add/sub, runs on any GPU. Lloyd-Max dequant is table lookup + FP32 scalar — compatible. Needs a new `fattn-vec` template instance for tbq3/tbq4 key and value types. |
-| **TurboQuant (MMA path)** | Tensor-core MMA with quantized KV | **No** | Requires sm_80+ (Ampere MMA) or sm_90 (Hopper WGMMA). K80 has zero tensor cores. |
+| **TurboQuant (vec path)** | WHT rotation + Lloyd-Max quantize/dequantize | **Yes, in principle** | WHT butterfly is add/sub (fp for fp16/fp32 data, integer for quantized data) — runs on any GPU. Lloyd-Max dequant is codebook lookup + FP32 scale — compatible. Needs a new `fattn-vec` template instance for tbq3/tbq4 key and value types. |
+| **TurboQuant (MMA path)** | Tensor-core MMA with quantized KV | **No** | Requires Turing (sm_75) or later for fp16 MMA. K80 is pre-Volta (sm_37) and has zero tensor cores. |
 | **PolarQuant standalone** | Polar conversion + angle quantization | **Yes** | Pure arithmetic. Lower priority — subsumed by TurboQuant. |
 | **GQA** | Architectural | **Yes (already present)** | No runtime change; depends on model definition. |
 | **bf16 KV** | Any op reading/writing bf16 | **No (native)** | K80 has no bf16. Would need emulation — not worth it. Use fp16 instead. |
@@ -56,17 +56,19 @@ K80 constraints: compute capability 3.7, CUDA 11.4 (driver 470), GCC 10.5, no te
 
 ## 4. Expected Wins on K80
 
-For a 7B model at 4K context (typical K80 ceiling today):
+Footprint per K80 die (2 × 12 GB per card; a model typically occupies one die at a time or splits across both):
 
-| KV format | Bits/value | Footprint vs. fp16 | K80 24GB fits |
+| KV format | Effective bits/value | Footprint vs. fp16 | Context headroom |
 |---|---|---|---|
 | fp16 (current) | 16 | 1.0× | baseline |
-| q8_0 (current, supported) | 8 | 0.50× | ~2× context |
-| q4_0 (current, supported) | 4 | 0.25× | ~4× context |
-| **tbq4 (TurboQuant 4-bit)** | 4 | 0.25× | ~4× context, **better quality than q4_0** |
-| **tbq3 (TurboQuant 3-bit)** | 3 | 0.19× | ~5× context, neutral quality |
+| q8_0 (current, supported) | ~8.5 | ~0.53× | ~2× |
+| q4_0 (current, supported) | ~4.5 | ~0.28× | ~3.5× |
+| **tbq4 (TurboQuant 4-bit)** | ~4.5 | ~0.28× | ~3.5×, **better quality than q4_0** |
+| **tbq3 (TurboQuant 3-bit)** | ~3.5 | ~0.22× | ~4.6×, **neutral quality vs. fp16** |
 
-The comparison that matters is **tbq3 vs. q4_0**: TurboQuant at 3 bits claims to match fp16 quality, while q4_0 KV shows measurable degradation on long-context tasks. If the claim holds on K80, users get ~33% more context at equal or better quality compared to existing q4_0 KV quantization.
+"Effective bits/value" includes scale/codebook overhead; "~3.5" for tbq3 matches the paper's neutral-quality setting.
+
+The comparison that matters is **tbq3 vs. q4_0**: TurboQuant at ~3.5 effective bits claims to match fp16 quality, while q4_0 KV shows measurable degradation on long-context tasks. If the claim holds on K80, users get ~30% more context at equal or better quality compared to existing q4_0 KV quantization.
 
 ## 5. Recommendation
 
@@ -104,9 +106,10 @@ Where the change would land in ollama37:
 ## 7. Open Questions
 
 1. **WHT block size on sm_37**: llama.cpp discussion notes block-32 is preferred on modern hardware for Flash Attention parallelism. K80's vec path may prefer a different block size — needs measurement.
-2. **Asymmetric K/V quantization**: TurboQuant forks use asymmetric quant (K norms are 50-180× V norms). ollama37's current cache treats K and V symmetrically — does the cache API support per-tensor-type configuration?
-3. **CUDA 11.4 compatibility of the reference kernels**: public forks were developed on 12.8/13.0. Some kernel features (cooperative groups, launch bounds semantics) may need backporting.
-4. **K80 double-precision cost of Lloyd-Max codebooks**: codebooks are typically fp32 tables. Should be fine but confirm against shared memory budget (sm_37: 48 KB/SM).
+2. **Asymmetric K/V quantization (Go-side API)**: TurboQuant forks use asymmetric quant (K norms are 50-180× V norms). The CUDA side already supports it — `template-instances/` has instances like `fattn-vec-instance-q4_0-q8_0.cu` (different K and V types). The Go cache API (`kvcache/cache.go:52` `Init(dtype ml.DType, ...)` and `kvcache/causal.go:22` `DType ml.DType`) exposes only a single dtype. Adding separate `keyDType` / `valueDType` plumbing is part of the prototype scope.
+3. **CUDA 11.4 compatibility of the reference kernels**: public forks were developed on CUDA 12.8/13.0. sm_37 was deprecated in CUDA 11.8+, so kernels cribbed from newer forks may use features (cooperative-groups launch APIs, newer intrinsics, `launch_bounds` semantics) unavailable in 11.4. Expect backporting work.
+4. **K80 shared-memory budget**: sm_37 supports up to 112 KB/SM configurable shared memory (48 KB default L1/shared split — can be reconfigured via `cudaFuncSetAttribute`). Lloyd-Max codebooks are small fp32 tables; should fit comfortably. Confirm during prototype.
+5. **Upstream instability**: public TurboQuant forks (AmesianX, spiritbuun, Madreag) are **not yet merged into llama.cpp mainline** as of this survey. Any kernel code cribbed from them is a moving target — pin to a commit and budget for rework if we upstream.
 
 ## 8. References
 
@@ -114,5 +117,5 @@ Where the change would land in ollama37:
 - Google Research blog. [TurboQuant: Redefining AI efficiency with extreme compression.](https://research.google/blog/turboquant-redefining-ai-efficiency-with-extreme-compression/)
 - llama.cpp discussion #20969. [TurboQuant - Extreme KV Cache Quantization.](https://github.com/ggml-org/llama.cpp/discussions/20969)
 - Reference CUDA fork. [AmesianX/TurboQuant.](https://github.com/AmesianX/TurboQuant)
-- Ainslie et al. *GQA.* [arXiv:2305.13245](https://arxiv.org/pdf/2305.13245)
+- Ainslie et al. *GQA.* [arXiv:2305.13245](https://arxiv.org/abs/2305.13245)
 - InfoQ coverage. [Google's TurboQuant Compression May Support Faster Inference on Less Capable Hardware.](https://www.infoq.com/news/2026/04/turboquant-compression-kv-cache/)
