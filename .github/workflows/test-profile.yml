@@ -41,8 +41,18 @@ jobs:
       - name: Stop existing ollama37 container
         run: |
           docker stop ollama37 || true
-          # Give the GPU a moment to release VRAM
-          sleep 3
+          # Defensive: clear any stale profile container from a prior failed run.
+          docker rm -f ollama37-profile 2>/dev/null || true
+
+          # Poll until VRAM drops below 1 GiB or 30s timeout.
+          for i in $(seq 1 30); do
+            USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1 | tr -d ' ')
+            if [ "$USED" -lt 1024 ]; then
+              echo "VRAM released after ${i}s: ${USED} MiB"
+              break
+            fi
+            sleep 1
+          done
           nvidia-smi --query-gpu=memory.used --format=csv,noheader
 
       - name: Run inference under nvprof
@@ -95,6 +105,18 @@ jobs:
             -d "{\"model\":\"$MODEL\",\"prompt\":\"$PROMPT\",\"stream\":false,\"options\":{\"num_predict\":$NUM_PREDICT}}" \
             | tee /tmp/profile/response.json
 
+          # Validate the inference actually produced a response — otherwise the
+          # profile artifact is mostly cudaMalloc noise and not useful.
+          if ! jq -e '.response' /tmp/profile/response.json >/dev/null 2>&1; then
+            echo "::error::inference call did not return a 'response' field"
+            echo "--- response.json ---"
+            cat /tmp/profile/response.json
+            echo "--- container logs ---"
+            docker logs ollama37-profile 2>&1 | tail -50
+            docker stop --time 30 ollama37-profile || true
+            exit 1
+          fi
+
           echo ""
           echo "=== Stopping profile container so nvprof flushes ==="
           # SIGTERM via docker stop; nvprof writes its summary on graceful exit.
@@ -124,6 +146,24 @@ jobs:
           else
             cd docker && docker compose up -d || true
           fi
+
+      - name: Verify production ollama37 recovered
+        if: always()
+        run: |
+          # Wait up to 60s for the production API to come back. Fail loudly if
+          # it doesn't — leaving the runner without a working ollama37 would
+          # break every subsequent test.
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+              echo "production ollama37 healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::production ollama37 did not recover within 60s — runner needs manual intervention"
+          docker ps -a --filter "name=^ollama37$"
+          docker logs ollama37 2>&1 | tail -50 || true
+          exit 1
 
       - name: Upload profile artifacts
         if: always()
