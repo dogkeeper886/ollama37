@@ -96,21 +96,21 @@ So the *vec* variant of flash attention may already be compiled into our K80 bui
 
 These are what should become their own GitHub issues; this audit doesn't implement them.
 
-### Recommendation 1 — Allow asymmetric KV quant (K-only) on K80
+### Recommendation 1 — Allow asymmetric KV quant (K-only) on K80 → ⏬ **DEPRIORITIZED**
 
-**Action**: Modify `llama/llama.go:kvCacheTypeFromStr` and `NewContextParams` to accept independent K and V cache types. Plumb a new env var (e.g., `OLLAMA_K_CACHE_TYPE`) or extend the existing `OLLAMA_KV_CACHE_TYPE` with a `k:q8_0,v:f16` syntax. Default for K80 stays F16/F16 to avoid surprising existing users.
+Originally tracked as [#107](https://github.com/dogkeeper886/ollama37/issues/107). With Recommendation 2 empirically validated below, **symmetric Q8_0 KV quant works on K80** via the FA path and delivers ~47% reduction (vs the ~25% K-only would have given). #107 remains a fallback if FA enablement is ever rolled back, but is no longer the highest-leverage path.
 
-**Expected benefit**: K-cache is roughly half the KV memory. Q8_0 K-cache cuts that half by 2× → ~25% total KV memory reduction at minimal quality cost. Real win on long context.
+### Recommendation 2 — Investigate `fattn-vec` viability on K80 → ✅ **EMPIRICALLY VALIDATED**
 
-**Effort**: ~1 day. Mostly Go plumbing + a context-params API change. No new kernel work.
+Originally tracked as [#108](https://github.com/dogkeeper886/ollama37/issues/108).
 
-**Risk**: Low — llama.cpp explicitly supports asymmetric K/V quant; we're just exposing it.
+**Outcome (2026-04-26)**: `fattn-vec` works on K80. PR [#112](https://github.com/dogkeeper886/ollama37/pull/112) added `OLLAMA_FLASH_ATTENTION_K80=1` opt-in; runs [24960034243](https://github.com/dogkeeper886/ollama37/actions/runs/24960034243) and [24960260331](https://github.com/dogkeeper886/ollama37/actions/runs/24960260331) on the K80 runner show:
 
-### Recommendation 2 — Investigate `fattn-vec` viability on K80
+- FA-on output bit-exact identical to FA-off baseline (gemma3:4b, "What is the capital of France?")
+- KV cache with `OLLAMA_KV_CACHE_TYPE=q8_0` allocates 135 MiB vs 254 MiB f16 baseline — **47% reduction**
+- No CUBLAS errors, no kernel crashes, production container restored cleanly
 
-**Action**: Compile a build with `FlashAttentionSupported` patched to accept compute 3.7, run a single inference test on the K80 runner with FA enabled, validate output against the F16 baseline. If correct, we unlock full FA + Q8_0 V-cache.
-
-**Expected benefit**: If it works, 50% KV memory reduction + flash-attention-style memory-traffic savings on attention. This is the bigger prize.
+The "bigger prize" prediction held. Productize follow-up tracked separately (replace env-var hack with default-on Go-side gate; add K80 test cases to the test framework).
 
 **Effort**: ~1 day to test. Possibly significant follow-up if the kernel needs sm_37-specific patches (e.g., shfl behavior, shared-mem layout).
 

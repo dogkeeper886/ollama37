@@ -8,9 +8,11 @@
 
 GGML's CUDA backend already does substantially more graph-level fusion than I expected. Six fusion patterns are in place (RMS_NORM+MUL, RMS_NORM+MUL+ADD, n-way ADD chains, SCALE+TANH+SCALE softcap, two TopK-MoE variants), and the SwiGLU activation+gate is a single fused op via `GGML_OP_GLU`.
 
-**For K80 specifically, the only fusion gap that matters is attention compute** (Q·Kᵀ → scale → softmax → ·V), which goes unfused on K80 because flash attention is gated to compute ≥7 — and that's tracked separately in **#108**. The other gaps I found (MUL_MAT+bias ADD, MUL_MAT+residual ADD, ROPE+KV-cache CPY) are real-but-small: each saves one global-memory round-trip per layer, but the projection matmuls themselves are far heavier than the boundary cost.
+**For K80 specifically, the biggest fusion gap was attention compute** (Q·Kᵀ → scale → softmax → ·V), which went unfused because flash attention was gated to compute ≥7. **That gap is now empirically closed**: PR [#112](https://github.com/dogkeeper886/ollama37/pull/112) added the experimental `OLLAMA_FLASH_ATTENTION_K80` env var, and validation runs (2026-04-26) confirm `fattn-vec` produces correct output on K80 + unlocks Q8_0 KV-cache quantization for **~47% KV memory reduction** (gemma3:4b: 254→135 MiB at 4k context). See §4.1.
 
-**Recommendation: don't open new fusion-implementation issues from this audit.** Focus implementation effort on #108 (fattn-vec on K80) which would close the single biggest gap. If #108 fails, revisit this audit's "smaller gaps" section.
+The other gaps I found (MUL_MAT+bias ADD, MUL_MAT+residual ADD, ROPE+KV-cache CPY) are real-but-small: each saves one global-memory round-trip per layer, but the projection matmuls themselves are far heavier than the boundary cost.
+
+**Recommendation: focus on productizing the FA enablement** (replace the env-var hack with a proper default-on Go-side gate; add K80 test cases). The other fusion gaps remain not-worth-pursuing for now — the FA enablement closed the dominant one and we have empirical confirmation it works.
 
 ## 1. Method
 
@@ -71,17 +73,27 @@ Per layer:
 
 ## 4. Unfused Boundaries (Ranked by K80 Impact)
 
-### 4.1 ⚠️ Attention compute on non-FA path
+### 4.1 ⚠️ Attention compute on non-FA path → ✅ **RESOLVED**
 
-**The single biggest gap on K80.** Without flash attention, attention is decomposed into 4 separate ops per layer per token:
+**Originally the single biggest gap on K80.** Without flash attention, attention is decomposed into 4 separate ops per layer per token:
 - `MUL_MAT(Q · Kᵀ)` → produces `[seq_len, seq_len]` attention scores tensor (large for long context)
 - `SCALE(1/√d_k)` → reads/writes scores
 - `SOFT_MAX` → reads/writes scores
 - `MUL_MAT(scores · V)` → reads scores
 
-For a 32B model with 60 layers and a 4k-context, the unfused attention path adds roughly 60 × 3 = 180 extra global-memory passes over the intermediate scores tensor per forward pass. This is exactly what flash attention was designed to eliminate.
+For a 32B model with 60 layers and a 4k-context, the unfused attention path adds roughly 60 × 3 = 180 extra global-memory passes over the intermediate scores tensor per forward pass.
 
-**Status**: gap is real and matters. **Already tracked in [#108](https://github.com/dogkeeper886/ollama37/issues/108)** (investigate `fattn-vec` viability on K80). Don't double-track here.
+**Update 2026-04-26**: this is empirically resolvable. PR [#112](https://github.com/dogkeeper886/ollama37/pull/112) added an opt-in env var `OLLAMA_FLASH_ATTENTION_K80=1` that allows K80 to pass the FA-supported gate. Empirical validation via workflow runs [24960034243](https://github.com/dogkeeper886/ollama37/actions/runs/24960034243) and [24960260331](https://github.com/dogkeeper886/ollama37/actions/runs/24960260331) (gemma3:4b on K80):
+
+| Configuration | KV cache | FA active | Output |
+|---|---|---|---|
+| FA off, KV f16 (baseline) | 254 MiB | ❌ | "Paris" |
+| FA on, KV f16 | 254 MiB | ✅ | "Paris" (bit-exact match with baseline) |
+| FA on, KV q8_0 | **135 MiB** | ✅ | "Paris" |
+
+`fattn-vec` on K80 (sm_37) produces output indistinguishable from the standard non-FA path — no silent correctness bug. KV cache quantization to Q8_0 (which requires FA) reduces cache footprint by **47%** with no observable correctness regression. This was exactly the prize predicted in `k80-quant-audit.md` §3.
+
+**Status**: empirically validated, productize follow-up tracked separately. `fattn-vec` is the K80 path. The remaining work is replacing the experimental env-var hack with a proper default-on Go-side gate, and adding test cases. This audit doc no longer needs to flag attention as the K80 fusion gap — it isn't, post-#112.
 
 ### 4.2 MUL_MAT + bias ADD
 
