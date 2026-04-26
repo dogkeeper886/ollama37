@@ -114,7 +114,9 @@ jobs:
 
             local fa_args=""
             if [ "$enable_fa" = "1" ]; then
-              fa_args="-e OLLAMA_FLASH_ATTENTION=1 -e OLLAMA_FLASH_ATTENTION_K80=1"
+              # Post-#116: K80 is in FlashAttentionSupported by default.
+              # Just OLLAMA_FLASH_ATTENTION=1 is enough; no separate K80 flag.
+              fa_args="-e OLLAMA_FLASH_ATTENTION=1"
             fi
 
             local kv_args=""

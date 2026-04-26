@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/logutil"
 )
@@ -429,16 +428,15 @@ func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
 
 // For each GPU, check if it does NOT support flash attention
 func FlashAttentionSupported(l []DeviceInfo) bool {
-	// ollama37: opt-in experimental override allowing compute 3.7 (K80) to
-	// pass the FA-supported check. The fattn-vec kernel has no arch guard
-	// upstream, so it may work on Kepler — but it's not validated.
-	allowK80 := envconfig.FlashAttentionK80()
-
 	for _, gpu := range l {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			(gpu.Library == "CUDA" && gpu.ComputeMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
-			(gpu.Library == "CUDA" && allowK80 && gpu.ComputeMajor == 3 && gpu.ComputeMinor == 7) ||
+			// ollama37: K80 (compute 3.7) uses fattn-vec, empirically validated
+			// against gemma3:4b in 2026-04 (issue #108). Output bit-exact match
+			// with the non-FA path; unlocks Q8_0 KV cache quant for ~47% memory
+			// reduction.
+			(gpu.Library == "CUDA" && gpu.ComputeMajor == 3 && gpu.ComputeMinor == 7) ||
 			gpu.Library == "ROCm"
 
 		if !supportsFA {
