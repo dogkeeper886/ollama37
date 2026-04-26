@@ -1,0 +1,179 @@
+name: K80 FA Validation
+
+# Phase 2 of issue #108: empirically validate that fattn-vec works on K80
+# when OLLAMA_FLASH_ATTENTION=1 OLLAMA_FLASH_ATTENTION_K80=1 are both set.
+#
+# Flow:
+#   1. (Optional) chain to test-build to rebuild ollama37:latest with current main
+#   2. Stop the production ollama37 container briefly
+#   3. Start a temporary container with FA env vars enabled
+#   4. Issue a deterministic inference (gemma3:4b, fixed prompt, temp=0)
+#   5. Capture the response + container logs (showing FA dispatch info)
+#   6. Stop the temp container, restart production, verify recovery
+#   7. Upload artifacts for analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: "Skip the rebuild step (assume ollama37:latest already has the FA patch)"
+        required: false
+        default: false
+        type: boolean
+      model:
+        description: "Model to test"
+        required: false
+        default: "gemma3:4b"
+        type: string
+      prompt:
+        description: "Inference prompt (deterministic; temp=0)"
+        required: false
+        default: "What is the capital of France? Answer in one word."
+        type: string
+      num_predict:
+        description: "Number of tokens to generate"
+        required: false
+        default: "20"
+        type: string
+
+jobs:
+  build:
+    name: Build patched image
+    if: ${{ !inputs.skip_build }}
+    uses: ./.github/workflows/test-build.yml
+    with:
+      judge_mode: simple
+      debug: false
+
+  validate:
+    name: FA inference + log capture
+    needs: [build]
+    if: ${{ always() && (inputs.skip_build || needs.build.result == 'success') }}
+    runs-on: self-hosted
+    environment: cicd-1
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stop existing ollama37 container
+        run: |
+          docker stop ollama37 || true
+          # Defensive: clear any stale FA-test container from a prior failed run.
+          docker rm -f ollama37-fa-test 2>/dev/null || true
+
+          # Poll until VRAM drops below 1 GiB or 30s timeout.
+          for i in $(seq 1 30); do
+            USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1 | tr -d ' ')
+            if [ "$USED" -lt 1024 ]; then
+              echo "VRAM released after ${i}s: ${USED} MiB"
+              break
+            fi
+            sleep 1
+          done
+          nvidia-smi --query-gpu=memory.used --format=csv,noheader
+
+      - name: Run inference with FA enabled
+        id: infer
+        run: |
+          mkdir -p /tmp/fa-test
+          chmod 777 /tmp/fa-test
+
+          # Start a fresh container with FA env vars set.
+          # OLLAMA_DEBUG=1 captures op dispatch info that should reveal whether
+          # fattn-vec was used or whether something fell back / crashed.
+          docker run -d --rm \
+            --name ollama37-fa-test \
+            --runtime nvidia \
+            --gpus all \
+            -e NVIDIA_VISIBLE_DEVICES=all \
+            -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+            -e OLLAMA_HOST=0.0.0.0:11434 \
+            -e OLLAMA_DEBUG=1 \
+            -e OLLAMA_FLASH_ATTENTION=1 \
+            -e OLLAMA_FLASH_ATTENTION_K80=1 \
+            -v ollama-data:/root/.ollama \
+            -p 11434:11434 \
+            ollama37:latest
+
+          # Wait for the API to come up (max 60s).
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:11434/ >/dev/null 2>&1; then
+              echo "ollama API ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -sf http://localhost:11434/ || (echo "API never came up"; docker logs ollama37-fa-test; exit 1)
+
+          # Issue a deterministic inference (temp=0, fixed prompt, fixed seed).
+          MODEL="${{ inputs.model }}"
+          PROMPT="${{ inputs.prompt }}"
+          NUM_PREDICT="${{ inputs.num_predict }}"
+
+          echo "=== Inference request: model=$MODEL ==="
+          echo "Prompt: $PROMPT"
+
+          curl -s http://localhost:11434/api/generate \
+            -d "{\"model\":\"$MODEL\",\"prompt\":\"$PROMPT\",\"stream\":false,\"options\":{\"num_predict\":$NUM_PREDICT,\"temperature\":0,\"seed\":42}}" \
+            | tee /tmp/fa-test/response.json
+
+          echo ""
+
+          # Validate the inference produced a response.
+          if ! jq -e '.response' /tmp/fa-test/response.json >/dev/null 2>&1; then
+            echo "::error::inference call did not return a 'response' field — FA likely crashed"
+            echo "--- response.json ---"
+            cat /tmp/fa-test/response.json
+            echo "--- container logs ---"
+            docker logs ollama37-fa-test 2>&1 | tail -100 | tee /tmp/fa-test/container-logs-FAILED.log
+            docker stop --time 30 ollama37-fa-test || true
+            exit 1
+          fi
+
+          echo "=== Capturing container logs ==="
+          docker logs ollama37-fa-test 2>&1 > /tmp/fa-test/container-logs.log
+          echo "Log size: $(wc -l < /tmp/fa-test/container-logs.log) lines"
+
+          # Look for FA-related log lines and surface them in the workflow output.
+          echo ""
+          echo "=== FA-related log lines ==="
+          grep -iE "flash[_ ]?att|fattn|FLASH_ATTN|kv.cache" /tmp/fa-test/container-logs.log | tee /tmp/fa-test/fa-related-logs.log || echo "no FA-related lines found"
+
+          echo ""
+          echo "=== Stopping FA-test container ==="
+          docker stop --time 30 ollama37-fa-test || true
+          sleep 3
+
+      - name: Restart production ollama37
+        if: always()
+        run: |
+          if docker ps -a --filter "name=^ollama37$" --format '{{.Names}}' | grep -q ollama37; then
+            docker start ollama37 || true
+          else
+            cd docker && docker compose up -d || true
+          fi
+
+      - name: Verify production ollama37 recovered
+        if: always()
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+              echo "production ollama37 healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::production ollama37 did not recover within 60s"
+          docker logs ollama37 2>&1 | tail -50 || true
+          exit 1
+
+      - name: Upload FA test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fa-test-${{ github.run_id }}
+          path: /tmp/fa-test/
+          retention-days: 30
