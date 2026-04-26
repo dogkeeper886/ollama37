@@ -1,7 +1,9 @@
 name: K80 FA Validation
 
-# Phase 2 of issue #108: empirically validate that fattn-vec works on K80
-# when OLLAMA_FLASH_ATTENTION=1 OLLAMA_FLASH_ATTENTION_K80=1 are both set.
+# Regression test for K80 flash attention support (issue #108 / PR #117).
+# K80 is in FlashAttentionSupported by default, so a fresh container with
+# OLLAMA_FLASH_ATTENTION=1 should dispatch fattn-vec on Kepler. Optionally
+# tests KV cache quantization unlocked by FA enablement.
 #
 # Flow:
 #   1. (Optional) chain to test-build to rebuild ollama37:latest with current main
