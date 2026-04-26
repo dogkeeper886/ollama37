@@ -6,11 +6,12 @@ name: K80 FA Validation
 # Flow:
 #   1. (Optional) chain to test-build to rebuild ollama37:latest with current main
 #   2. Stop the production ollama37 container briefly
-#   3. Start a temporary container with FA env vars enabled
-#   4. Issue a deterministic inference (gemma3:4b, fixed prompt, temp=0)
-#   5. Capture the response + container logs (showing FA dispatch info)
-#   6. Stop the temp container, restart production, verify recovery
-#   7. Upload artifacts for analysis
+#   3. (Optional) run FA-off baseline inference for output comparison
+#   4. Start a temporary container with FA env vars enabled
+#   5. Issue a deterministic inference (gemma3:4b, fixed prompt, temp=0)
+#   6. Capture the response + container logs (showing FA dispatch info)
+#   7. Stop the temp container, restart production, verify recovery
+#   8. Upload artifacts for analysis
 
 on:
   workflow_dispatch:
@@ -35,6 +36,16 @@ on:
         required: false
         default: "20"
         type: string
+      kv_cache_type:
+        description: "OLLAMA_KV_CACHE_TYPE value (empty = f16 default; q8_0 or q4_0 to test KV quant)"
+        required: false
+        default: ""
+        type: string
+      baseline_compare:
+        description: "Run FA-off baseline first and diff against FA-on output"
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   build:
@@ -51,7 +62,7 @@ jobs:
     if: ${{ always() && (inputs.skip_build || needs.build.result == 'success') }}
     runs-on: self-hosted
     environment: cicd-1
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -74,82 +85,148 @@ jobs:
           done
           nvidia-smi --query-gpu=memory.used --format=csv,noheader
 
-      - name: Run inference with FA enabled
+      - name: Run inference (baseline + FA)
         id: infer
         run: |
+          set -e
           mkdir -p /tmp/fa-test
           chmod 777 /tmp/fa-test
 
-          # Start a fresh container with FA env vars set.
-          # OLLAMA_DEBUG=1 captures op dispatch info that should reveal whether
-          # fattn-vec was used or whether something fell back / crashed.
-          docker run -d --rm \
-            --name ollama37-fa-test \
-            --runtime nvidia \
-            --gpus all \
-            -e NVIDIA_VISIBLE_DEVICES=all \
-            -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-            -e OLLAMA_HOST=0.0.0.0:11434 \
-            -e OLLAMA_DEBUG=1 \
-            -e OLLAMA_FLASH_ATTENTION=1 \
-            -e OLLAMA_FLASH_ATTENTION_K80=1 \
-            -v ollama-data:/root/.ollama \
-            -p 11434:11434 \
-            ollama37:latest
-
-          # Wait for the API to come up (max 60s).
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:11434/ >/dev/null 2>&1; then
-              echo "ollama API ready after ${i}s"
-              break
-            fi
-            sleep 1
-          done
-
-          curl -sf http://localhost:11434/ || (echo "API never came up"; docker logs ollama37-fa-test; exit 1)
-
-          # Issue a deterministic inference (temp=0, fixed prompt, fixed seed).
           MODEL="${{ inputs.model }}"
           PROMPT="${{ inputs.prompt }}"
           NUM_PREDICT="${{ inputs.num_predict }}"
+          KV_CACHE_TYPE="${{ inputs.kv_cache_type }}"
+          BASELINE="${{ inputs.baseline_compare }}"
 
-          echo "=== Inference request: model=$MODEL ==="
-          echo "Prompt: $PROMPT"
+          # Reusable: start container with given FA setting + KV cache type, run
+          # inference, capture response + logs, stop container.
+          # Args: $1 = label (baseline|fa), $2 = enable_fa (0|1)
+          run_inference() {
+            local label="$1"
+            local enable_fa="$2"
+            local out_dir="/tmp/fa-test/${label}"
+            mkdir -p "$out_dir"
 
-          curl -s http://localhost:11434/api/generate \
-            -d "{\"model\":\"$MODEL\",\"prompt\":\"$PROMPT\",\"stream\":false,\"options\":{\"num_predict\":$NUM_PREDICT,\"temperature\":0,\"seed\":42}}" \
-            | tee /tmp/fa-test/response.json
+            echo ""
+            echo "=========================================="
+            echo "=== Run: $label (enable_fa=$enable_fa, kv_cache_type=${KV_CACHE_TYPE:-f16}) ==="
+            echo "=========================================="
 
-          echo ""
+            local fa_args=""
+            if [ "$enable_fa" = "1" ]; then
+              fa_args="-e OLLAMA_FLASH_ATTENTION=1 -e OLLAMA_FLASH_ATTENTION_K80=1"
+            fi
 
-          # Validate the inference produced a response.
-          if ! jq -e '.response' /tmp/fa-test/response.json >/dev/null 2>&1; then
-            echo "::error::inference call did not return a 'response' field — FA likely crashed"
-            echo "--- response.json ---"
-            cat /tmp/fa-test/response.json
-            echo "--- container logs ---"
-            docker logs ollama37-fa-test 2>&1 | tail -100 | tee /tmp/fa-test/container-logs-FAILED.log
-            docker stop --time 30 ollama37-fa-test || true
-            exit 1
+            local kv_args=""
+            if [ -n "$KV_CACHE_TYPE" ]; then
+              kv_args="-e OLLAMA_KV_CACHE_TYPE=$KV_CACHE_TYPE"
+            fi
+
+            # Make sure the container name is unique per run so we never collide.
+            local cname="ollama37-fa-test-${label}"
+            docker rm -f "$cname" 2>/dev/null || true
+
+            docker run -d --rm \
+              --name "$cname" \
+              --runtime nvidia \
+              --gpus all \
+              -e NVIDIA_VISIBLE_DEVICES=all \
+              -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+              -e OLLAMA_HOST=0.0.0.0:11434 \
+              -e OLLAMA_DEBUG=1 \
+              $fa_args $kv_args \
+              -v ollama-data:/root/.ollama \
+              -p 11434:11434 \
+              ollama37:latest
+
+            # Wait for the API to come up (max 60s).
+            for i in $(seq 1 60); do
+              if curl -sf http://localhost:11434/ >/dev/null 2>&1; then
+                echo "ollama API ready after ${i}s"
+                break
+              fi
+              sleep 1
+            done
+
+            if ! curl -sf http://localhost:11434/ >/dev/null 2>&1; then
+              echo "::error::API never came up for $label"
+              docker logs "$cname" > "$out_dir/container-logs.log" 2>&1 || true
+              docker stop --time 30 "$cname" || true
+              return 1
+            fi
+
+            # Issue deterministic inference (temp=0, fixed seed).
+            curl -s http://localhost:11434/api/generate \
+              -d "{\"model\":\"$MODEL\",\"prompt\":\"$PROMPT\",\"stream\":false,\"options\":{\"num_predict\":$NUM_PREDICT,\"temperature\":0,\"seed\":42}}" \
+              | tee "$out_dir/response.json"
+            echo ""
+
+            # Capture container logs — order matters: > file 2>&1 redirects BOTH
+            # stdout and stderr to the file. The reverse (2>&1 > file) leaks stderr.
+            docker logs "$cname" > "$out_dir/container-logs.log" 2>&1
+            echo "[$label] Log size: $(wc -l < $out_dir/container-logs.log) lines"
+
+            # Validate the inference actually returned something.
+            if ! jq -e '.response' "$out_dir/response.json" >/dev/null 2>&1; then
+              echo "::error::[$label] inference call did not return a 'response' field"
+              echo "--- response.json ---"
+              cat "$out_dir/response.json"
+              echo "--- last 50 log lines ---"
+              tail -50 "$out_dir/container-logs.log"
+              docker stop --time 30 "$cname" || true
+              return 1
+            fi
+
+            # Surface FA-related log lines into workflow output for quick scanning.
+            echo "=== [$label] FA-related log lines ==="
+            grep -iE "flash[_ ]?att|fattn|FLASH_ATTN|kv.cache" "$out_dir/container-logs.log" \
+              | tee "$out_dir/fa-related-logs.log" \
+              || echo "[$label] no FA-related lines found"
+
+            echo "=== [$label] Stopping container ==="
+            docker stop --time 30 "$cname" || true
+
+            # Wait for VRAM to release before next run.
+            sleep 5
+            return 0
+          }
+
+          # Step 1: optional FA-off baseline
+          if [ "$BASELINE" = "true" ]; then
+            run_inference "baseline" "0"
           fi
 
-          echo "=== Capturing container logs ==="
-          docker logs ollama37-fa-test 2>&1 > /tmp/fa-test/container-logs.log
-          echo "Log size: $(wc -l < /tmp/fa-test/container-logs.log) lines"
+          # Step 2: FA-on test run
+          run_inference "fa" "1"
 
-          # Look for FA-related log lines and surface them in the workflow output.
-          echo ""
-          echo "=== FA-related log lines ==="
-          grep -iE "flash[_ ]?att|fattn|FLASH_ATTN|kv.cache" /tmp/fa-test/container-logs.log | tee /tmp/fa-test/fa-related-logs.log || echo "no FA-related lines found"
-
-          echo ""
-          echo "=== Stopping FA-test container ==="
-          docker stop --time 30 ollama37-fa-test || true
-          sleep 3
+          # Step 3: compare outputs if baseline was captured
+          if [ "$BASELINE" = "true" ]; then
+            echo ""
+            echo "=========================================="
+            echo "=== Output comparison: baseline vs FA ==="
+            echo "=========================================="
+            BASELINE_RESP=$(jq -r '.response' /tmp/fa-test/baseline/response.json)
+            FA_RESP=$(jq -r '.response' /tmp/fa-test/fa/response.json)
+            echo "baseline: $BASELINE_RESP"
+            echo "fa:       $FA_RESP"
+            if [ "$BASELINE_RESP" = "$FA_RESP" ]; then
+              echo "::notice::Outputs match exactly — FA produces identical result to non-FA baseline"
+            else
+              echo "::warning::Outputs differ between baseline and FA. Could be acceptable (different kernel selection at temp=0 with fp16 can have small variations) or could indicate FA correctness issue. Review manually."
+            fi
+            # Save comparison summary as artifact.
+            jq -n --arg b "$BASELINE_RESP" --arg f "$FA_RESP" \
+              '{baseline: $b, fa: $f, match: ($b == $f)}' \
+              > /tmp/fa-test/comparison.json
+            cat /tmp/fa-test/comparison.json
+          fi
 
       - name: Restart production ollama37
         if: always()
         run: |
+          # Defensive cleanup of any leftover test containers.
+          docker rm -f ollama37-fa-test ollama37-fa-test-baseline ollama37-fa-test-fa 2>/dev/null || true
+
           if docker ps -a --filter "name=^ollama37$" --format '{{.Names}}' | grep -q ollama37; then
             docker start ollama37 || true
           else
