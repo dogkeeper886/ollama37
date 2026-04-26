@@ -2,21 +2,23 @@
 # Adds nvprof (CUDA 11.4 profiler) to the runtime image for K80 kernel profiling.
 # Used by .github/workflows/test-profile.yml — not for production.
 #
-# Size delta: ~200 MB on top of ollama37:latest (nvprof + CUPTI + deps).
+# Size delta: ~3-4 GB on top of ollama37:latest (full CUDA 11.4 toolkit).
+# Targeted copies of just nvprof + CUPTI proved insufficient — nvprof loads
+# additional injection libraries at runtime (libaccinj64, libcuinj64, etc.)
+# whose paths are baked into nvprof's binary. Easier to ship the whole toolkit
+# than to reverse-engineer the dependency closure.
 
 FROM ollama37-builder AS nvprof_source
 
 FROM ollama37:latest
 
-# Copy nvprof and CUPTI from the builder image (which already has cuda-toolkit-11-4)
-# Avoids the need to install dnf + the NVIDIA repo into the minimal runtime image.
-COPY --from=nvprof_source /usr/local/cuda-11.4/bin/nvprof /usr/local/cuda-11.4/bin/nvprof
-COPY --from=nvprof_source /usr/local/cuda-11.4/extras/CUPTI /usr/local/cuda-11.4/extras/CUPTI
-COPY --from=nvprof_source /usr/local/cuda-11.4/lib64/libcupti.so* /usr/lib64/
-COPY --from=nvprof_source /usr/local/cuda-11.4/lib64/libcupti_static.a /usr/lib64/
+# Copy the entire CUDA 11.4 toolkit from the builder image. Includes nvprof,
+# all profiling injection libraries (libaccinj64, libcuinj64), CUPTI, and
+# the rest. Image size is irrelevant for a one-off profiling tool.
+COPY --from=nvprof_source /usr/local/cuda-11.4 /usr/local/cuda-11.4
 
 ENV PATH="$PATH:/usr/local/cuda-11.4/bin"
-ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/cuda-11.4/extras/CUPTI/lib64"
+ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/cuda-11.4/lib64:/usr/local/cuda-11.4/extras/CUPTI/lib64"
 
 # Override entrypoint so the workflow can wrap ollama with nvprof
 ENTRYPOINT []
