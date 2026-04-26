@@ -188,6 +188,12 @@ func LogLevel() slog.Level {
 var (
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = BoolWithDefault("OLLAMA_FLASH_ATTENTION")
+	// FlashAttentionK80 is an ollama37-specific experimental flag that, when
+	// set together with OLLAMA_FLASH_ATTENTION, allows compute 3.7 (K80) GPUs
+	// to pass the FA-supported check. The fattn-vec kernel is compiled but
+	// has no Kepler arch guard upstream — so it may work, but is not validated.
+	// Output correctness must be confirmed empirically before relying on this.
+	FlashAttentionK80 = Bool("OLLAMA_FLASH_ATTENTION_K80")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
 	// NoHistory disables readline history.
@@ -280,6 +286,7 @@ func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
+		"OLLAMA_FLASH_ATTENTION_K80": {"OLLAMA_FLASH_ATTENTION_K80", FlashAttentionK80(), "Experimental: also enable flash attention on K80 (compute 3.7) when OLLAMA_FLASH_ATTENTION=1. Unvalidated — confirm output before relying on this."},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
