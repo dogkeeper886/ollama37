@@ -119,6 +119,12 @@ jobs:
               # Post-#116: K80 is in FlashAttentionSupported by default.
               # Just OLLAMA_FLASH_ATTENTION=1 is enough; no separate K80 flag.
               fa_args="-e OLLAMA_FLASH_ATTENTION=1"
+            else
+              # Force FA off explicitly. Models like Gemma3 default
+              # f.FlashAttention()=true, so leaving the env var unset would
+              # let FA enable via model default + #117's K80 gate. We need
+              # an explicit "0" to actually measure a no-FA baseline.
+              fa_args="-e OLLAMA_FLASH_ATTENTION=0"
             fi
 
             local kv_args=""
