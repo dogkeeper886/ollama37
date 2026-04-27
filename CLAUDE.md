@@ -235,6 +235,22 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 - **Trigger**: After writing a video or demo script, before recording
 - **Rules**: Review as spoken narration, not as a document. Check: hook (first 10s), numbers overload, transitions, spoken language, screen directions, pacing. Output uses a scannable table format.
 
+### lint-ci
+- **Trigger**: Before pushing changes to `.github/workflows/*.yml`
+- **Rules**: Validate `jq -n '{...}'` object templates with `jq -n` against placeholder values (catches reserved-word collisions like `label`, `break`); shellcheck `run:` blocks (catches redirect-order bugs like `2>&1 > file`); actionlint for workflow structure. Most CI bugs in this project's history (jq reserved word, shell redirect, header staleness) were locally testable in isolation.
+
+## Engine Selection (new vs llama.cpp)
+
+The Ollama runtime has two engines with separate runner code paths:
+- **Legacy llama.cpp engine** — `runner/llamarunner/runner.go`. Used for arches without a `model/models/<arch>/` Go package, or for arches where `OllamaEngineRequired()` returns false even though a package exists (e.g., `qwen2`, `llama`, `deepseek2`).
+- **New Ollama engine** — `runner/ollamarunner/runner.go`. Used when either `OLLAMA_NEW_ENGINE=true` OR the arch is in `OllamaEngineRequired()` allowlist at `fs/ggml/ggml.go:241`.
+
+**Critical**: a `model/models/<arch>/` package's existence does NOT imply the arch uses the new engine at runtime. Engine selection is gated by `OllamaEngineRequired()` (the per-arch flag) plus the env var. See `docs/traces/engine-selection.md` for the full decision flow and per-arch table.
+
+When auditing per-model behavior (FA gates, KV cache, etc.), verify the actual engine in container logs:
+- `source=runner.go:1264` → new engine
+- `source=runner.go:950` → legacy
+
 ## Logging Guidelines
 
 All debug logging must be **level-gated and permanent** — never add temporary log lines that need manual removal.
@@ -304,7 +320,7 @@ When creating or updating skills and commands, follow the format guides in `.cla
 **Design principle**: Skills define *when* and *what*. Commands define *how* (invoked via `/slash`). Keep executable content in commands, not skills.
 
 ### Skill files (`.claude/skills/<name>/SKILL.md`)
-`build`, `debug`, `ci`, `test`, `git-flow`, `plan`, `implement`, `add-test`, `trace`, `instrument`, `profile`, `annotate`, `script-review`
+`build`, `debug`, `ci`, `test`, `git-flow`, `plan`, `implement`, `add-test`, `trace`, `instrument`, `profile`, `annotate`, `script-review`, `lint-ci`
 
 ### Slash commands (`.claude/commands/<category>/`)
 - **dev-workflow/**: `/plan`, `/implement`
