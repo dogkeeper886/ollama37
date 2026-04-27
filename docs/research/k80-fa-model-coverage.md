@@ -1,14 +1,35 @@
 # K80 Flash Attention Coverage by Model
 
-**Issue**: [#122](https://github.com/dogkeeper886/ollama37/issues/122) (Phase 1 of [#121](https://github.com/dogkeeper886/ollama37/issues/121))
-**Date**: 2026-04-27
-**Status**: Code-study audit complete. Empirical verification of representatives is Phase 2 (#123).
+**Issues**: [#122](https://github.com/dogkeeper886/ollama37/issues/122) (Phase 1) and [#123](https://github.com/dogkeeper886/ollama37/issues/123) (Phase 2) of [#121](https://github.com/dogkeeper886/ollama37/issues/121)
+**Date**: 2026-04-27 (Phase 1 + Phase 2 results)
+**Status**: Empirical verification of 3 representatives complete. Phase 3 (#124) ready with a seeded allowlist.
 
-## TL;DR
+## TL;DR (after Phase 2)
 
-All 13 models in ollama37's tested lineup use the **new Ollama engine** (Go-native model packages in `model/models/<arch>/`). None go through the legacy llama.cpp engine path.
+Phase 2 corrected one Phase 1 assumption and confirmed three predictions:
 
-For each model's GGUF architecture, FA support today is determined entirely by `fs/ggml/ggml.go:879-897` (`SupportsFlashAttention`). The deny list there contains only `gemma2` and `qwen35`. Of our test lineup, **`qwen3.5:9b` and `qwen3.5:27b`** hit the deny list and silently lose FA. The other 11 models are predicted to enable FA correctly with `OLLAMA_FLASH_ATTENTION=1`. The two predicted-deny models are exactly the ones that motivated #121.
+- **Phase 1 wrong**: I claimed "all 13 models use the new Ollama engine." Empirical evidence shows `deepseek-r1:14b` (arch `qwen2`) actually runs on the **legacy llama.cpp engine** (`runner.go:950` from `runner/llamarunner/`), not the new engine (`runner.go:1264` from `runner/ollamarunner/`). Package existence in `model/models/<arch>/` does NOT imply the new engine is used at runtime — the engine selection has additional logic. **Phase 3 allowlist therefore only needs to cover models that actually use the new engine.**
+- **Phase 1 right**: `qwen3.5:9b` and `qwen3.5:27b` (arch `qwen35`) silently lose FA via the deny list at `fs/ggml/ggml.go:889`. Confirmed both empirically (run 24974247971 baseline + 3 Phase 2 runs).
+- **Phase 2 confirmed predictions**: `gpt-oss:20b` (new engine), `qwen3-vl:8b` (new engine), `deepseek-r1:14b` (llama.cpp engine) all enable FA correctly with `OLLAMA_FLASH_ATTENTION=1`. Output coherent across all three.
+
+## Phase 2 empirical results
+
+| Run | Model | Arch | Engine (verified) | FA enables? | Output coherent? | KV q8_0 reduction |
+|---|---|---|---|---|---|---|
+| [24960034243](https://github.com/dogkeeper886/ollama37/actions/runs/24960034243) | gemma3:4b | gemma3 | new (ollamarunner) | ✅ | ✅ bit-exact | 47% (254→135 MiB) |
+| [24978297254](https://github.com/dogkeeper886/ollama37/actions/runs/24978297254) | gpt-oss:20b | gptoss | new (ollamarunner) | ✅ | ✅ bit-exact (off vs on); on-q8_0 minor word substitution | 47% (300→159 MiB) |
+| [24978521066](https://github.com/dogkeeper886/ollama37/actions/runs/24978521066) | qwen3-vl:8b | qwen3vl | new (ollamarunner) | ✅ | ✅ thinking-model; coherent in `.thinking` field | 47% (~1184→611 MiB total across split GPUs) |
+| [24978699810](https://github.com/dogkeeper886/ollama37/actions/runs/24978699810) | deepseek-r1:14b | qwen2 | **llama.cpp** (llamarunner) | ✅ | ✅ thinking-model; coherent | KV size not in logs (different log format on llama.cpp path) |
+
+**Key finding**: 4 different architectures empirically validated. The new-engine models (gemma3, gptoss, qwen3vl) all produce correct output with FA. deepseek-r1's qwen2 path goes through llama.cpp and works via the existing head-count gate — not affected by Phase 3 changes.
+
+## Workflow caveats discovered during Phase 2
+
+1. **Per-GPU VRAM only**: the `vram-mib.txt` snapshot via `nvidia-smi --query-gpu=memory.used | head -1` only captures GPU0. For multi-GPU model splits (qwen3-vl:8b, deepseek-r1:14b spread across 2 K80s), the "Total VRAM" column in the comparison table is misleading. Worth fixing in a workflow follow-up — sum across all GPUs or report per-GPU.
+2. **KV cache regex misses some formats**: deepseek-r1's llama.cpp engine doesn't emit the `"kv cache" device=... size="N MiB"` log line in the same format the new engine does. Coverage-doc's KV size column shows "unknown" for that run. Worth either adding a llama.cpp-format regex or accepting this is a new-engine-only metric.
+3. **Per-device KV size, not total**: when a model splits across GPUs, the KV cache log shows ONE GPU's portion, not the total. Misleading until you account for the split.
+
+These don't invalidate the FA enablement findings — just affect the memory accounting precision. Tokens/sec, FA dispatch confirmation, and output correctness are all reliable.
 
 ## Background
 
@@ -32,7 +53,7 @@ For each model in `cicd/tests/testcases/models/TC-MODELS-*.yml`:
 | TC-MODELS-002 | `gemma3:27b` | `gemma3` | new | pure transformer + vision capable | no | yes | ✅ predicted (same arch as `:4b` validated) |
 | TC-MODELS-003 | `deepseek-r1:14b` | `qwen2` (Qwen-2.5 distill, [confirmed via Ollama lib](https://ollama.com/library/deepseek-r1:14b)) | new | pure transformer | no | no | ⚠️ user-toggle only |
 | TC-MODELS-004 | `qwen3.5:9b` | `qwen35` | new | **hybrid SSM (DeltaNet) + attention** | **YES** | yes | ❌ **silently denied** ([verified empirically](https://github.com/dogkeeper886/ollama37/actions/runs/24974247971)) |
-| TC-MODELS-005 | `functiongemma:270m` | likely `gemma3` (270M Gemma-derivative for tool calling) | new | pure transformer | no | yes (if gemma3) | ✅ predicted (assuming gemma3 base) |
+| TC-MODELS-005 | `functiongemma:270m` | `gemma3` ([confirmed via Ollama lib](https://ollama.com/library/functiongemma:270m) — "built on the Gemma 3 270M model") | new | pure transformer | no | yes | ✅ predicted (gemma3 path validated for FA via gemma3:4b run #108) |
 | TC-MODELS-006 | `gemma4:e4b` | `gemma4` | new | transformer + vision + audio | no | no | ⚠️ enables only if user sets `OLLAMA_FLASH_ATTENTION=1` (not default-on) |
 | TC-MODELS-007 | `gemma4:26b` | `gemma4` | new | transformer + vision + audio | no | no | ⚠️ same as e4b |
 | TC-MODELS-008 | `gemma3:4b` | `gemma3` | new | pure transformer + vision capable | no | yes | ✅ **verified empirically** ([run 24960034243](https://github.com/dogkeeper886/ollama37/actions/runs/24960034243)) |
@@ -64,8 +85,8 @@ For each model in `cicd/tests/testcases/models/TC-MODELS-*.yml`:
 
 ## Caveats / things this audit didn't verify
 
-- **GGUF arch values for distills.** `deepseek-r1:14b` and `:32b` are Qwen-2.5 distills per the Ollama library page, so arch should be `qwen2` — but the actual GGUF metadata wasn't read directly. Phase 2 verification of one of these models will surface the actual arch from the runner logs.
-- **FunctionGemma.** This is a custom Modelfile in our project, presumably based on `gemma3`. Worth opening the Modelfile to confirm.
+- ~~**GGUF arch values for distills.**~~ **Resolved in Phase 2**: `deepseek-r1:14b`'s arch is confirmed `qwen2` via the runner log line `architecture=qwen2` (run 24978699810).
+- ~~**FunctionGemma.**~~ **Resolved in Phase 2**: confirmed Gemma 3-based via Ollama library page (NOT a custom Modelfile in our repo as I initially assumed — it's an Ollama-published model).
 - **`qwen3-vl:30b` MoE detection.** The new-engine `qwen3vl` package registers both `qwen3vl` and `qwen3vlmoe` arches. The 30b tag is likely MoE, but the actual GGUF metadata wasn't read.
 - **Vision model FA correctness.** Even if the FA gate passes for a vision model, FA is dispatched per attention call (`ml/backend/ggml/ggml.go:1782`). The vision projector / image encoder may use its own attention paths that haven't been validated on K80 with FA. Phase 2 verification on `qwen3-vl:8b` would surface any issues.
 - **MoE on K80 generally.** The lineup includes potential MoE models (`gpt-oss:20b`, `qwen3-vl:30b` if MoE). MoE routing kernels weren't audited. K80 fitting for these is questionable; FA + KV quant may be moot if VRAM is the binding constraint.
@@ -100,20 +121,37 @@ The deny list silently rejects it today. Validating qwen3.5 with FA enabled requ
 
 Architecturally identical models (gemma3:4b vs gemma3:27b, qwen3.5:9b vs qwen3.5:27b) behave the same for FA purposes. Testing one per arch covers it. The 3 picks above cover 4 of the 7 unique arches in the lineup; the rest (gemma3 already done, gemma4, mistral3, qwen3vl-MoE) can be tested individually if Phase 3 lands and someone wants comprehensive coverage. Diminishing returns vs runner time after the first few representatives.
 
-## What Phase 3 should seed the allowlist with
+## What Phase 3 should seed the allowlist with (post-Phase 2)
 
-Based on this audit + Phase 2 verification, the initial `SupportsFlashAttentionInNewEngine()` allowlist should contain **only architectures empirically validated** to produce correct output on K80 with FA enabled. After Phase 2 the candidates are:
+Based on Phase 1 + Phase 2 empirical results, the initial `SupportsFlashAttentionInNewEngine()` allowlist should contain **only architectures that (a) empirically work on K80 with FA enabled AND (b) actually use the new engine**. After Phase 2 verification:
 
-- `gemma3` (validated in #108)
-- `gptoss` (Phase 2 verifies)
-- `qwen3vl` and `qwen3vlmoe` (Phase 2 verifies)
-- `qwen2` (Phase 2 verifies via deepseek-r1:14b)
+- ✅ **`gemma3`** — validated in #108 (gemma3:4b on new engine, bit-exact match)
+- ✅ **`gptoss`** — Phase 2 confirmed (run 24978297254, bit-exact match between off-f16 and on-f16)
+- ✅ **`qwen3vl`** — Phase 2 confirmed (run 24978521066, coherent thinking output, FA dispatched)
+- ⚠️ **`qwen3vlmoe`** — predicted-equivalent to qwen3vl but not separately tested. Add with a `// TODO: empirically verify` comment, or pick the 30b variant for a follow-up bench.
 
-NOT in the initial allowlist (require their own validation later):
-- `qwen35` — even though the trace says the SDPA backend supports FA in principle, hybrid attention layers haven't been empirically validated for output correctness with `t.b.flashAttention=true`. Phase 3 should add it as a separate follow-up after a targeted test.
-- `gemma4`, `mistral3`, `gemma3n`, `llama`, `llama4`, `mllama`, `deepseek2` — not in the lineup or not tested.
+**NOT in the new-engine allowlist** (different reasons):
 
-This mirrors the conservative-allowlist pattern from PR #117 itself: empirically validate, then enable.
+- ❌ `qwen35` — currently in the deny list. Adding to the new-engine allowlist (which bypasses the deny list) requires its own targeted test. The qwen35 trace at `docs/traces/qwen35-flash-attention-gate.md` notes the SDPA backend supports FA in principle, but hybrid SSM+attention output correctness with `t.b.flashAttention=true` is unverified. Add as a separate post-Phase 3 follow-up issue.
+- ❌ `qwen2` — empirically validated in Phase 2 BUT uses the **llama.cpp engine**, not the new engine. It already works via the existing head-count gate; no Phase 3 changes needed.
+- ❌ `gemma4`, `mistral3`, `gemma3n`, `llama`, `llama4`, `mllama`, `deepseek2`, `gemma2` — not validated. Don't seed the new-engine allowlist with these even if a Go package exists.
+
+### Concrete initial allowlist for Phase 3
+
+```go
+func (f GGML) SupportsFlashAttentionInNewEngine() bool {
+    return slices.Contains([]string{
+        "gemma3",   // validated #108 (gemma3:4b)
+        "gptoss",   // validated #123 Phase 2 (gpt-oss:20b)
+        "qwen3vl",  // validated #123 Phase 2 (qwen3-vl:8b)
+        // qwen3vlmoe — likely safe (same package as qwen3vl) but unverified;
+        //   either include with a TODO or run :30b in a Phase 2.5 sweep
+        // qwen35 — needs targeted validation; see docs/traces/qwen35-flash-attention-gate.md
+    }, f.KV().Architecture())
+}
+```
+
+This mirrors the conservative-allowlist pattern from PR #117: empirically validate one model per arch, then enable.
 
 ## References
 
