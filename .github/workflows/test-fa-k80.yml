@@ -101,6 +101,9 @@ jobs:
         id: infer
         run: |
           set -e
+          # Clean any leftovers from prior runs so artifacts only contain
+          # this run's outputs.
+          rm -rf /tmp/fa-test
           mkdir -p /tmp/fa-test
           chmod 777 /tmp/fa-test
 
@@ -215,8 +218,10 @@ jobs:
             kv_mib=$(grep -oE '"kv cache" device=[^ ]+ size="[0-9.]+ MiB"' "$out_dir/container-logs.log" \
                        | head -1 | grep -oE '[0-9.]+ MiB' | grep -oE '[0-9.]+') || kv_mib="unknown"
 
+            # Note: jq reserved words (label, break, etc.) must be quoted as
+            # object keys. Quoting all keys defensively.
             jq -n \
-              --arg label "$label" \
+              --arg config "$label" \
               --arg model "$MODEL" \
               --argjson enable_fa "$enable_fa" \
               --arg kv_type "${kv_type:-f16}" \
@@ -226,21 +231,21 @@ jobs:
               --arg vram "$vram" \
               --arg kv_mib "$kv_mib" \
               '{
-                label: $label,
-                model: $model,
-                enable_fa: ($enable_fa == 1),
-                kv_cache_type: $kv_type,
-                num_ctx: $num_ctx,
-                num_predict: $num_predict,
-                eval_count: ($resp[0].eval_count // 0),
-                eval_duration_ns: ($resp[0].eval_duration // 0),
-                prompt_eval_duration_ns: ($resp[0].prompt_eval_duration // 0),
-                tokens_per_sec: (if ($resp[0].eval_duration // 0) > 0
-                                 then ($resp[0].eval_count / ($resp[0].eval_duration / 1000000000))
-                                 else 0 end),
-                vram_used_mib: ($vram | tonumber),
-                kv_cache_mib: $kv_mib,
-                response_preview: ($resp[0].response // "" | .[0:120])
+                "config": $config,
+                "model": $model,
+                "enable_fa": ($enable_fa == 1),
+                "kv_cache_type": $kv_type,
+                "num_ctx": $num_ctx,
+                "num_predict": $num_predict,
+                "eval_count": ($resp[0].eval_count // 0),
+                "eval_duration_ns": ($resp[0].eval_duration // 0),
+                "prompt_eval_duration_ns": ($resp[0].prompt_eval_duration // 0),
+                "tokens_per_sec": (if ($resp[0].eval_duration // 0) > 0
+                                   then ($resp[0].eval_count / ($resp[0].eval_duration / 1000000000))
+                                   else 0 end),
+                "vram_used_mib": ($vram | tonumber),
+                "kv_cache_mib": $kv_mib,
+                "response_preview": ($resp[0].response // "" | .[0:120])
               }' \
               > "$out_dir/metrics.json"
 
@@ -279,7 +284,7 @@ jobs:
             jq -s '. as $rows
                    | "| Config | KV cache (MiB) | Total VRAM (MiB) | tokens/sec | eval (s) |\n|---|---|---|---|---|\n"
                      + ($rows | map(
-                       "| \(.label) | \(.kv_cache_mib) | \(.vram_used_mib) | \(.tokens_per_sec | . * 100 | round / 100) | \(.eval_duration_ns / 1000000000 | . * 100 | round / 100) |"
+                       "| \(.config) | \(.kv_cache_mib) | \(.vram_used_mib) | \(.tokens_per_sec | . * 100 | round / 100) | \(.eval_duration_ns / 1000000000 | . * 100 | round / 100) |"
                      ) | join("\n"))' \
               /tmp/fa-test/off-f16/metrics.json \
               /tmp/fa-test/on-f16/metrics.json \
