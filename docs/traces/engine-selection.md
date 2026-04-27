@@ -55,7 +55,7 @@ NewLlamaServer(...)
   │   │
   │   └── log "engine selected" debug line
   │
-  └── if textProcessor == nil:                         # not in either condition above
+  └── if textProcessor == nil:                         # not eligible OR new-engine attempt failed
       └── llama.LoadModelFromFile(...)                 # legacy llama.cpp engine
 ```
 
@@ -69,7 +69,7 @@ NewLlamaServer(...)
 | qwen35 | yes | yes | new |
 | qwen3vl / qwen3vlmoe | yes | yes | new |
 | gptoss / gpt-oss | yes | yes | new |
-| **qwen2** | yes (handles `qwen2`, `qwen3moe`-not-actually) | **NO** | **llama.cpp** |
+| **qwen2** | yes | **NO** | **llama.cpp** |
 | **llama** | yes | **NO** | **llama.cpp** |
 | **deepseek2** | yes | **NO** | **llama.cpp** |
 
@@ -79,8 +79,8 @@ The audit error in Phase 1 was assuming the first column implied the third. It d
 
 In container logs, look for either of these log paths:
 
-- `level=DEBUG source=server.go:160 msg="engine selected" engine=ollama arch=...`
-- `level=DEBUG source=server.go:160 msg="engine selected" engine=llama_compat arch=... reason=...`
+- `level=DEBUG source=server.go:163 msg="engine selected" engine=ollama arch=...`
+- `level=DEBUG source=server.go:161 msg="engine selected" engine=llama_compat arch=... reason=...`
 
 Or distinguish by the load-request log:
 
