@@ -18,13 +18,17 @@ Catch errors in `.github/workflows/*.yml` before pushing. The dev environment ca
 
 The pattern that bit us most often: bare object keys that collide with jq reserved words (`label`, `break`, `try`, `catch`, `reduce`, `foreach`, `as`, `def`, `if`, `then`, `else`, `end`, `and`, `or`, `not`, `import`, `include`, `module`, `null`, `true`, `false`).
 
-For each `jq -n '{...}'` template in a workflow, dry-run it with placeholder values:
+For each `jq -n '{...}'` template in a workflow, dry-run it with placeholder values. `jq -n` (`--null-input`) takes no stdin — just the args and the object literal:
 
 ```bash
-echo '{"foo": $foo, "bar": $bar}' | jq -n --arg foo test --arg bar test '<paste object literal here>'
+# Replace the workflow's --arg / --argjson values with placeholders, then run.
+# Example: if the workflow has
+#   jq -n --arg model "$MODEL" --argjson num_predict "$NUM_PREDICT" '{ model: $model, num_predict: $num_predict }'
+# dry-run as:
+jq -n --arg model test --argjson num_predict 1 '{ "model": $model, "num_predict": $num_predict }'
 ```
 
-If jq prints the object: ✓. If it errors with `unexpected <word>`: that key is a reserved word — quote it (`"foo": $foo` instead of `foo: $foo`).
+If jq prints the object: ✓. If it errors with `unexpected <word>`: that key is a reserved word — quote it (`"model": $model` instead of `model: $model`).
 
 ### `shellcheck` for `run:` blocks (install via package manager or docker)
 
@@ -32,18 +36,13 @@ Catches: redirect-order bugs (`cmd 2>&1 > file`), unquoted variables, missing er
 
 ```bash
 # If installed locally:
-shellcheck path/to/extracted-script.sh
+shellcheck script.sh
 
 # Or via docker, no install:
-docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:stable path/to/extracted-script.sh
+docker run --rm -v "$PWD:/mnt" --workdir /mnt koalaman/shellcheck:stable script.sh
 ```
 
-To run on a workflow's `run:` blocks, extract them first:
-
-```bash
-yq '.jobs[].steps[].run // empty' .github/workflows/test-fa-k80.yml > /tmp/extracted.sh
-shellcheck /tmp/extracted.sh
-```
+To shellcheck a workflow's `run:` blocks, the simplest path is to copy each block into a `.sh` file and run shellcheck on it. Workflow YAML doesn't have a clean automated extractor in standard tooling — `yq` (Go) or `yq` (Python) versions both work but neither is guaranteed installed. If you want automation, install `yq` from `mikefarah/yq` and run `yq '.jobs[].steps[].run // ""' workflow.yml > extracted.sh` first.
 
 ### `actionlint` for workflow structure (install or docker)
 
