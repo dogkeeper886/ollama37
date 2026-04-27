@@ -875,7 +875,11 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
-// SupportsFlashAttention checks if the model supports flash attention
+// SupportsFlashAttention checks the legacy FA gate: passes if the architecture
+// is not in the per-arch deny list (gemma2, qwen35) and head counts match.
+// Most architectures — including new-engine ones like gemma3, gptoss, qwen3vl —
+// pass this gate. Architectures in the deny list can opt into FA via
+// SupportsFlashAttentionInNewEngine after empirical validation.
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
@@ -885,7 +889,7 @@ func (f GGML) SupportsFlashAttention() bool {
 	arch := f.KV().Architecture()
 
 	// qwen35 is hybrid (DeltaNet + attention) and needs the OllamaEngine;
-	// flash attention is handled by the FlashAttention() allowlist instead
+	// flash attention is handled via SupportsFlashAttentionInNewEngine instead.
 	if slices.Contains([]string{"gemma2", "qwen35"}, arch) {
 		return false
 	}
@@ -894,6 +898,36 @@ func (f GGML) SupportsFlashAttention() bool {
 	headCountK := f.KV().EmbeddingHeadCountK()
 	headCountV := f.KV().EmbeddingHeadCountV()
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
+}
+
+// SupportsFlashAttentionInNewEngine returns true for architectures whose
+// new-engine implementation has been empirically validated to produce correct
+// output on K80 (compute 3.7) with flash attention enabled.
+//
+// This is checked alongside SupportsFlashAttention as an OR — i.e., a model is
+// FA-eligible if either gate allows it. The two gates serve different paths:
+//
+//   - SupportsFlashAttention is the legacy llama.cpp engine path (head-count
+//     check + per-arch deny list).
+//   - SupportsFlashAttentionInNewEngine is the new engine's allowlist of
+//     architectures verified via the test-fa-k80.yml workflow per
+//     docs/research/k80-fa-model-coverage.md.
+//
+// Adding new architectures requires empirical validation per the methodology
+// in issue #123 (FA-off baseline vs FA-on output, on the K80 runner).
+func (f GGML) SupportsFlashAttentionInNewEngine() bool {
+	// ollama37 (issue #124, part of #121).
+	return slices.Contains([]string{
+		"gemma3",  // validated #108 (gemma3:4b on PR #117 validation runs)
+		"gptoss",  // validated #123 Phase 2 (gpt-oss:20b run 24978297254)
+		"qwen3vl", // validated #123 Phase 2 (qwen3-vl:8b run 24978521066)
+		// "qwen3vlmoe" — same Go package as qwen3vl; presumed safe but
+		// untested. Add when a qwen3-vl:30b benchmark validates it.
+		// "qwen35" — currently in SupportsFlashAttention deny list. Adding
+		// here would bypass the deny but requires empirical validation of
+		// hybrid SSM+attention output correctness with FA enabled. See
+		// docs/traces/qwen35-flash-attention-gate.md.
+	}, f.KV().Architecture())
 }
 
 // FlashAttention checks if the model should enable flash attention
