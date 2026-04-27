@@ -875,10 +875,11 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
-// SupportsFlashAttention checks if the model supports flash attention via the
-// llama.cpp engine path. Returns false for architectures that route through the
-// new Ollama engine — those are handled separately by
-// SupportsFlashAttentionInNewEngine.
+// SupportsFlashAttention checks the legacy FA gate: passes if the architecture
+// is not in the per-arch deny list (gemma2, qwen35) and head counts match.
+// Most architectures — including new-engine ones like gemma3, gptoss, qwen3vl —
+// pass this gate. Architectures in the deny list can opt into FA via
+// SupportsFlashAttentionInNewEngine after empirical validation.
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
