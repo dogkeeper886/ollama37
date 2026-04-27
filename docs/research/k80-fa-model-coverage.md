@@ -29,18 +29,18 @@ For each model in `cicd/tests/testcases/models/TC-MODELS-*.yml`:
 | Test ID | Model tag | Likely GGUF arch | Engine | Attention shape | In deny list? | In FA-default allowlist? | **Predicted FA-on-K80** |
 |---|---|---|---|---|---|---|---|
 | TC-MODELS-001 | `gpt-oss:20b` | `gptoss` | new | pure transformer | no | yes | ✅ enables |
+| TC-MODELS-002 | `gemma3:27b` | `gemma3` | new | pure transformer + vision capable | no | yes | ✅ predicted (same arch as `:4b` validated) |
+| TC-MODELS-003 | `deepseek-r1:14b` | `qwen2` (Qwen-2.5 distill, [confirmed via Ollama lib](https://ollama.com/library/deepseek-r1:14b)) | new | pure transformer | no | no | ⚠️ user-toggle only |
+| TC-MODELS-004 | `qwen3.5:9b` | `qwen35` | new | **hybrid SSM (DeltaNet) + attention** | **YES** | yes | ❌ **silently denied** ([verified empirically](https://github.com/dogkeeper886/ollama37/actions/runs/24974247971)) |
+| TC-MODELS-005 | `functiongemma:270m` | likely `gemma3` (270M Gemma-derivative for tool calling) | new | pure transformer | no | yes (if gemma3) | ✅ predicted (assuming gemma3 base) |
+| TC-MODELS-006 | `gemma4:e4b` | `gemma4` | new | transformer + vision + audio | no | no | ⚠️ enables only if user sets `OLLAMA_FLASH_ATTENTION=1` (not default-on) |
+| TC-MODELS-007 | `gemma4:26b` | `gemma4` | new | transformer + vision + audio | no | no | ⚠️ same as e4b |
 | TC-MODELS-008 | `gemma3:4b` | `gemma3` | new | pure transformer + vision capable | no | yes | ✅ **verified empirically** ([run 24960034243](https://github.com/dogkeeper886/ollama37/actions/runs/24960034243)) |
-| TC-MODELS-002 | `gemma3:27b` | `gemma3` | new | pure transformer + vision capable | no | yes | ✅ predicted (same arch as `:4b`) |
-| TC-MODELS-004 | `gemma4:e4b` | `gemma4` | new | transformer + vision + audio | no | no | ⚠️ enables only if user sets `OLLAMA_FLASH_ATTENTION=1` (not default-on) |
-| TC-MODELS-003 | `gemma4:26b` | `gemma4` | new | transformer + vision + audio | no | no | ⚠️ same as e4b |
-| TC-MODELS-005 | `deepseek-r1:14b` | `qwen2` (Qwen-2.5 distill, [confirmed via Ollama lib](https://ollama.com/library/deepseek-r1:14b)) | new | pure transformer | no | no | ⚠️ user-toggle only |
 | TC-MODELS-009 | `deepseek-r1:32b` | `qwen2` (Qwen-2.5 distill, predicted) | new | pure transformer | no | no | ⚠️ user-toggle only |
-| TC-MODELS-006 | `qwen3.5:9b` | `qwen35` | new | **hybrid SSM (DeltaNet) + attention** | **YES** | yes | ❌ **silently denied** ([verified empirically](https://github.com/dogkeeper886/ollama37/actions/runs/24974247971)) |
-| TC-MODELS-011 | `qwen3.5:27b` | `qwen35` | new | hybrid SSM + attention | **YES** | yes | ❌ silently denied (same arch) |
-| TC-MODELS-012 | `qwen3-vl:8b` | `qwen3vl` | new | pure transformer + vision | no | yes | ✅ enables (LM portion) |
-| TC-MODELS-013 | `qwen3-vl:30b` | `qwen3vl` or `qwen3vlmoe` (likely MoE at 30b) | new | transformer + vision (+ MoE?) | no | yes | ✅ enables |
-| TC-MODELS-010 | `ministral-3:3b` | `mistral3` | new | pure transformer + vision capable | no | no | ⚠️ user-toggle only |
-| TC-MODELS-007 | FunctionGemma | `gemma3` (likely — Gemma3-based custom Modelfile) | new | pure transformer | no | yes | ✅ enables (predicted) |
+| TC-MODELS-010 | `qwen3.5:27b` | `qwen35` | new | hybrid SSM + attention | **YES** | yes | ❌ silently denied (same arch as `:9b`) |
+| TC-MODELS-011 | `qwen3-vl:8b` | `qwen3vl` | new | pure transformer + vision | no | yes | ✅ enables (LM portion) |
+| TC-MODELS-012 | `qwen3-vl:30b` | `qwen3vl` or `qwen3vlmoe` (likely MoE at 30b) | new | transformer + vision (+ MoE?) | no | yes | ✅ enables |
+| TC-MODELS-013 | `ministral-3:3b` | `mistral3` | new | pure transformer + vision capable | no | no | ⚠️ user-toggle only |
 
 ### Status legend
 
