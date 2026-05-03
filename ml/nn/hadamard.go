@@ -1,6 +1,68 @@
 package nn
 
-import "math"
+import (
+	"log/slog"
+	"math"
+	"sync"
+
+	"github.com/ollama/ollama/ml"
+)
+
+// hadamard64 is the normalized 64×64 Sylvester Hadamard matrix used by the
+// MVP rotation integration. Computed once at package init so the per-call
+// cost is just a small CPU→GPU upload, not a regenerate-then-upload.
+var hadamard64 = HadamardMatrix(64)
+
+// incompatibleOnce ensures the "rotation requested but head_dim unsupported"
+// warning fires at most once per (process, head_dim). Without this, every
+// forward pass on an unsupported model would log.
+var incompatibleOnce sync.Map // map[int]*sync.Once
+
+// noteIncompatibleHeadDim emits a single slog.Warn the first time a given
+// head_dim is seen with rotation requested but disabled. Operators see one
+// line at first inference and know rotation silently did nothing for the
+// model they're running.
+func noteIncompatibleHeadDim(headDim int) {
+	o, _ := incompatibleOnce.LoadOrStore(headDim, &sync.Once{})
+	o.(*sync.Once).Do(func() {
+		slog.Warn("OLLAMA_KV_ROTATE=1 but head_dim is not a multiple of 64; KV rotation disabled for this model",
+			"head_dim", headDim,
+		)
+	})
+}
+
+// blockRotate applies the 64×64 Sylvester Hadamard `h` block-diagonally
+// along the head dim of `t`. Input and output shapes are identical; the
+// transform is exact in fp32 (orthogonal, dot-product preserving).
+//
+// Layout: t is [head_dim, heads, seq] in column-major order. Reshape to
+// [64, k·heads, seq] (where k = head_dim/64) so the matmul applies H_64
+// to each contiguous 64-element slice of the head dim independently — the
+// block-diagonal effect comes for free from the reshape.
+//
+// Caller is responsible for the rotation gate (envconfig.KVRotate +
+// IsHadamardCompatible). This helper does no checks of its own.
+func blockRotate(ctx ml.Context, t, h ml.Tensor) ml.Tensor {
+	d := t.Dim(0)
+	heads := t.Dim(1)
+	seq := t.Dim(2)
+	k := d / 64
+
+	// h.Mulmat(reshaped) computes h^T · reshaped along the contracted dim
+	// (the leading 64). Sylvester H is symmetric, so h^T = h, and the
+	// result is the desired h · reshaped.
+	reshaped := t.Reshape(ctx, 64, k*heads, seq)
+	rotated := h.Mulmat(ctx, reshaped)
+	return rotated.Reshape(ctx, d, heads, seq)
+}
+
+// hadamardTensor materializes the cached 64×64 Hadamard slice as a backend
+// tensor in the supplied context. Cheap (16 KiB upload); not worth caching
+// the tensor across calls because each call may target a different backend
+// context with its own allocator.
+func hadamardTensor(ctx ml.Context) ml.Tensor {
+	return ctx.FromFloats(hadamard64, 64, 64)
+}
 
 // HadamardMatrix returns a row-major normalized Sylvester Hadamard matrix of
 // size n×n. n must be a power of 2 and ≥ 1. Every element is ±1/√n, the

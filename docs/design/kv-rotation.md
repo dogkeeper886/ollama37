@@ -1,7 +1,7 @@
 # KV Cache Rotation — Design Notes
 
 **Issue:** [#102](https://github.com/dogkeeper886/ollama37/issues/102)
-**Status:** In progress — scaffold committed, `attention.go` integration pending build-env availability.
+**Status:** Phase 1 ollamarunner integration landed in `ml/nn/attention.go`. llamarunner cherry-pick of upstream commit `744c0c73` is the next deliverable, tracked separately.
 
 ## Goal
 
@@ -12,10 +12,16 @@ Mirrors ggml-org/llama.cpp#21038 (commit `744c0c73`, merged 2026-04-01), which s
 ## What's landed
 
 - `envconfig.KVRotate` — `OLLAMA_KV_ROTATE=1` opt-in flag (default off).
-- `ml/nn/hadamard.go` — pure-Go normalized Hadamard matrix generator + `IsHadamardCompatible(headDim)` gate.
+- `ml/nn/hadamard.go` — pure-Go normalized Hadamard matrix generator + `IsHadamardCompatible(headDim)` gate, package-level cached `hadamard64` slice, `blockRotate` helper, and one-shot incompatible-head warning (`noteIncompatibleHeadDim`).
 - `ml/nn/hadamard_test.go` — orthogonality, normalization, symmetry, power-of-2 validation.
+- `ml/nn/attention.go` — `AttentionWithSinks` gates rotation on `envconfig.KVRotate() && cache != nil && IsHadamardCompatible(query.Dim(0))`; rotates Q/K/V before `cache.Put`, undoes rotation on the attention output.
 
-## What's pending (the actual integration)
+## Known limitations
+
+- **Stickiness**: `envconfig.KVRotate()` reads the env each call, so toggling the variable mid-process would mix rotated and unrotated cache entries. In practice env vars don't change at runtime, so this is a documentation issue rather than a bug. If we ever need true stickiness, snapshot the gate at runner-init time and pass through.
+- **Head-dim asymmetry**: the gate checks `query.Dim(0)`. If V's head dim differs from Q/K (rare but possible in some MoE/cross-attention designs), rotation would still apply and could break the un-rotation step. Add an explicit V-side check if such a model is ever supported.
+
+## Pending integration details (reference)
 
 ### Tensor layout convention
 
