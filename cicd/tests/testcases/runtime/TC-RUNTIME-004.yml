@@ -72,16 +72,51 @@ steps:
     rejectPatterns:
       - "totals FAIL"
 
+  - name: gpus[] length matches totals.gpu_count (internal consistency)
+    command: |
+      curl -s http://localhost:11434/api/metrics \
+        | jq -e '(.gpus | length) == .totals.gpu_count' >/dev/null \
+        && echo "gpus length consistent OK" || echo "gpus length consistent FAIL"
+    expectPatterns:
+      - "gpus length consistent OK"
+    rejectPatterns:
+      - "gpus length consistent FAIL"
+
+  - name: gpu_count matches nvidia-smi count (catches dropped GPUs)
+    command: |
+      EXPECTED=$(docker exec ollama37 nvidia-smi -L | wc -l)
+      ACTUAL=$(curl -s http://localhost:11434/api/metrics | jq '.totals.gpu_count')
+      echo "expected=$EXPECTED actual=$ACTUAL"
+      [ "$EXPECTED" = "$ACTUAL" ] && echo "gpu_count match OK" || echo "gpu_count match FAIL"
+    expectPatterns:
+      - "gpu_count match OK"
+    rejectPatterns:
+      - "gpu_count match FAIL"
+
+  - name: Dump full response for inspection
+    command: curl -s http://localhost:11434/api/metrics | jq '.'
+
 criteria: |
   Verify GET /api/metrics returns HTTP 200 with well-formed JSON conforming to
-  the documented schema in server/metrics.go.
+  the documented schema in server/metrics.go, and that GPU enumeration is
+  complete (no dies missed).
 
   Expected response shape:
   - Top-level keys: gpus[], models[], errors{}, totals{}
-  - gpus[]: id (string), name (string), vram_total (number > 0); K80 runner exposes >= 1 GPU
+  - gpus[]: id (string), name (string), vram_total (number > 0)
   - errors{}: load_failures, load_require_full, load_other, evictions_total — all integers
-  - totals{}: gpu_count (>= 1 on K80), loaded_models (>= 0)
+  - totals{}: gpu_count, loaded_models — both numbers
+
+  Completeness checks:
+  - gpus[] length must equal totals.gpu_count (internal consistency)
+  - totals.gpu_count must equal `nvidia-smi -L` count inside the container
+    (catches the failure mode where the endpoint loses GPUs vs. what the
+    driver actually reports — e.g. only enumerating the first runner's view)
 
   models[] may be empty when no model is loaded. Per-model assertions
   (engine label, vram_breakdown, context_length) are deferred to a follow-up
   test that piggybacks on inference-suite setup, per the plan in issue #130.
+
+  Inspect the dumped response (final step) to spot subtler issues —
+  duplicate device IDs, suspicious vram_total values, missing compute_cap,
+  etc. — that the structural assertions cannot express.
