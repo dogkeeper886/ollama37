@@ -104,9 +104,18 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 		if len(d.LibraryPath) > 0 {
 			libPath = d.LibraryPath[0]
 		}
+		// Prefer the user-friendly Description (e.g. "Tesla K80") over the
+		// backend's Name field, which is the runtime enumeration label
+		// (e.g. "CUDA0"). Name is what humans look at when answering "what
+		// hardware is this?" — Description matches that intent. Fall back
+		// to Name if Description is empty (some backends may not set it).
+		name := d.Description
+		if name == "" {
+			name = d.Name
+		}
 		gpus = append(gpus, GPUMetrics{
 			ID:          d.DeviceID.ID,
-			Name:        d.Name,
+			Name:        name,
 			VRAMTotal:   d.TotalMemory,
 			VRAMFree:    d.FreeMemory,
 			ComputeCap:  compute,

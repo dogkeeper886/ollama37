@@ -93,6 +93,23 @@ steps:
     rejectPatterns:
       - "gpu_count match FAIL"
 
+  - name: gpus[].name returns marketing name, not runtime enumeration label
+    command: |
+      # Per #131: name should be "Tesla K80" or similar, NOT "CUDA0/HIP0/etc."
+      # The `// ""` coerces missing/null names into empty strings so an
+      # empty `^$` alternation can fail the assertion alongside the
+      # enum-style names.
+      BAD=$(curl -s http://localhost:11434/api/metrics \
+        | jq -r '.gpus[] | (.name // "")' \
+        | grep -E '^$|^(CUDA|HIP|Vulkan)[0-9]+$' \
+        | wc -l)
+      echo "GPUs with empty or runtime-enum-style name: $BAD"
+      [ "$BAD" = "0" ] && echo "gpu name OK" || echo "gpu name FAIL"
+    expectPatterns:
+      - "gpu name OK"
+    rejectPatterns:
+      - "gpu name FAIL"
+
   - name: Dump full response for inspection
     command: curl -s http://localhost:11434/api/metrics | jq '.'
 
