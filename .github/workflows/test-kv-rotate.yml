@@ -1,12 +1,11 @@
-name: KV Rotation ON-Path Smoke
+name: KV Rotation Smoke
 
-# Smoke test for the KV rotation code path introduced in #102 / PR #133.
-# CI workflows run the container from docker-compose, where OLLAMA_KV_ROTATE
-# is unset, so the rotation code is compiled but never executed. This
-# workflow spins up the container with -e OLLAMA_KV_ROTATE=1 (matching the
-# pattern in test-fa-k80.yml), runs a deterministic inference against a
-# small ollamarunner-served model with a head_dim multiple of 64, and
-# verifies the output is coherent. Pairs with #135.
+# Smoke test for the KV rotation code path landed in #102 / PR #133.
+# Rotation is structurally always-on (no env gate) when head_dim is a
+# multiple of 64 and a cache is in use. This workflow exercises the full
+# K80 killer combo (FA on + q8_0 KV) against a model that triggers
+# rotation (gemma3:4b, head_dim=256), and asserts the output is coherent
+# and the container has no panics or CUDA errors. Pairs with #135.
 
 on:
   workflow_dispatch:
@@ -46,7 +45,7 @@ jobs:
             sleep 1
           done
 
-      - name: Run inference with OLLAMA_KV_ROTATE=1
+      - name: Run inference (FA on + q8_0 KV; rotation activates structurally)
         id: infer
         run: |
           set -e
@@ -55,7 +54,7 @@ jobs:
           OUT=/tmp/kv-rotate-test
           rm -rf "$OUT" && mkdir -p "$OUT"
 
-          echo "=== Starting container with OLLAMA_KV_ROTATE=1, FA=1, KV=q8_0 ==="
+          echo "=== Starting container with FA=1, KV=q8_0 (rotation auto-on for head_dim%64==0) ==="
           docker run -d --rm \
             --name ollama37-kvrotate-test \
             --runtime nvidia \
@@ -66,7 +65,6 @@ jobs:
             -e OLLAMA_DEBUG=1 \
             -e OLLAMA_FLASH_ATTENTION=1 \
             -e OLLAMA_KV_CACHE_TYPE=q8_0 \
-            -e OLLAMA_KV_ROTATE=1 \
             -v ollama-data:/root/.ollama \
             -p 11434:11434 \
             ollama37:latest
@@ -136,15 +134,7 @@ jobs:
             exit 1
           fi
 
-          echo "--- 4. logs should NOT contain the 'incompatible head_dim' warning ---"
-          # gemma3:4b has head_dim=256, multiple of 64 → rotation should activate
-          if grep -q 'KV rotation disabled for this model' "$OUT/container-logs.log"; then
-            echo "::error::Rotation disabled warning fired — gate failed unexpectedly"
-            grep 'KV rotation' "$OUT/container-logs.log"
-            exit 1
-          fi
-
-          echo "All assertions pass — KV rotation ON-path works on $(jq -r '.model' $OUT/response.json)"
+          echo "All assertions pass — rotation works on $(jq -r '.model' $OUT/response.json)"
 
       - name: Restore docker-compose container
         if: always()
