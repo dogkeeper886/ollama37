@@ -1,140 +1,110 @@
 # KV Cache Rotation — Design Notes
 
 **Issue:** [#102](https://github.com/dogkeeper886/ollama37/issues/102)
-**Status:** Phase 1 ollamarunner integration landed in `ml/nn/attention.go`. llamarunner cherry-pick of upstream commit `744c0c73` is the next deliverable, tracked separately.
+**Status:** Phase 1 ollamarunner integration landed always-on for compatible head dims. llamarunner cherry-pick of upstream commit `744c0c73` is the next deliverable, tracked separately in #134.
 
 ## Goal
 
-Apply a fixed orthogonal rotation (Sylvester Hadamard matrix, normalized by 1/√n) to Q/K/V activations before they enter the KV cache, so that existing quantized KV types (`q4_0`, `q8_0`) recover most of the fp16-vs-quantized quality gap.
+Apply a fixed orthogonal rotation (Sylvester Hadamard matrix, normalized by 1/√n) to Q/K/V activations before they enter the KV cache. This smooths per-coordinate distributions so that existing quantized KV types (`q4_0`, `q8_0`) recover most of the fp16-vs-quantized quality gap.
 
-Mirrors ggml-org/llama.cpp#21038 (commit `744c0c73`, merged 2026-04-01), which showed this alone closes the PPL gap on Qwen3.5-4B between `q4_0` KV and `fp16` to +0.22%.
+Mirrors ggml-org/llama.cpp#21038 (commit `744c0c73`, merged 2026-04-01), which showed the rotation alone closes the PPL gap on Qwen3.5-4B between `q4_0` KV and `fp16` to +0.22 %.
 
 ## What's landed
 
-- `envconfig.KVRotate` — `OLLAMA_KV_ROTATE=1` opt-in flag (default off).
-- `ml/nn/hadamard.go` — pure-Go normalized Hadamard matrix generator + `IsHadamardCompatible(headDim)` gate, package-level cached `hadamard64` slice, `blockRotate` helper, and one-shot incompatible-head warning (`noteIncompatibleHeadDim`).
-- `ml/nn/hadamard_test.go` — orthogonality, normalization, symmetry, power-of-2 validation.
-- `ml/nn/attention.go` — `AttentionWithSinks` gates rotation on `envconfig.KVRotate() && cache != nil && IsHadamardCompatible(query.Dim(0))`; rotates Q/K/V before `cache.Put`, undoes rotation on the attention output.
+- `ml/nn/hadamard.go` — pure-Go normalized Hadamard matrix generator + `IsHadamardCompatible(headDim)` gate, package-level cached `hadamard64` slice, `blockRotate` helper, and `hadamardTensor(ctx)` to materialize the matrix on the active backend.
+- `ml/nn/hadamard_test.go` — orthogonality (every n in 1..128), normalization, symmetry, power-of-2 panic, and `IsHadamardCompatible` cases.
+- `ml/nn/attention.go` — `AttentionWithSinks` rotates Q/K/V before `cache.Put` and undoes the rotation on the attention output. Always-on when `cache != nil && IsHadamardCompatible(query.Dim(0))` — no env flag.
+- `.github/workflows/test-kv-rotate.yml` — smoke workflow that runs the K80 killer combo (FA on + q8_0 KV) against a head_dim-256 model and asserts coherent output.
 
-## Known limitations
+## Why no env flag
 
-- **Stickiness**: `envconfig.KVRotate()` reads the env each call, so toggling the variable mid-process would mix rotated and unrotated cache entries. In practice env vars don't change at runtime, so this is a documentation issue rather than a bug. If we ever need true stickiness, snapshot the gate at runner-init time and pass through.
-- **Head-dim asymmetry**: the gate checks `query.Dim(0)`. If V's head dim differs from Q/K (rare but possible in some MoE/cross-attention designs), rotation would still apply and could break the un-rotation step. Add an explicit V-side check if such a model is ever supported.
+The env-gated approach was scaffolding that briefly let us merge the code without committing to flipping it on. After end-to-end smoke validation showed the rotation produces correct output, the flag became dead weight — same trajectory as `OLLAMA_FLASH_ATTENTION_K80` (PR #112 → productized in PR #117, flag deleted).
 
-## Pending integration details (reference)
+The transform is exact in fp32 (orthogonal: H·Hᵀ = I; symmetric: H = Hᵀ ⇒ H·H = I). When KV is fp16, rotation is small overhead with zero quality benefit — but mathematically it's still a no-op. The cost is bounded (one 64×64 matmul per Q/K/V/output per layer per forward pass), so paying it unconditionally is the simpler design.
 
-### Tensor layout convention
+## Tensor layout convention
 
-`ml.Tensor` in ollama follows ggml column-major ordering. Shapes for attention
-inputs post-RoPE are:
+`ml.Tensor` follows ggml column-major ordering. Shapes for attention inputs post-RoPE are:
 
 - Q: `[head_dim, heads, seq_len_q]` — `Dim(0)` is head dim
 - K: `[head_dim, kv_heads, seq_len_k]`
-- V: `[head_dim, kv_heads, seq_len_k]` (or permuted via `PermutedV`; see
-  `kvcache/causal.go:621-625` — the rotation path must match this convention)
+- V: `[head_dim, kv_heads, seq_len_k]` (or permuted via `PermutedV`; see `kvcache/causal.go:617,622,624`)
 
-The `blockRotate` helper rotates along `Dim(0)` (head dim).
+`blockRotate` rotates along `Dim(0)` (head dim).
 
-### Ordering: rotation must happen AFTER RoPE
+## Ordering: rotation must happen AFTER RoPE
 
-**Critical foot-gun.** Rotation must be applied *after* RoPE has been applied
-to Q and K. Applying the Hadamard before RoPE scrambles the position-dependent
-rotation RoPE introduces, and the resulting transform is not recoverable.
-Upstream llama.cpp commit `744c0c73` applies H after `ggml_rope`; we do the
-same.
+**Critical foot-gun.** Rotation must be applied *after* RoPE has been applied to Q and K. Applying the Hadamard before RoPE scrambles the position-dependent rotation RoPE introduces, and the resulting transform is not recoverable. Upstream llama.cpp commit `744c0c73` applies H after `ggml_rope`; we do the same — `AttentionWithSinks` runs after the model's RoPE step, so this ordering is enforced by where the function sits in the call graph.
 
-Concretely: in the caller's forward pass, the order is
-`q → rope(q) → blockRotate(q)` and likewise for K. V has no RoPE, so just
-`v → blockRotate(v)`.
+## Math
 
-### ollamarunner path — `ml/nn/attention.go`
+```
+Q' = Q · H   (rotated query for THIS turn)
+K' = K · H   (rotated key, written to cache)
+V' = V · H   (rotated value, written to cache)
 
-The current `AttentionWithSinks` function (roughly):
+Attention scores: Q' · (K')ᵀ
+                = (Q·H) · (K·H)ᵀ
+                = Q · H · Hᵀ · Kᵀ
+                = Q · I · Kᵀ                 (orthogonality: H·Hᵀ = I)
+                = Q · Kᵀ                     ← scores preserved exactly
 
-```go
-if key != nil && value != nil {
-    cache.Put(ctx, key, value)
-}
-key, value, mask = cache.Get(ctx)
-// ... attention math using query, key, value
+Output:           softmax(Q'·(K')ᵀ / √d) · V'
+                = softmax(Q·Kᵀ / √d) · V · H
+                = (raw_output) · H
+
+Undo:             out = (raw_output · H) · H
+                       = raw_output · I       (symmetry: H·H = I for Sylvester)
 ```
 
-Rotation wraps this:
+Across turns, K/V from previous decode steps are stored rotated; the rotation gate is structural (depends only on head_dim and cache presence) so all writes use the same transform consistently.
 
-```go
-rotate := envconfig.KVRotate() && IsHadamardCompatible(query.Dim(0))
-
-if rotate && key != nil && value != nil {
-    H := hadamardTensor(ctx, 64)        // [64, 64] fp32, precomputed/cached
-    query = blockRotate(ctx, query, H)  // applied along head dim, block-64 diagonal
-    key   = blockRotate(ctx, key,   H)
-    value = blockRotate(ctx, value, H)
-    cache.Put(ctx, key, value)          // cache now stores rotated K, V
-} else if key != nil && value != nil {
-    cache.Put(ctx, key, value)
-}
-
-key, value, mask = cache.Get(ctx)
-// attention math unchanged — dot products are preserved under orthogonal rotation
-
-if rotate {
-    // V rotation propagates to the attention output; undo on the way out.
-    out = blockRotate(ctx, out, H)      // H is symmetric, so Hᵀ = H
-}
-```
-
-### `blockRotate` helper
+## blockRotate — block-diagonal application
 
 For head dim `d = 64·k`, applying `H_64` block-diagonally to a `[d, heads, seq]` tensor:
 
 1. Reshape `[d, heads, seq]` → `[64, k·heads, seq]`.
-2. Mulmat with `H_64`: result is `[64, k·heads, seq]`.
+2. `Mulmat` with `H_64`: result is `[64, k·heads, seq]`.
 3. Reshape back to `[d, heads, seq]`.
 
-This is the same trick upstream uses for V (fixed 64×64) applied to Q/K as well, at the cost of slightly less aggressive rotation than upstream's "largest pow-2 divisor" choice. The unified 64-wide rotation simplifies the tensor reshape bookkeeping.
+This is the same trick upstream uses for V (fixed 64×64) applied to Q/K as well, at the cost of slightly less aggressive rotation than upstream's "largest pow-2 divisor" choice. The unified 64-wide rotation simplifies the tensor reshape bookkeeping. If MVP results show this matters, we can match upstream's per-head choice in a follow-up.
 
-### Caching the Hadamard tensor
+## Hadamard tensor materialization
 
-Regenerating the matrix on every forward pass is wasteful. Options:
+The `hadamard64` float slice is computed once at package init. Per call, `hadamardTensor(ctx)` does a small CPU→GPU upload (16 KiB) — cheap enough not to bother caching the tensor across calls (each call may target a different backend context with its own allocator).
 
-- **Per-context cache**: attach a `map[int]ml.Tensor` to the runner or a package-level `sync.Map`. Key by size (64 only in MVP).
-- **Model-init-time**: add the Hadamard as a synthetic weight in the model structure. More invasive but matches upstream's "precomputed once per model" approach.
+## Compatibility
 
-For MVP: per-backend-context cache (option 1). Upgrade later if it becomes a hot path.
+- **Compatible head dims**: any multiple of 64 (≥ 64). Covers gemma3 (256), qwen3-vl (128), gpt-oss (64), most modern transformers.
+- **Excluded head dims**: 80, 96, 112 — some Llama-1/2 variants, MPT-7B. Rotation is silently skipped for these (gate returns false). No warning is emitted because it's a structural property of the model, not a user request that we're failing to honor.
+- **No cache**: rotation skipped (no quantization step to benefit from; rotating Q without rotating K would produce garbage).
 
-### Gating
+## Performance
 
-- Rotation applies only when **both** `OLLAMA_KV_ROTATE=1` **and** `IsHadamardCompatible(head_dim)` are true.
-- Mismatched configurations (flag on, head_dim unsupported) log once at model load:
-  ```
-  slog.Info("kv rotation requested but head_dim is not a multiple of 64; disabling", "head_dim", d)
-  ```
-- Rotation state is sticky for the lifetime of a runner. Toggling the env var while a model is loaded does not mix rotated and unrotated cache entries.
+Per attention call, rotation adds:
 
-### llamarunner path
+- 1 small upload per attention call (16 KiB CPU→GPU)
+- 4 matmuls: Q rotation, K rotation, V rotation, output un-rotation
+- Each matmul is `[64, k·heads·seq] @ [64, 64]`
 
-Out of scope for Phase 1 implementation. Follow-up: either cherry-pick upstream commit `744c0c73` as `llama/patches/00NN-rotate-activations-for-better-quantization.patch` or bump the vendored `llama/llama.cpp/` past that commit. Track in a separate issue.
+For decode (batch=1, seq=1) on a 32-layer model: ~100-200 µs per token added on K80 — negligible.
+For prefill (seq=2048): maybe 50-100 ms total — noticeable but within the design-doc target (<10 % overhead vs un-rotated).
 
-## Testing plan
+## llamarunner path
 
-### Unit (no runtime needed)
+Out of scope for Phase 1 implementation. Tracked in #134. Either cherry-pick upstream commit `744c0c73` as `llama/patches/00NN-rotate-activations-for-better-quantization.patch` or bump the vendored `llama/llama.cpp/` past that commit. Cherry-pick is preferred unless there's a separate reason to bump the vendor tree.
 
-- [x] Hadamard generator: orthogonality, normalization, symmetry — landed in `hadamard_test.go`.
-- [ ] `blockRotate` round-trip: `blockRotate(blockRotate(x, H), H) ≈ x` in fp32. Needs ml.Tensor test harness.
+## Testing
 
-### Integration (K80, build env required)
-
-- [ ] Model round-trip: generate with `OLLAMA_KV_ROTATE=0` and `=1`, compare perplexity on wikitext-2. Target: `q4_0` KV with rotation ≤ +0.3% PPL vs fp16.
-- [ ] Overhead: decode tok/s for fp16 / q4_0 / q4_0+rotate. Target: rotation overhead < 10% on K80 `fattn-vec` path.
-- [ ] Regression: `cicd/tests/testcases/` suites pass with rotation on.
-
-### Validation against metrics
-
-Once #98's `/api/metrics` endpoint lands, use the VRAM breakdown to verify KV cache size is unchanged (rotation doesn't affect quant bit-width — only quality). Useful sanity check.
+- **Unit (landed)**: Hadamard generator orthogonality, normalization, symmetry, power-of-2 panic. `hadamard_test.go`.
+- **Integration smoke (landed)**: `.github/workflows/test-kv-rotate.yml` — FA on + q8_0 KV against gemma3:4b, asserts non-empty coherent response, no panics, no CUDA errors.
+- **Perplexity (deferred)**: `q4_0` KV with rotation vs fp16 baseline on wikitext-2. Target: ≤ +0.3 % PPL delta. Needs offline tooling not yet in CI.
+- **Overhead (deferred)**: decode tok/s comparison fp16 / q4_0 / q4_0+rotate on K80. Target: rotation overhead < 10 %.
 
 ## Out of scope for Phase 1
 
-- TBQ3_0 / TBQ4_0 types (Phase 2, only if rotation + `q4_0` isn't sufficient).
+- TBQ3_0 / TBQ4_0 quant types (Phase 2, only if rotation + `q4_0` isn't sufficient).
 - QJL residual correction.
-- Asymmetric K/V type configuration (needs Cache API change — separate issue).
-- Per-head rotation selection (upstream picks largest pow-2; we conservatively use 64).
+- Asymmetric K/V type configuration (needs Cache API change — separate issue, #107).
+- Per-head rotation selection (upstream picks largest pow-2 divisor of head_dim; we conservatively use 64).
+- Bumping default KV cache type to `q4_0` — viable now that rotation is structural; tracked as a follow-up to PR #137.

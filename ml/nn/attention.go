@@ -3,7 +3,6 @@ package nn
 import (
 	"fmt"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 )
@@ -29,20 +28,18 @@ func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache
 func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
 	ctx.Forward(query)
 
-	// Walsh-Hadamard rotation gate. When OLLAMA_KV_ROTATE=1 and the head dim
-	// supports the MVP block-64 layout, rotate Q/K/V before the cache write
-	// and undo on the attention output. Math: orthogonal H satisfies
-	// (QH)(KH)^T = QK^T so attention scores are preserved; V·H propagates
-	// through the output, so multiplying out by H restores it (Sylvester H
-	// is symmetric ⇒ H·H = I). See docs/design/kv-rotation.md.
+	// Walsh-Hadamard rotation: rotate Q/K/V before the cache write and undo
+	// on the attention output. Math: orthogonal H satisfies (QH)(KH)^T = QK^T
+	// so attention scores are preserved; V·H propagates through the output,
+	// so multiplying out by H restores it (Sylvester H is symmetric ⇒ H·H = I).
+	// See docs/design/kv-rotation.md.
 	//
-	// Gated on cache != nil because rotated K/V only makes sense if it ends
-	// up in the cache (so reads come back rotated and Q can be rotated to
-	// match). Without a cache there's no quantization step to benefit from.
-	rotate := envconfig.KVRotate() && cache != nil && IsHadamardCompatible(query.Dim(0))
-	if envconfig.KVRotate() && cache != nil && !IsHadamardCompatible(query.Dim(0)) {
-		noteIncompatibleHeadDim(query.Dim(0))
-	}
+	// Always-on when the head dim supports the MVP block-64 layout AND we have
+	// a cache (rotated K/V only makes sense if it lands in the cache). The
+	// transform is exact in fp32; the win comes when the cache is quantized
+	// (q4_0/q8_0), where the rotation smooths per-coordinate distributions
+	// before quant noise hits, recovering most of the fp16 quality gap.
+	rotate := cache != nil && IsHadamardCompatible(query.Dim(0))
 
 	var hadamard ml.Tensor
 	if rotate {

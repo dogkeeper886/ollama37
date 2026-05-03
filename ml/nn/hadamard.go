@@ -1,9 +1,7 @@
 package nn
 
 import (
-	"log/slog"
 	"math"
-	"sync"
 
 	"github.com/ollama/ollama/ml"
 )
@@ -12,24 +10,6 @@ import (
 // MVP rotation integration. Computed once at package init so the per-call
 // cost is just a small CPU→GPU upload, not a regenerate-then-upload.
 var hadamard64 = HadamardMatrix(64)
-
-// incompatibleOnce ensures the "rotation requested but head_dim unsupported"
-// warning fires at most once per (process, head_dim). Without this, every
-// forward pass on an unsupported model would log.
-var incompatibleOnce sync.Map // map[int]*sync.Once
-
-// noteIncompatibleHeadDim emits a single slog.Warn the first time a given
-// head_dim is seen with rotation requested but disabled. Operators see one
-// line at first inference and know rotation silently did nothing for the
-// model they're running.
-func noteIncompatibleHeadDim(headDim int) {
-	o, _ := incompatibleOnce.LoadOrStore(headDim, &sync.Once{})
-	o.(*sync.Once).Do(func() {
-		slog.Warn("OLLAMA_KV_ROTATE=1 but head_dim is not a multiple of 64; KV rotation disabled for this model",
-			"head_dim", headDim,
-		)
-	})
-}
 
 // blockRotate applies the 64×64 Sylvester Hadamard `h` block-diagonally
 // along the head dim of `t`. Input and output shapes are identical; the
@@ -40,8 +20,8 @@ func noteIncompatibleHeadDim(headDim int) {
 // to each contiguous 64-element slice of the head dim independently — the
 // block-diagonal effect comes for free from the reshape.
 //
-// Caller is responsible for the rotation gate (envconfig.KVRotate +
-// IsHadamardCompatible). This helper does no checks of its own.
+// Caller is responsible for the rotation gate (IsHadamardCompatible plus
+// having a non-nil cache). This helper does no checks of its own.
 func blockRotate(ctx ml.Context, t, h ml.Tensor) ml.Tensor {
 	d := t.Dim(0)
 	heads := t.Dim(1)
@@ -105,10 +85,7 @@ func HadamardMatrix(n int) []float32 {
 // fixed 64×64 for V; we unify on 64 for simplicity in the first cut).
 //
 // Models with head_dim ∈ {80, 96, 112} (some Llama-1/2 variants, MPT-7B)
-// are silently excluded by this gate. When the attention.go integration
-// lands, the caller must emit a one-shot slog.Info at model load if
-// OLLAMA_KV_ROTATE=1 is set but this function returns false, so operators
-// know rotation did nothing even though they asked for it.
+// are silently excluded by this gate.
 func IsHadamardCompatible(headDim int) bool {
 	return headDim >= 64 && headDim%64 == 0
 }
