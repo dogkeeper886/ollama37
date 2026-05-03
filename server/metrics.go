@@ -78,22 +78,19 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 	}
 	s.sched.loadedMu.Unlock()
 
-	// Collect device info from the first available runner. GetDeviceInfos
-	// does IPC to the runner subprocess, so cap it with a short timeout —
-	// a stuck runner must not hang the metrics endpoint.
+	// Discover GPUs via the same path the scheduler uses (discover.GPUDevices).
+	// Going through the scheduler — instead of asking a loaded runner — means
+	// the GPU list is populated even when no model is loaded, which is the
+	// state most operators check first. Cap with a short timeout so a slow
+	// discovery cannot hang the endpoint.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
 
-	var devices []ml.DeviceInfo
+	runnersForDiscovery := make([]ml.FilteredRunnerDiscovery, 0, len(runners))
 	for _, r := range runners {
-		if r.llama == nil {
-			continue
-		}
-		if infos := r.llama.GetDeviceInfos(ctx); len(infos) > 0 {
-			devices = infos
-			break
-		}
+		runnersForDiscovery = append(runnersForDiscovery, r)
 	}
+	devices := s.sched.getGpuFn(ctx, runnersForDiscovery)
 
 	gpus := make([]GPUMetrics, 0, len(devices))
 	for _, d := range devices {
