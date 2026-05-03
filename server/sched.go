@@ -39,6 +39,8 @@ type Scheduler struct {
 	expiredCh     chan *runnerRef
 	unloadedCh    chan any
 
+	metrics *serverMetrics
+
 	// loadedMu protects loaded and activeLoading
 	loadedMu sync.Mutex
 
@@ -75,6 +77,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		getGpuFn:        discover.GPUDevices,
 		getSystemInfoFn: discover.GetSystemInfo,
 		waitForRecovery: 5 * time.Second,
+		metrics:         &serverMetrics{},
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -346,6 +349,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				}
 				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
 				runner.unload()
+				s.metrics.evictionsTotal.Add(1)
 				delete(s.loaded, runner.modelPath)
 				s.loadedMu.Unlock()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
@@ -454,6 +458,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
 			}
 			slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
+			s.metrics.loadFailures.Add(1)
 			req.errCh <- err
 			s.loadedMu.Unlock()
 			return false
@@ -487,7 +492,11 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
 			if !requireFull {
-				// Model doesn't fit fully on GPU, need to evict other models
+				// Model doesn't fit fully on GPU, need to evict other models.
+				// Only count the case that surfaces an error to the user;
+				// the retry path (requireFull=true) does not increment the
+				// counter, otherwise scheduler retries would inflate it.
+				s.metrics.loadRequireFull.Add(1)
 				slog.Info("model is too large for system memory", "requireFull", requireFull)
 				s.activeLoading.Close()
 				s.activeLoading = nil
@@ -498,6 +507,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 		}
 
 		slog.Info("Load failed", "model", req.model.ModelPath, "error", err)
+		s.metrics.loadOther.Add(1)
 		s.activeLoading.Close()
 		s.activeLoading = nil
 		req.errCh <- err

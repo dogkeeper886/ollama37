@@ -1573,6 +1573,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
+	r.GET("/api/metrics", s.MetricsHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)

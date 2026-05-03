@@ -80,6 +80,12 @@ type LlamaServer interface {
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+
+	// Engine returns "ollama" for the Go-native engine, "llamacpp" for the vendored llama.cpp engine.
+	Engine() string
+	// MemoryBreakdown returns the per-device weights/cache/graph breakdown if the
+	// backend tracks it, or nil if only a total is available (e.g. llamacpp engine).
+	MemoryBreakdown() *ml.BackendMemory
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -1862,6 +1868,9 @@ func (s *llamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	return nil
 }
 
+func (s *llamaServer) Engine() string                    { return "llamacpp" }
+func (s *llamaServer) MemoryBreakdown() *ml.BackendMemory { return nil }
+
 func (s *ollamaServer) VRAMSize() uint64 {
 	if s.mem == nil {
 		return 0
@@ -1929,3 +1938,6 @@ func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	}
 	return devices
 }
+
+func (s *ollamaServer) Engine() string                    { return "ollama" }
+func (s *ollamaServer) MemoryBreakdown() *ml.BackendMemory { return s.mem }
