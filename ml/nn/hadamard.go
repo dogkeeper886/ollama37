@@ -37,11 +37,15 @@ func blockRotate(ctx ml.Context, t, h ml.Tensor) ml.Tensor {
 }
 
 // hadamardTensor materializes the cached 64×64 Hadamard slice as a backend
-// tensor in the supplied context. Cheap (16 KiB upload); not worth caching
-// the tensor across calls because each call may target a different backend
-// context with its own allocator.
+// tensor in the supplied context. Uses ctx.Input() because the bare context
+// during reserveWorstCaseGraph rejects FromFloats with "set Input or Layer
+// before creating tensors"; matches the convention used by every other
+// FromFloats caller in the codebase (e.g. model/models/gemma3/model.go:104,
+// model/models/gemma4/model_audio.go:340). Cheap (16 KiB upload); not worth
+// caching the tensor across calls because each call may target a different
+// backend context with its own allocator.
 func hadamardTensor(ctx ml.Context) ml.Tensor {
-	return ctx.FromFloats(hadamard64, 64, 64)
+	return ctx.Input().FromFloats(hadamard64, 64, 64)
 }
 
 // HadamardMatrix returns a row-major normalized Sylvester Hadamard matrix of
