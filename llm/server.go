@@ -923,6 +923,23 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 		logutil.Trace("layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
 	}
 
+	// Per-GPU memory rollup. When a hybrid model (e.g. qwen35) under-reports
+	// per-layer cache, this log reveals which GPU is missing the recurrent
+	// state contribution that buildLayout would otherwise size correctly.
+	// See issue #138.
+	for j := range memory.GPUs {
+		var weights, cache uint64
+		for i := range memory.GPUs[j].Weights {
+			weights += memory.GPUs[j].Weights[i]
+			cache += memory.GPUs[j].Cache[i]
+		}
+		slog.Debug("buildLayout: gpu rollup",
+			"id", memory.GPUs[j].ID,
+			"weights", format.HumanBytes2(weights),
+			"cache", format.HumanBytes2(cache),
+			"graph", format.HumanBytes2(memory.GPUs[j].Graph))
+	}
+
 	gpuLayers := ml.GPULayersList{}
 	for _, gl := range ml.ByLibrary(gpus) {
 		// If a GPU already has a graph allocated on it, then we should continue to use it.
@@ -961,10 +978,25 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 			}
 		}
 
+		// lastUsedGPU pins the layout floor: assignLayers won't try fewer GPUs
+		// than this. The intent is cycle prevention (see comment above), but
+		// the side-effect is that once a transient over-allocation places graph
+		// on GPU N, subsequent iterations stay at >= N+1 GPUs even if fewer
+		// would now fit. Log it so layout-instability bugs (e.g. issue #138)
+		// are diagnosable from OLLAMA_DEBUG=1 alone.
+		slog.Debug("buildLayout: stickiness pinned",
+			"library", gl[0].Library,
+			"last_used_gpu", lastUsedGPU,
+			"n_gpus_in_library", len(gl))
+
 		libraryGpuLayers := assignLayers(layers, gl, requireFull, s.options.NumGPU, lastUsedGPU)
 		if libraryGpuLayers.Sum() > gpuLayers.Sum() {
 			gpuLayers = libraryGpuLayers
 		}
+		slog.Debug("buildLayout: library result",
+			"library", gl[0].Library,
+			"layers_placed", libraryGpuLayers.Sum(),
+			"gpus_used", len(libraryGpuLayers))
 	}
 	return gpuLayers, layers, nil
 }
@@ -1042,6 +1074,12 @@ func assignLayers(layers []uint64, gpus []ml.DeviceInfo, requireFull bool, reque
 				// Try to pack things into as few GPUs as possible
 				forceRequest := i == len(gpus)-1 && !requireFull
 				gpuLayers = findBestFit(layers, gpus[:i+1], requestedLayers, forceRequest)
+				slog.Debug("assignLayers: fit attempt",
+					"n_gpus_tried", i+1,
+					"layers_placed", gpuLayers.Sum(),
+					"layers_total", len(layers),
+					"requested_layers", requestedLayers,
+					"force_request", forceRequest)
 				if gpuLayers.Sum() == len(layers) || gpuLayers.Sum() == requestedLayers {
 					break
 				}
