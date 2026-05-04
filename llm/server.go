@@ -942,19 +942,20 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 
 	gpuLayers := ml.GPULayersList{}
 	for _, gl := range ml.ByLibrary(gpus) {
-		// If a GPU already has a graph allocated on it, then we should continue to use it.
-		// Otherwise, we lose information that we got from previous allocations, which can
-		// cause cycling. Plus, we get more information about required allocation from each
-		// iteration, so it doesn't make sense that a later iteration would use fewer GPUs.
-		lastUsedGPU := 0
+		// Compute per-GPU available memory after reserving graph + minimum +
+		// overhead. We deliberately do NOT pin a "lastUsedGPU" floor here:
+		// previous iterations' transient over-spills (e.g. a 3-GPU layout
+		// briefly tried during convergence) would otherwise lock the planner
+		// into >= 3 GPUs forever, even when later iterations have data
+		// showing 2 GPUs fit. See issue #138 — qwen3.5:27b ghost-allocated
+		// 93 MiB on a 3rd die because of exactly this ratchet behavior.
+		// Cycle prevention is handled by the pastAllocations hash check at
+		// the call site (server.go ~line 759), which detects revisited
+		// layouts without needing to monotonically grow GPU count.
 		for i := range gl {
 			found := false
 			for j := range memory.GPUs {
 				if gl[i].DeviceID == memory.GPUs[j].DeviceID {
-					if memory.GPUs[j].Graph != 0 {
-						lastUsedGPU = i
-					}
-
 					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory() + envconfig.GpuOverhead() + memory.GPUs[j].Graph
 					if gl[i].FreeMemory > reserved {
 						gl[i].FreeMemory -= reserved
@@ -978,18 +979,7 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 			}
 		}
 
-		// lastUsedGPU pins the layout floor: assignLayers won't try fewer GPUs
-		// than this. The intent is cycle prevention (see comment above), but
-		// the side-effect is that once a transient over-allocation places graph
-		// on GPU N, subsequent iterations stay at >= N+1 GPUs even if fewer
-		// would now fit. Log it so layout-instability bugs (e.g. issue #138)
-		// are diagnosable from OLLAMA_DEBUG=1 alone.
-		slog.Debug("buildLayout: stickiness pinned",
-			"library", gl[0].Library,
-			"last_used_gpu", lastUsedGPU,
-			"n_gpus_in_library", len(gl))
-
-		libraryGpuLayers := assignLayers(layers, gl, requireFull, s.options.NumGPU, lastUsedGPU)
+		libraryGpuLayers := assignLayers(layers, gl, requireFull, s.options.NumGPU, 0)
 		if libraryGpuLayers.Sum() > gpuLayers.Sum() {
 			gpuLayers = libraryGpuLayers
 		}
