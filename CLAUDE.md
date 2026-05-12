@@ -186,31 +186,24 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 
 ### build
 - **Trigger**: Compiling from source, building Docker images, verifying compiled changes
-- **Key info**: CMake presets `"CUDA 11"` (all archs 37-86), `"CUDA 11 K80"` (K80 only). Docker: `docker/Makefile`. Native: cmake + go build.
 
 ### debug
 - **Trigger**: Server startup failures, GPU detection issues, CUBLAS errors, runtime problems
-- **Key info**: `OLLAMA_DEBUG=1` (server logging), `GGML_CUDA_DEBUG=1` (CUDA/CUBLAS logging)
 
 ### test
 - **Trigger**: Validating builds, running test suites, debugging test failures
-- **Key info**: Suites: build, runtime, inference, models. Framework: `cicd/tests/`. Docs: `cicd/README.md`
 
 ### ci
 - **Trigger**: Remote builds/tests, GitHub Actions, pre-merge verification
-- **Key info**: Workflows: `test-build.yml`, `test-runtime.yml`, `test-inference.yml`, `test-models.yml`, `test-pipeline.yml`. Runner: self-hosted `cicd-1` (K80)
 
 ### plan
 - **Trigger**: User describes a feature, enhancement, removal, or bug to plan
-- **Key info**: Create user story as GitHub issue. Break into tasks. Add to project board. Wait for user approval before proceeding.
 
 ### implement
 - **Trigger**: Picking up a GitHub Issue to start work (after user approval)
-- **Key info**: See **Development Lifecycle** state machine. Branch: `issue-<N>-<slug>`. Add `status:in-progress`. Update issue on every state change.
 
 ### add-test
 - **Trigger**: New feature or fix needs test coverage
-- **Key info**: Follows Test Management Flow: User Story → TestLink → YAML. YAML test cases in `cicd/tests/testcases/<suite>/`. ID format: `TC-<SUITE>-<NNN>`. Required fields: id, name, suite, priority, timeout, dependencies, testlink_id, issue, steps, criteria.
 
 ### trace
 - **Trigger**: Investigating unfamiliar code, understanding execution flow, before modifying unknown code
@@ -220,7 +213,6 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 ### instrument
 - **Trigger**: Investigating slow loading, GPU transfer, unexplained latency
 - **Rules**: Measure first, optimize second. Use `// INSTRUMENT:` prefix. Use existing logging (`LLAMA_LOG_INFO`, `slog`). Remove after confirming.
-- **Key locations**: `init_mappings` (mmap), buffer alloc loop in `load_tensors` (VRAM), `load_all_data` (tensor transfer), `ggml_backend_tensor_set` (GPU uploads)
 
 ### profile
 - **Trigger**: Performance issues, before reading code for bottlenecks
@@ -238,18 +230,6 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 ### lint-ci
 - **Trigger**: Before pushing changes to `.github/workflows/*.yml`
 - **Rules**: Validate `jq -n '{...}'` object templates with `jq -n` against placeholder values (catches reserved-word collisions like `label`, `break`); shellcheck `run:` blocks (catches redirect-order bugs like `2>&1 > file`); actionlint for workflow structure. Most CI bugs in this project's history (jq reserved word, shell redirect, header staleness) were locally testable in isolation.
-
-## Engine Selection (new vs llama.cpp)
-
-The Ollama runtime has two engines with separate runner code paths:
-- **Legacy llama.cpp engine** — `runner/llamarunner/runner.go`. Used for arches without a `model/models/<arch>/` Go package, or for arches where `OllamaEngineRequired()` returns false even though a package exists (e.g., `qwen2`, `llama`, `deepseek2`).
-- **New Ollama engine** — `runner/ollamarunner/runner.go`. Used when either `OLLAMA_NEW_ENGINE=true` OR the arch is in `OllamaEngineRequired()` allowlist at `fs/ggml/ggml.go:241`.
-
-**Critical**: a `model/models/<arch>/` package's existence does NOT imply the arch uses the new engine at runtime. Engine selection is gated by `OllamaEngineRequired()` (the per-arch flag) plus the env var. See `docs/traces/engine-selection.md` for the full decision flow and per-arch table.
-
-When auditing per-model behavior (FA gates, KV cache, etc.), verify the actual engine in container logs:
-- `source=runner.go:1264` → new engine
-- `source=runner.go:950` → legacy
 
 ## Logging Guidelines
 
