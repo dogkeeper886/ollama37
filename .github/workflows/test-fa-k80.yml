@@ -65,13 +65,25 @@ jobs:
     if: ${{ !inputs.skip_build }}
     uses: ./.github/workflows/test-build.yml
     with:
-      judge_mode: simple
+      debug: false
+
+  # Recreate the production ollama37 container from the freshly built image.
+  # Without this, the existing container instance keeps its old image even
+  # though `ollama37:latest` on disk is new; subsequent `docker start ollama37`
+  # would bring the stale container back online. TC-RUNTIME-001 runs
+  # `docker compose down && up -d`, which picks up the new image.
+  runtime:
+    name: Recreate runtime container on new image
+    needs: build
+    if: ${{ !inputs.skip_build && needs.build.result == 'success' }}
+    uses: ./.github/workflows/test-runtime.yml
+    with:
       debug: false
 
   validate:
     name: FA inference + log capture
-    needs: [build]
-    if: ${{ always() && (inputs.skip_build || needs.build.result == 'success') }}
+    needs: [build, runtime]
+    if: ${{ always() && (inputs.skip_build || (needs.build.result == 'success' && needs.runtime.result == 'success')) }}
     runs-on: self-hosted
     environment: cicd-1
     timeout-minutes: 45
@@ -79,6 +91,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install test runner dependencies
+        run: cd cicd/tests && npm ci
 
       - name: Stop existing ollama37 container
         run: |
@@ -327,6 +347,88 @@ jobs:
                 '{baseline: $b, fa: $f, match: ($b == $f)}' \
                 > /tmp/fa-test/comparison.json
             fi
+          fi
+
+      - name: Judge captured responses with LLM judge
+        # Runs after the test container is stopped (VRAM freed) and before
+        # production ollama37 comes back up. Talks to the ollama37-judge
+        # container on port 11435.
+        env:
+          FA_PROMPT: ${{ inputs.prompt }}
+        run: |
+          set -e
+
+          # Fail loud if the inference step succeeded but produced no
+          # response.json files - otherwise the loop below walks zero
+          # entries and silently reports PASS.
+          if ! ls /tmp/fa-test/*/response.json >/dev/null 2>&1; then
+            echo "::error::No inference responses captured under /tmp/fa-test/ - nothing to judge"
+            exit 1
+          fi
+
+          CRITERIA="PROMPT: ${FA_PROMPT}
+
+          Response must be coherent English prose that directly addresses the prompt above. Garbled output, infinite repetition, off-topic content, single-word/single-character responses, or empty responses fail. Truncation at the num_predict limit is acceptable as long as the visible text is coherent."
+
+          cd "$GITHUB_WORKSPACE/cicd/tests"
+
+          FAILED=0
+          {
+            echo ""
+            echo "## K80 FA LLM judge verdicts"
+            echo ""
+            echo "| Config | Verdict | Reason |"
+            echo "|---|---|---|"
+          } > /tmp/fa-test/judge-table.md
+
+          for resp_file in /tmp/fa-test/*/response.json; do
+            [ -f "$resp_file" ] || continue
+            config_dir=$(dirname "$resp_file")
+            config_name=$(basename "$config_dir")
+
+            echo ""
+            echo "=========================================="
+            echo "=== Judging $config_name ==="
+            echo "=========================================="
+
+            judgment_json="$config_dir/judgment.json"
+            set +e
+            npx tsx src/cli.ts judge-response \
+              --response "$resp_file" \
+              --criteria "$CRITERIA" \
+              --test-id "FA-K80-${config_name}" \
+              --test-name "K80 FA validation - ${config_name}" \
+              --goal "FA-enabled inference produced coherent text matching the prompt" \
+              > "$judgment_json"
+            judge_exit=$?
+            set -e
+
+            if [ "$judge_exit" -eq 2 ]; then
+              echo "::warning::Judge unreachable at port 11435 - aborting remaining verdicts"
+              echo "| $config_name | judge unavailable | port 11435 not reachable |" >> /tmp/fa-test/judge-table.md
+              FAILED=1
+              break
+            fi
+
+            pass=$(jq -r '.pass' "$judgment_json")
+            reason=$(jq -r '.reason' "$judgment_json" | tr '\n|' '  ' | cut -c1-200)
+
+            if [ "$pass" = "true" ]; then
+              verdict="PASS"
+            else
+              verdict="FAIL"
+              FAILED=1
+            fi
+
+            echo "[$config_name] $verdict - $reason"
+            echo "| $config_name | $verdict | $reason |" >> /tmp/fa-test/judge-table.md
+          done
+
+          cat /tmp/fa-test/judge-table.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::LLM judge marked one or more FA responses as failing or could not be reached"
+            exit 1
           fi
 
       - name: Restart production ollama37

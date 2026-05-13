@@ -262,8 +262,8 @@ npm run test -- --suite build
 npm run test -- --suite runtime
 npm run test -- --suite inference
 
-# Run without LLM judge
-npm run test -- --no-llm
+# Run with LLM judge enabled (default is simple judge only)
+npm run test -- --llm
 
 # List available tests
 npm run list
