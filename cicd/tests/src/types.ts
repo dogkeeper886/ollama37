@@ -227,7 +227,7 @@ export interface RunConfig {
   testId?: string;
   /** Show what would run without executing */
   dryRun: boolean;
-  /** Skip LLM judging (simple judge only) */
+  /** Skip LLM judging (simple judge only). Defaults to true; opt in with --llm. */
   noLlm: boolean;
   /** URL of the LLM judge Ollama instance */
   judgeUrl: string;

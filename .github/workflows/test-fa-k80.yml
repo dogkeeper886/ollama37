@@ -358,6 +358,14 @@ jobs:
         run: |
           set -e
 
+          # Fail loud if the inference step succeeded but produced no
+          # response.json files - otherwise the loop below walks zero
+          # entries and silently reports PASS.
+          if ! ls /tmp/fa-test/*/response.json >/dev/null 2>&1; then
+            echo "::error::No inference responses captured under /tmp/fa-test/ - nothing to judge"
+            exit 1
+          fi
+
           CRITERIA="PROMPT: ${FA_PROMPT}
 
           Response must be coherent English prose that directly addresses the prompt above. Garbled output, infinite repetition, off-topic content, single-word/single-character responses, or empty responses fail. Truncation at the num_predict limit is acceptable as long as the visible text is coherent."
