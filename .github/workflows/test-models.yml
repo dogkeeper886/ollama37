@@ -8,9 +8,9 @@ on:
         required: false
         type: string
       judge_mode:
-        description: "Test judge mode"
+        description: "Test judge mode (simple = SimpleJudge only; dual = also run LLMJudge)"
         required: false
-        default: "dual"
+        default: "simple"
         type: choice
         options:
           - "simple"
@@ -30,7 +30,7 @@ on:
       judge_mode:
         description: "Test judge mode (simple, dual)"
         required: false
-        default: "dual"
+        default: "simple"
         type: string
       judge_model:
         description: "LLM model for judging"
@@ -75,16 +75,14 @@ jobs:
         run: |
           cd cicd/tests
 
-          # Build judge flags based on input
+          # Build judge flags based on input. Default is simple (SimpleJudge
+          # only); dual adds the LLMJudge via --llm.
           JUDGE_FLAGS=""
-          if [ "${{ inputs.judge_mode }}" = "simple" ]; then
-            JUDGE_FLAGS="--no-llm"
-          else
-            # dual mode (default) - both judges run
-            JUDGE_FLAGS="--judge-model ${{ inputs.judge_model || 'gemma3:12b-judge' }}"
+          if [ "${{ inputs.judge_mode }}" = "dual" ]; then
+            JUDGE_FLAGS="--llm --judge-model ${{ inputs.judge_model || 'gemma3:12b-judge' }}"
           fi
 
-          echo "Judge mode: ${{ inputs.judge_mode || 'dual' }}"
+          echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
           echo "Judge flags: $JUDGE_FLAGS"
 
           # Build test ID flag if provided

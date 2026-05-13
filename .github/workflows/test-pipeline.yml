@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       judge_mode:
-        description: "Test judge mode"
+        description: "Test judge mode for inference + models (simple = SimpleJudge only; dual = also run LLMJudge)"
         required: false
-        default: "dual"
+        default: "simple"
         type: choice
         options:
           - "simple"

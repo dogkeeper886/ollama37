@@ -59,7 +59,7 @@ jobs:
             echo "Running single test: ${{ inputs.test_id }}"
           fi
 
-          npx tsx src/cli.ts run --suite runtime $ID_FLAG --no-llm --format json > /tmp/runtime-results.json || true
+          npx tsx src/cli.ts run --suite runtime $ID_FLAG --format json > /tmp/runtime-results.json || true
 
           echo "--- JSON Results ---"
           cat /tmp/runtime-results.json

@@ -33,7 +33,7 @@ program
   .option('-s, --suite <suite>', 'Run only tests from this suite (build, runtime, inference, models)')
   .option('-i, --id <id>', 'Run only the test with this ID')
   .option('--dry-run', 'Show what would run without executing', false)
-  .option('--no-llm', 'Skip LLM judging (simple judge only)')
+  .option('--llm', 'Also run the LLM judge (default: simple judge only)', false)
   .option('--judge-url <url>', 'Ollama URL for LLM judge', 'http://localhost:11435')
   .option('--judge-model <model>', 'Model to use for LLM judging', 'gemma3:12b-judge')
   .option('-o, --output-dir <dir>', 'Output directory for results')
