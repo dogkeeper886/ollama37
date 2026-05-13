@@ -2167,6 +2167,22 @@ static void ggml_cuda_mul_mat_batched_cublas_impl(ggml_backend_cuda_context & ct
 
         size_t src1_stride_size = sizeof(cuda_t);
 
+        // Surface the launch config for the broadcast/non-contig batched-cublas
+        // path: this kernel packs `ne12 * ne13` threads into a single block, so
+        // any matmul where that product exceeds the device's
+        // maxThreadsPerBlock (1024 on Tesla K80 / CC 3.7) fails the launch with
+        // cudaErrorInvalidConfiguration. Reuses the `debug_enabled` flag set
+        // earlier in this function (GGML_CUDA_DEBUG=1).
+        if (debug_enabled) {
+            fprintf(stderr,
+                    "DEBUG batched_cublas k_compute_batched_ptrs: "
+                    "ne02=%lld ne03=%lld ne12=%lld ne13=%lld threads_per_block=%lld "
+                    "src0_name=\"%s\" src1_name=\"%s\" dst_name=\"%s\"\n",
+                    (long long)ne02, (long long)ne03, (long long)ne12, (long long)ne13,
+                    (long long)(ne12 * ne13),
+                    src0->name, src1->name, dst->name);
+        }
+
         dim3 block_dims(ne13, ne12);
         k_compute_batched_ptrs<<<1, block_dims, 0, main_stream>>>(
                 src0_ptr, src1_ptr, dst_t,

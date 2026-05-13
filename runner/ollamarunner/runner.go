@@ -1049,16 +1049,29 @@ func (s *Server) reserveWorstCaseGraph(prompt bool) error {
 		defer mmCtx.Close()
 
 		// Determine max image size for vision reservation.
-		// Without flash attention (e.g. K80 compute 3.7), large images produce
-		// impractical attention matrices in the vision encoder (e.g. 1540px mistral3
-		// = 12,100 patches = 8.7 GiB). Default to 512px without flash attention.
+		//
+		// Vision-tower attention always runs the manual matmul path in this
+		// codebase: every model/models/*/model_vision.go calls nn.Attention
+		// with cache=nil, and the SDPA fast-path in ml/nn/attention.go:84
+		// requires cache!=nil. So the server-level s.flashAttention flag —
+		// which gates the *text-side* SDPA — does not change anything in the
+		// vision encoder. The reservation cap below must be the non-FA value
+		// regardless of s.flashAttention; otherwise the FA-on default
+		// reserves at 2048px while the actual graph still materializes the
+		// full [patches × patches × heads] attention matrix.
+		//
+		// Without FA, 2048×2048 on K80 trips two limits:
+		//   1. VRAM — ~12k patches × heads ≈ 8.7 GiB per layer (#63,
+		//      50cba688 originally introduced the 512px fallback for this).
+		//   2. The batched-cublas kernel launch limit — k_compute_batched_ptrs
+		//      packs ne12*ne13 into a single block and K80 (CC 3.7) caps at
+		//      1024 threads/block (see docs/traces/qwen3vl-batched-cublas-launch.md
+		//      for the trace surfaced via #138).
+		// 512px keeps both budgets safe across current vision models.
+		// Users with larger inference inputs can raise via OLLAMA_VISION_MAX_PIXELS.
 		maxPixels := int(envconfig.VisionMaxPixels())
 		if maxPixels == 0 {
-			if s.flashAttention {
-				maxPixels = 2048
-			} else {
-				maxPixels = 512
-			}
+			maxPixels = 512
 		}
 		img := image.NewGray(image.Rect(0, 0, maxPixels, maxPixels))
 		var buf bytes.Buffer

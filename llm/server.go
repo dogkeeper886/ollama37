@@ -923,18 +923,53 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 		logutil.Trace("layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
 	}
 
+	// Per-GPU memory rollup. When a hybrid model (e.g. qwen35) under-reports
+	// per-layer cache, this log reveals which GPU is missing the recurrent
+	// state contribution that buildLayout would otherwise size correctly.
+	// See issue #138.
+	for j := range memory.GPUs {
+		var weights, cache uint64
+		for i := range memory.GPUs[j].Weights {
+			weights += memory.GPUs[j].Weights[i]
+			cache += memory.GPUs[j].Cache[i]
+		}
+		slog.Debug("buildLayout: gpu rollup",
+			"id", memory.GPUs[j].ID,
+			"weights", format.HumanBytes2(weights),
+			"cache", format.HumanBytes2(cache),
+			"graph", format.HumanBytes2(memory.GPUs[j].Graph))
+	}
+
 	gpuLayers := ml.GPULayersList{}
 	for _, gl := range ml.ByLibrary(gpus) {
-		// If a GPU already has a graph allocated on it, then we should continue to use it.
-		// Otherwise, we lose information that we got from previous allocations, which can
-		// cause cycling. Plus, we get more information about required allocation from each
-		// iteration, so it doesn't make sense that a later iteration would use fewer GPUs.
+		// lastUsedGPU pins the layout floor: assignLayers won't try fewer
+		// GPUs than this. The original predicate was `memory.GPUs[j].Graph != 0`,
+		// which over-pinned: any transient graph spillover (e.g. compute
+		// graph briefly placed on a 3rd GPU during convergence) would
+		// permanently lock that GPU into the layout, even when later
+		// iterations had data showing fewer would fit. See #138.
+		//
+		// Refined predicate: pin only when a GPU has been assigned actual
+		// layer data (weights or cache). A pure-graph allocation is a
+		// trial-balloon that should not influence the floor; a layer
+		// assignment reflects the runner having decided the GPU is
+		// genuinely needed. This still protects models that don't fit on
+		// fewer GPUs (e.g. qwen3-vl:30b ~19 GiB needs 2+ K80 dies — the
+		// ratchet correctly maintains lastUsedGPU>=1 once layers land
+		// there) while letting the planner shrink past transient ghosts.
 		lastUsedGPU := 0
 		for i := range gl {
 			found := false
 			for j := range memory.GPUs {
 				if gl[i].DeviceID == memory.GPUs[j].DeviceID {
-					if memory.GPUs[j].Graph != 0 {
+					gpuHasLayerData := false
+					for k := range memory.GPUs[j].Weights {
+						if memory.GPUs[j].Weights[k] != 0 || memory.GPUs[j].Cache[k] != 0 {
+							gpuHasLayerData = true
+							break
+						}
+					}
+					if gpuHasLayerData {
 						lastUsedGPU = i
 					}
 
@@ -949,7 +984,8 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 						"available layer vram", format.HumanBytes2(gl[i].FreeMemory),
 						"backoff", fmt.Sprintf("%.2f", backoff), "minimum", format.HumanBytes2(gl[i].MinimumMemory()),
 						"overhead", format.HumanBytes2(envconfig.GpuOverhead()),
-						"graph", format.HumanBytes2(memory.GPUs[j].Graph))
+						"graph", format.HumanBytes2(memory.GPUs[j].Graph),
+						"has_layer_data", gpuHasLayerData)
 
 					found = true
 					break
@@ -961,10 +997,19 @@ func (s *ollamaServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.Backen
 			}
 		}
 
+		slog.Debug("buildLayout: stickiness pinned",
+			"library", gl[0].Library,
+			"last_used_gpu", lastUsedGPU,
+			"n_gpus_in_library", len(gl))
+
 		libraryGpuLayers := assignLayers(layers, gl, requireFull, s.options.NumGPU, lastUsedGPU)
 		if libraryGpuLayers.Sum() > gpuLayers.Sum() {
 			gpuLayers = libraryGpuLayers
 		}
+		slog.Debug("buildLayout: library result",
+			"library", gl[0].Library,
+			"layers_placed", libraryGpuLayers.Sum(),
+			"gpus_used", len(libraryGpuLayers))
 	}
 	return gpuLayers, layers, nil
 }
@@ -1042,6 +1087,12 @@ func assignLayers(layers []uint64, gpus []ml.DeviceInfo, requireFull bool, reque
 				// Try to pack things into as few GPUs as possible
 				forceRequest := i == len(gpus)-1 && !requireFull
 				gpuLayers = findBestFit(layers, gpus[:i+1], requestedLayers, forceRequest)
+				slog.Debug("assignLayers: fit attempt",
+					"n_gpus_tried", i+1,
+					"layers_placed", gpuLayers.Sum(),
+					"layers_total", len(layers),
+					"requested_layers", requestedLayers,
+					"force_request", forceRequest)
 				if gpuLayers.Sum() == len(layers) || gpuLayers.Sum() == requestedLayers {
 					break
 				}

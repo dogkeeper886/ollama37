@@ -595,6 +595,13 @@ func (c *Recurrent) convBuffer(layer int) ml.Tensor {
 
 	buf := c.convCtxs[layer].Zeros(ml.DTypeF32, c.convDim*c.convChannels, c.maxSequences)
 	c.convStates[layer] = buf
+	bytes := uint64(c.convDim) * uint64(c.convChannels) * uint64(c.maxSequences) * 4 // DTypeF32
+	slog.Debug("recurrent: conv state allocated",
+		"layer", layer,
+		"conv_dim", c.convDim,
+		"conv_channels", c.convChannels,
+		"max_sequences", c.maxSequences,
+		"bytes", bytes)
 	return buf
 }
 
@@ -609,6 +616,15 @@ func (c *Recurrent) recurrentBuffer(layer int) ml.Tensor {
 
 	buf := c.recurrentCtxs[layer].Zeros(ml.DTypeF32, c.recurrentStateSize, c.maxSequences)
 	c.recurrentStates[layer] = buf
+	// Log first allocation per layer. The byte total here multiplied by the
+	// number of recurrent layers should match what shows up in the per-GPU
+	// Cache rollup (server.go buildLayout). Mismatch ⇒ accounting bug. See #138.
+	bytes := uint64(c.recurrentStateSize) * uint64(c.maxSequences) * 4 // DTypeF32
+	slog.Debug("recurrent: state allocated",
+		"layer", layer,
+		"state_size", c.recurrentStateSize,
+		"max_sequences", c.maxSequences,
+		"bytes", bytes)
 	return buf
 }
 
