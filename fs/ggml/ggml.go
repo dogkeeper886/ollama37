@@ -923,10 +923,14 @@ func (f GGML) SupportsFlashAttentionInNewEngine() bool {
 		"qwen3vl", // validated #123 Phase 2 (qwen3-vl:8b run 24978521066)
 		// "qwen3vlmoe" — same Go package as qwen3vl; presumed safe but
 		// untested. Add when a qwen3-vl:30b benchmark validates it.
-		// "qwen35" — currently in SupportsFlashAttention deny list. Adding
-		// here would bypass the deny but requires empirical validation of
-		// hybrid SSM+attention output correctness with FA enabled. See
-		// docs/traces/qwen35-flash-attention-gate.md.
+		"qwen35", // validated #107: qwen3.5:9b run 25799484945 (coherent A/B/C),
+		//            qwen3.5:27b run 25799818450 (bit-identical A/B/C output).
+		//            Hybrid DeltaNet + attention: only attention layers use the
+		//            FA path; recurrent layers are unaffected. The deny in
+		//            SupportsFlashAttention (legacy llama.cpp head-count check)
+		//            still applies — this allowlist bypasses it for the new
+		//            engine only. With FA on, symmetric Q8 KV works on
+		//            attention layers, obsoleting the K-only-quant path in #107.
 	}, f.KV().Architecture())
 }
 

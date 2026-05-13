@@ -2,7 +2,7 @@
 
 **Issues**: [#122](https://github.com/dogkeeper886/ollama37/issues/122) (Phase 1) and [#123](https://github.com/dogkeeper886/ollama37/issues/123) (Phase 2) of [#121](https://github.com/dogkeeper886/ollama37/issues/121)
 **Date**: 2026-04-27 (Phase 1 + Phase 2 results)
-**Status**: Empirical verification of 3 representatives complete. Phase 3 (#124) ready with a seeded allowlist.
+**Status**: Empirical verification complete for 5 architectures (Phase 2 representatives + qwen35 via #107). Phase 3 allowlist seeded and extended.
 
 ## TL;DR (after Phase 2)
 
@@ -22,6 +22,23 @@ Phase 2 corrected one Phase 1 assumption and confirmed three predictions:
 | [24978699810](https://github.com/dogkeeper886/ollama37/actions/runs/24978699810) | deepseek-r1:14b | qwen2 | **llama.cpp** (llamarunner) | ✅ | ✅ thinking-model; coherent | KV size not in logs (different log format on llama.cpp path) |
 
 **Key finding**: 4 different architectures empirically validated. The new-engine models (gemma3, gptoss, qwen3vl) all produce correct output with FA. deepseek-r1's qwen2 path goes through llama.cpp and works via the existing head-count gate — not affected by Phase 3 changes.
+
+## qwen35 follow-up validation (via #107, 2026-05-13)
+
+Phase 2 deferred qwen35 with the note *"requires empirical validation of hybrid SSM+attention output correctness with FA enabled."* That validation was triggered while investigating #107 (asymmetric K-only KV quant), which was rendered obsolete if FA + symmetric Q8 KV could be made to work on qwen35.
+
+Methodology was the existing `test-fa-k80.yml` benchmark mode (3 configs: off-f16 / on-f16 / on-q8_0), prefixed by a 1-line allowlist patch adding `"qwen35"` to `SupportsFlashAttentionInNewEngine`.
+
+| Run | Model | GPUs used | FA enables? | Output coherent? | VRAM Δ (off→on-q8_0) | tok/s Δ |
+|---|---|---|---|---|---|---|
+| [25799484945](https://github.com/dogkeeper886/ollama37/actions/runs/25799484945) | qwen3.5:9b | 1 | ✅ | ✅ thinking-coherent across all 3 configs; on-f16 ≡ on-q8_0 same structure | -138 MiB (-1.8%) | -1.4% |
+| [25799818450](https://github.com/dogkeeper886/ollama37/actions/runs/25799818450) | qwen3.5:27b | 2 (34+31 layer split) | ✅ | ✅ **bit-identical** thinking output across all 3 configs | -174 MiB (-1.6%) | -0.8% |
+
+**VRAM savings smaller than Phase 2 baselines** (~1-2% here vs ~47% for gemma3). Expected: qwen35 is hybrid — only attention layers use KV cache (DeltaNet layers use a recurrent state, unaffected by FA or KV quant), and at 4k ctx the attention-layer KV is small. The fraction-of-a-small-thing pattern matches the architecture. FA benefit would compound at longer context.
+
+**Tokens/sec essentially flat** (within ±1.5%). No speedup, no regression. The fewer-attention-layers structure means FA's compute savings have less surface area to apply.
+
+**Resolution**: qwen35 added to `SupportsFlashAttentionInNewEngine` allowlist. This obsoletes the original framing of #107 (K-only Q8 was a workaround for the unavailable FA path — now the FA path is available).
 
 ## Workflow caveats discovered during Phase 2
 
