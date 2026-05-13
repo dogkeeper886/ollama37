@@ -7,19 +7,6 @@ on:
         description: "Run a single test by ID (e.g. TC-BUILD-002)"
         required: false
         type: string
-      judge_mode:
-        description: "Test judge mode"
-        required: false
-        default: "dual"
-        type: choice
-        options:
-          - "simple"
-          - "dual"
-      judge_model:
-        description: "LLM model for judging (if dual mode)"
-        required: false
-        default: "gemma3:12b-judge"
-        type: string
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
         required: false
@@ -27,16 +14,6 @@ on:
         type: boolean
   workflow_call:
     inputs:
-      judge_mode:
-        description: "Test judge mode (simple, dual)"
-        required: false
-        default: "dual"
-        type: string
-      judge_model:
-        description: "LLM model for judging"
-        required: false
-        default: "gemma3:12b-judge"
-        type: string
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
         required: false
@@ -75,20 +52,8 @@ jobs:
         run: |
           cd cicd/tests
 
-          # Build judge flags based on input
-          JUDGE_FLAGS=""
-          if [ "${{ inputs.judge_mode }}" = "simple" ]; then
-            JUDGE_FLAGS="--no-llm"
-          else
-            # dual mode (default) - both judges run
-            JUDGE_FLAGS="--judge-model ${{ inputs.judge_model || 'gemma3:12b-judge' }}"
-          fi
-
           echo "Ollama version: $OLLAMA_VERSION"
-          echo "Judge mode: ${{ inputs.judge_mode || 'dual' }}"
-          echo "Judge flags: $JUDGE_FLAGS"
 
-          # Run tests with JSON output
           # Build test ID flag if provided
           ID_FLAG=""
           if [ -n "${{ inputs.test_id }}" ]; then
@@ -96,7 +61,7 @@ jobs:
             echo "Running single test: ${{ inputs.test_id }}"
           fi
 
-          npx tsx src/cli.ts run --suite build $ID_FLAG $JUDGE_FLAGS --format json > /tmp/build-results.json || true
+          npx tsx src/cli.ts run --suite build $ID_FLAG --no-llm --format json > /tmp/build-results.json || true
 
           echo "--- JSON Results ---"
           cat /tmp/build-results.json

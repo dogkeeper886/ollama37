@@ -1,14 +1,13 @@
 /**
- * LLM Judge - Semantic analysis of test results using Ollama.
+ * LLM Judge - Semantic evaluation of an LLM's response against test criteria.
  *
- * Uses a language model to evaluate test execution logs against criteria.
- * Catches silent failures that exit code checking misses:
- * - CUDA errors that don't cause exit failures
- * - GPU fallback to CPU mode
- * - Memory allocation warnings
- * - Incorrect but non-crashing output
+ * Scope: the judge decides whether the model's response (step stdout) meets the
+ * criteria. It does NOT analyze ollama container logs, GPU detection state, or
+ * CUDA error patterns - those are SimpleJudge's domain (expect/reject patterns
+ * on logs). Keeping the two judges orthogonal stops them from second-guessing
+ * each other.
  *
- * Sends structured JSON prompt and uses Ollama JSON mode for reliable parsing.
+ * Sends a structured JSON prompt and uses Ollama JSON mode for reliable parsing.
  */
 
 import axios from 'axios';
@@ -47,12 +46,16 @@ export class LLMJudge {
 
   /**
    * Build structured JSON prompt for LLM evaluation of a single test.
+   *
+   * The prompt carries the test's criteria plus each step's stdout/stderr
+   * (where the model's response lives for inference-style tests). Container
+   * logs and infra-error rules are intentionally absent - SimpleJudge handles
+   * those via pattern matches.
    */
   private buildPrompt(result: TestResult): string {
     const r = result;
     const stdoutLimit = 1000;
     const stderrLimit = 500;
-    const logsLimit = 3000;
 
     const steps = r.steps.map((step, j) => {
       const stepDef = r.testCase.steps[j];
@@ -68,19 +71,14 @@ export class LLMJudge {
     });
 
     const promptData = {
-      role: 'You are a test result evaluator for ollama37 (Ollama fork for Tesla K80 GPU, CUDA compute 3.7). Analyze the test execution data and determine if the test passed or failed.',
+      role: 'You evaluate an LLM-generated response against a set of test criteria. Look only at the response (in step stdout) and decide whether it meets the criteria. Do not infer pass/fail from environment, GPU state, or container logs - those are checked separately.',
       rules: [
-        'Check step stdout for error responses (e.g. {"error":"model not found"} means FAIL)',
-        'CUBLAS_STATUS_* in step stdout → FAIL',
-        'cudaMalloc failed followed by "applying backoff" in container logs is NORMAL (iterative memory fitting) → NOT an error',
-        'cudaMalloc failed in step stdout without backoff context → FAIL',
-        'library=cpu in logs means GPU detection failed → FAIL',
-        'CUDA errors with exit code 0 → still FAIL',
-        'flash attention warnings on K80 are acceptable, NOT errors',
-        'For AI-generated text, accept reasonable variations (e.g. "4", "four", "The answer is 4")',
-        'Long durations within timeout are acceptable',
-        'Build times are expected to be long for CUDA compilation',
-        'GPU_COUNT_EXCEEDED in step output means the model is using more GPUs than its total VRAM requires (each K80 has 11441 MiB) → FAIL',
+        'Judge only the response text against the criteria.',
+        'An API-level error response such as {"error":"model not found"} in stdout is FAIL - the model did not produce an answer.',
+        'Empty, garbled, or repetitive nonsense output is FAIL.',
+        'Off-topic content that does not address the prompt is FAIL.',
+        'Truncation at the token limit is acceptable as long as the visible text is coherent and on-topic.',
+        'For AI-generated text, accept reasonable variations (e.g. "4", "four", "The answer is 4").',
       ],
       test: {
         id: r.testCase.id,
@@ -88,18 +86,15 @@ export class LLMJudge {
         suite: r.testCase.suite,
         goal: r.testCase.goal || r.testCase.name,
         criteria: r.testCase.criteria,
-        timeout_ms: r.testCase.timeout,
-        duration_ms: r.totalDuration,
       },
       steps,
-      container_logs: this.truncate(r.logs, logsLimit),
       respond: {
         format: 'Respond with a single JSON object',
         fields: {
           testId: r.testCase.id,
-          pass: 'true if test meets all criteria, false otherwise',
+          pass: 'true if the response meets the criteria, false otherwise',
           reason: 'Brief explanation of your verdict',
-          evidence: 'Required if pass is false — the exact stdout content or log line that caused failure',
+          evidence: 'Required if pass is false - the exact stdout content that caused failure',
         },
       },
     };
@@ -109,7 +104,7 @@ export class LLMJudge {
     // Log prompt stats
     const totalStdout = r.steps.reduce((sum, s) => sum + s.stdout.length, 0);
     const totalStderr = r.steps.reduce((sum, s) => sum + s.stderr.length, 0);
-    process.stderr.write(`  [LLM] Prompt for ${r.testCase.id}: logs ${r.logs.length} chars, stdout ${totalStdout} chars, stderr ${totalStderr} chars\n`);
+    process.stderr.write(`  [LLM] Prompt for ${r.testCase.id}: stdout ${totalStdout} chars, stderr ${totalStderr} chars\n`);
 
     return prompt;
   }

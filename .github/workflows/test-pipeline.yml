@@ -27,8 +27,6 @@ jobs:
     name: Build Tests
     uses: ./.github/workflows/test-build.yml
     with:
-      judge_mode: ${{ inputs.judge_mode }}
-      judge_model: ${{ inputs.judge_model }}
       debug: ${{ inputs.debug }}
 
   runtime:
@@ -36,8 +34,6 @@ jobs:
     needs: build
     uses: ./.github/workflows/test-runtime.yml
     with:
-      judge_mode: ${{ inputs.judge_mode }}
-      judge_model: ${{ inputs.judge_model }}
       debug: ${{ inputs.debug }}
 
   inference:
