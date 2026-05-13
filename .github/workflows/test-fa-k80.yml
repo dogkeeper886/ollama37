@@ -67,10 +67,23 @@ jobs:
     with:
       debug: false
 
+  # Recreate the production ollama37 container from the freshly built image.
+  # Without this, the existing container instance keeps its old image even
+  # though `ollama37:latest` on disk is new; subsequent `docker start ollama37`
+  # would bring the stale container back online. TC-RUNTIME-001 runs
+  # `docker compose down && up -d`, which picks up the new image.
+  runtime:
+    name: Recreate runtime container on new image
+    needs: build
+    if: ${{ !inputs.skip_build && needs.build.result == 'success' }}
+    uses: ./.github/workflows/test-runtime.yml
+    with:
+      debug: false
+
   validate:
     name: FA inference + log capture
-    needs: [build]
-    if: ${{ always() && (inputs.skip_build || needs.build.result == 'success') }}
+    needs: [build, runtime]
+    if: ${{ always() && (inputs.skip_build || (needs.build.result == 'success' && needs.runtime.result == 'success')) }}
     runs-on: self-hosted
     environment: cicd-1
     timeout-minutes: 45
