@@ -141,13 +141,13 @@ sed -n '/===TEST:TC-RUNTIME-001:START:/,${/===TEST:/d;p}' /tmp/ollama37-session-
 
 Tests are organized into four suites that must run in order:
 
-**Build Suite** (2 tests): Verifies Docker images exist and are correctly configured. No GPU required.
+**Build Suite** (3 tests): Verifies the builder Docker image contents, runtime image build, and image-size invariants. No GPU required.
 
-**Runtime Suite** (3 tests): Starts the container and verifies GPU detection. Checks that Ollama recognizes K80 hardware and loads CUDA libraries. Critical validation that the driver/toolkit/container integration works.
+**Runtime Suite** (4 tests): Starts the container and verifies GPU detection, container health, and `/api/metrics` endpoint schema. Critical validation that the driver/toolkit/container integration works.
 
-**Inference Suite** (2 tests): Tests model loading and API inference with gemma3:4b. Validates that models load correctly and generate responses using GPU.
+**Inference Suite** (2 tests): Tests model pull + API inference with gemma3:4b. Validates that models load correctly and generate responses using GPU.
 
-**Models Suite** (3 tests): Tests large models on K80 hardware - gpt-oss:20b, gemma3:27b, and deepseek-r1:14b. Each model size unloads after testing to free VRAM for the next.
+**Models Suite** (13 tests): Per-model regression coverage on K80 hardware — gpt-oss:20b, ministral-3:3b, gemma3 (4b / 27b), gemma4 (e4b / 26b), qwen3.5 (9b / 27b), qwen3-vl (8b / 30b), deepseek-r1 (14b / 32b). Each model size unloads after testing to free VRAM for the next.
 
 ### Model Unload Strategy
 
@@ -216,10 +216,10 @@ cicd/
 │   │       ├── json.ts
 │   │       └── console.ts
 │   ├── testcases/
-│   │   ├── build/           # TC-BUILD-001, 002
-│   │   ├── runtime/         # TC-RUNTIME-001, 002, 003
-│   │   ├── inference/       # TC-INFERENCE-001, 002
-│   │   └── models/          # TC-MODELS-001, 002, 003
+│   │   ├── build/           # TC-BUILD-001..003
+│   │   ├── runtime/         # TC-RUNTIME-001..004
+│   │   ├── inference/       # TC-INFERENCE-001..002
+│   │   └── models/          # TC-MODELS-001..013
 │   ├── package.json
 │   └── tsconfig.json
 ├── results/                 # Test output (gitignored)
@@ -233,17 +233,28 @@ The test framework integrates with GitHub Actions via reusable workflows in `.gi
 **Pipeline Workflow** (`test-pipeline.yml`):
 Runs all test suites in sequence: build → runtime → inference → models. This is the primary workflow for full validation.
 
-**Individual Workflows**:
-- `test-build.yml` - Build verification only
-- `test-runtime.yml` - Runtime tests only
-- `test-inference.yml` - Inference tests only
-- `test-models.yml` - Models test (TC-MODELS-001 only)
+**Individual TC-framework Workflows**:
+- `test-build.yml` — Build suite (3 tests)
+- `test-runtime.yml` — Runtime suite (4 tests)
+- `test-inference.yml` — Inference suite (2 tests); supports `--llm` opt-in judge
+- `test-models.yml` — Models suite (13 tests); supports `--llm` opt-in judge
 
 **Design Notes**:
-- Individual workflows do not manage container lifecycle
-- Container must be running before runtime/inference/models tests
+- Individual TC workflows do not manage container lifecycle
+- Container must be running before runtime / inference / models tests
 - Pipeline workflow orchestrates the sequence via `needs:` dependencies
 - All workflows run on self-hosted runners with K80 hardware
+
+### Perf / experiment workflows (separate pattern)
+
+The TC framework above handles **correctness validation** — "did this model load and produce coherent output?". Performance benchmarks and experiments live alongside under a separate, simpler contract documented in [`.claude/skills/test-workflow-pattern/SKILL.md`](../../.claude/skills/test-workflow-pattern/SKILL.md):
+
+- One extracted bash script per workflow at `cicd/scripts/test-<name>.sh`
+- Shared helpers in `cicd/scripts/lib/` (response capture, simple check, LLM judge wrapper, container log snip)
+- Structured JSON output at `/tmp/test-<name>-results.json`
+- Workflow manages container lifecycle (stop production → run script → restart production → upload artifacts)
+
+Current perf workflows: `test-throughput.yml` (tok/s benchmark) and `test-fa-k80.yml` (FA regression + benchmark). The LLM judge is invoked here too but only ever to answer "is this response meaningful for its prompt?" — never for static / log / exit-code checks (per CLAUDE.md → "LLM Judge Scope").
 
 ## Quick Start
 
