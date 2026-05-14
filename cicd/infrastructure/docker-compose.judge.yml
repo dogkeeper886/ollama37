@@ -2,7 +2,7 @@ services:
   # LLM Judge - stable reference version for evaluating test results
   # Runs on port 11435 to avoid conflict with test subject (11434)
   ollama-judge:
-    image: dogkeeper886/ollama37:latest
+    image: dogkeeper886/ollama37:v2.1.0
     container_name: ollama37-judge
     runtime: nvidia
     deploy:
@@ -22,7 +22,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "/usr/local/bin/ollama", "list"]
+      test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 10s
       retries: 3
