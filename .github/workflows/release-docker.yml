@@ -83,14 +83,6 @@ jobs:
           \`\`\`
           EOF
 
-      - name: Update Docker Hub README
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.DOCKERHUB_REPO }}
-          readme-filepath: ./docker/dockerhub-readme.md
-
       - name: Clean up local tags
         if: always()
         run: |
