@@ -42,10 +42,12 @@ TypeScript-based test framework with dual-judge architecture.
 **Test Suites:**
 | Suite | Tests | Purpose |
 |-------|-------|---------|
-| Build | 2 | Verify Docker images and toolchain |
-| Runtime | 3 | Container startup, GPU detection |
-| Inference | 2 | Model loading, API endpoints |
-| Models | 3 | Large model testing (gpt-oss, gemma3:27b, deepseek-r1) |
+| Build | 3 | Verify Docker images, toolchain, image sizes |
+| Runtime | 4 | Container startup, GPU detection, health check, /api/metrics schema |
+| Inference | 2 | Model pull + API inference smoke |
+| Models | 13 | Per-model regression — gpt-oss, ministral-3, gemma3 (4b/27b), gemma4 (e4b/26b), qwen3.5 (9b/27b), qwen3-vl (8b/30b), deepseek-r1 (14b/32b) |
+
+Each test case lives in `cicd/tests/testcases/<suite>/TC-<SUITE>-NNN.yml`. The `intent:` block in every YAML — `user_story`, optional `acceptance`, optional `notes` — is the single design authority for that test.
 
 ### LLM Judge (`infrastructure/docker-compose.judge.yml`)
 
@@ -72,20 +74,40 @@ docker compose -f docker-compose.judge.yml down
 
 ## GitHub Actions Workflows
 
-Located in `.github/workflows/`:
+Located in `.github/workflows/`. Two families:
+
+### TC-framework workflows (correctness validation)
+
+These workflows execute the YAML test suites via the TypeScript runner with the dual-judge architecture described above.
 
 | Workflow | Description |
 |----------|-------------|
 | `test-pipeline.yml` | Full pipeline: build → runtime → inference → models |
-| `test-build.yml` | Build verification only |
-| `test-runtime.yml` | Runtime tests only |
-| `test-inference.yml` | Inference tests only |
-| `test-models.yml` | Models test (TC-MODELS-001 only) |
+| `test-build.yml` | Build suite (image verification) |
+| `test-runtime.yml` | Runtime suite (container, GPU, health, metrics) |
+| `test-inference.yml` | Inference suite (pull + smoke); supports `--llm` opt-in judge |
+| `test-models.yml` | Models suite (all 13 per-model regressions); supports `--llm` opt-in judge |
+
+### Perf / experiment workflows (the unified test-workflow pattern)
+
+These follow the contract documented in [`.claude/skills/test-workflow-pattern/SKILL.md`](../.claude/skills/test-workflow-pattern/SKILL.md): one extracted bash script per workflow at `cicd/scripts/test-<name>.sh`, sourcing shared helpers from `cicd/scripts/lib/`, emitting structured JSON to `/tmp/test-<name>-results.json`.
+
+| Workflow | Script | Description |
+|----------|--------|-------------|
+| `test-throughput.yml` | `cicd/scripts/benchmark-throughput.sh` | Per-model tok/s benchmark with simple + optional LLM-judge output check |
+| `test-fa-k80.yml` | `cicd/scripts/test-fa-k80.sh` | K80 flash-attention regression + benchmark (FA off/on × KV cache type) |
+
+### Release workflow
+
+| Workflow | Description |
+|----------|-------------|
+| `release-docker.yml` | Builds and publishes Docker image on release publication |
 
 **Usage:**
-- Trigger manually via GitHub Actions "Run workflow"
-- Pipeline runs all suites in sequence
-- Individual workflows assume container is already running
+- Trigger manually via GitHub Actions "Run workflow" or `gh workflow run`
+- The TC pipeline runs all suites in sequence
+- Individual TC workflows assume the production container is already running
+- Perf workflows manage their own container lifecycle (stop production → boot test container → restart production)
 
 ## Folder Structure
 
@@ -97,6 +119,15 @@ cicd/
 ├── infrastructure/
 │   ├── docker-compose.judge.yml
 │   └── README.md
+├── scripts/                 # Perf / experiment workflow scripts (unified pattern)
+│   ├── benchmark-throughput.sh
+│   ├── test-fa-k80.sh
+│   ├── format-results.sh
+│   └── lib/                 # Shared helpers (sourceable from any script)
+│       ├── response_capture.sh
+│       ├── simple_check.sh
+│       ├── judge_response.sh
+│       └── container_log_snip.sh
 ├── specs/
 │   ├── build.md             # Build test specifications
 │   ├── runtime.md           # Runtime test specifications
@@ -104,7 +135,7 @@ cicd/
 │   └── models.md            # Models test specifications
 ├── tests/
 │   ├── src/                 # Framework source code
-│   ├── testcases/           # YAML test definitions
+│   ├── testcases/           # YAML test definitions (intent + steps)
 │   ├── package.json
 │   └── tsconfig.json
 ├── results/                 # Test output (gitignored)
