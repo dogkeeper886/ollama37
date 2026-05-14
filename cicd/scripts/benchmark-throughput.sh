@@ -142,9 +142,10 @@ bench_model() {
         return 1
     fi
 
-    # Build per-model result. `response` is the full generated text — needed
-    # for output validation (simple non-empty check, optional LLM judge) and
-    # for human inspection in the JSON artifact.
+    # Build per-model result. `response` and `thinking` are both preserved:
+    # thinking models (qwen3.5, qwen3-vl, deepseek-r1) can produce coherent
+    # output entirely inside `.thinking` while leaving `.response` empty when
+    # num_predict caps generation before the final answer.
     echo "$response" | jq \
         --arg model "$model" \
         --arg gpu_info "$gpu_info" \
@@ -160,7 +161,9 @@ bench_model() {
             load_duration_s: ((.load_duration // 0) / 1e9 * 100 | round / 100),
             gpu_offload_pct: $gpu_pct,
             num_ctx: $num_ctx,
+            done_reason: (.done_reason // ""),
             response: (.response // ""),
+            thinking: (.thinking // ""),
             gpu_info: $gpu_info
         }'
 
@@ -169,34 +172,38 @@ bench_model() {
         -d "{\"model\":\"${model}\",\"keep_alive\":0}" > /dev/null 2>&1 || true
 }
 
-# Run the LLM judge against (model, prompt, response). Returns a JSON object
-# with `pass` and `reason`. Falls back to pass=false if the judge endpoint is
-# unreachable or returns malformed JSON — a missing judge must not silently
-# pass a broken response.
+# Run the LLM judge against (model, prompt, response, thinking). Returns a
+# JSON object with `pass` and `reason`. Falls back to pass=false if the judge
+# endpoint is unreachable or returns malformed JSON — a missing judge must
+# not silently pass a broken response.
 judge_response() {
     local model="$1"
     local prompt_text="$2"
     local response_text="$3"
+    local thinking_text="${4:-}"
 
     local judge_prompt
     judge_prompt=$(jq -nc \
         --arg model "$model" \
         --arg prompt "$prompt_text" \
         --arg response "$response_text" \
+        --arg thinking "$thinking_text" \
         '{
-            role: "Decide whether the response is meaningful for the prompt. A meaningful response addresses the prompt with coherent text in the right language and topic. Reject empty, garbled, repetitive nonsense, off-topic, or error-message responses.",
+            role: "Decide whether the model output is meaningful for the prompt. A meaningful output addresses the prompt with coherent text in the right language and topic. Reject empty, garbled, repetitive nonsense, off-topic, or error-message output.",
             rules: [
-                "Truncation at the token limit is fine if the visible text is coherent and on-topic.",
+                "Thinking models emit two fields: `thinking` (internal reasoning) and `response` (final answer). Either is acceptable evidence of meaningful output — judge them together.",
+                "Truncation at the token limit is fine if the visible text is coherent and on-topic. Many models exhaust the budget inside `thinking` and leave `response` empty; that is not a failure.",
                 "Accept reasonable variations in phrasing.",
-                "An API-level error message in the response is FAIL."
+                "An API-level error message in either field is FAIL."
             ],
             model_under_test: $model,
             prompt: $prompt,
             response: $response,
+            thinking: $thinking,
             respond: {
                 format: "Respond with a single JSON object",
                 fields: {
-                    pass: "true if the response is meaningful and on-topic, false otherwise",
+                    pass: "true if the output is meaningful and on-topic (consider response and thinking together), false otherwise",
                     reason: "Brief explanation"
                 }
             }
@@ -224,18 +231,26 @@ judge_response() {
     echo "$verdict_text" | jq -c '{pass: (.pass // false), reason: (.reason // "no reason given")}'
 }
 
-# Simple coherence check: response must be non-empty after trimming whitespace.
-# Returns 0 if pass, 1 if fail; writes "{pass, reason}" JSON to stdout.
+# Simple coherence check: either response or thinking must be non-empty after
+# trimming whitespace. Thinking models can produce coherent output entirely
+# in `.thinking` when num_predict caps generation before the final answer.
+# Returns 0 if pass, 1 if fail; writes "{pass, reason, source}" JSON to stdout.
 simple_check() {
     local response_text="$1"
-    local trimmed
-    trimmed=$(echo -n "$response_text" | tr -d '[:space:]')
-    if [ -z "$trimmed" ]; then
-        echo '{"pass":false,"reason":"empty or whitespace-only response"}'
-        return 1
+    local thinking_text="${2:-}"
+    local r_trim t_trim
+    r_trim=$(echo -n "$response_text" | tr -d '[:space:]')
+    t_trim=$(echo -n "$thinking_text" | tr -d '[:space:]')
+    if [ -n "$r_trim" ]; then
+        echo '{"pass":true,"reason":"non-empty response","source":"response"}'
+        return 0
     fi
-    echo '{"pass":true,"reason":"non-empty response"}'
-    return 0
+    if [ -n "$t_trim" ]; then
+        echo '{"pass":true,"reason":"non-empty thinking (response empty)","source":"thinking"}'
+        return 0
+    fi
+    echo '{"pass":false,"reason":"both response and thinking are empty/whitespace","source":"none"}'
+    return 1
 }
 
 if [ "$LLM_JUDGE" -eq 1 ]; then
@@ -312,13 +327,21 @@ for model in "${MODELS[@]}"; do
 
     # Output validation. Perf numbers without a coherence check are misleading
     # — a model can output 128 tokens of garbage at 50 tok/s. Simple mode
-    # rejects empty/whitespace; dual also runs an LLM judge.
+    # rejects empty/whitespace; dual also runs an LLM judge. Both consider
+    # `.thinking` alongside `.response` for thinking models.
     RESPONSE_TEXT=$(echo "$RESULT" | jq -r '.response // ""')
+    THINKING_TEXT=$(echo "$RESULT" | jq -r '.thinking // ""')
+    DONE_REASON=$(echo "$RESULT" | jq -r '.done_reason // ""')
     RESPONSE_LEN=${#RESPONSE_TEXT}
-    PREVIEW=$(printf '%s' "$RESPONSE_TEXT" | head -c 200)
-    echo "  Response (${RESPONSE_LEN} chars): ${PREVIEW}" >&2
+    THINKING_LEN=${#THINKING_TEXT}
+    R_PREVIEW=$(printf '%s' "$RESPONSE_TEXT" | head -c 200)
+    echo "  Response (${RESPONSE_LEN} chars, done_reason=${DONE_REASON}): ${R_PREVIEW}" >&2
+    if [ "$THINKING_LEN" -gt 0 ]; then
+        T_PREVIEW=$(printf '%s' "$THINKING_TEXT" | head -c 200)
+        echo "  Thinking (${THINKING_LEN} chars): ${T_PREVIEW}" >&2
+    fi
 
-    SIMPLE_VERDICT=$(simple_check "$RESPONSE_TEXT") || true
+    SIMPLE_VERDICT=$(simple_check "$RESPONSE_TEXT" "$THINKING_TEXT") || true
     SIMPLE_PASS=$(echo "$SIMPLE_VERDICT" | jq -r '.pass')
 
     LLM_VERDICT='null'
@@ -326,7 +349,7 @@ for model in "${MODELS[@]}"; do
     if [ "$LLM_JUDGE" -eq 1 ]; then
         if [ "$SIMPLE_PASS" = "true" ]; then
             echo "  Running LLM judge (${JUDGE_MODEL})..." >&2
-            LLM_VERDICT=$(judge_response "$model" "$PROMPT" "$RESPONSE_TEXT")
+            LLM_VERDICT=$(judge_response "$model" "$PROMPT" "$RESPONSE_TEXT" "$THINKING_TEXT")
             LLM_PASS_BOOL=$(echo "$LLM_VERDICT" | jq -r '.pass')
             REASON=$(echo "$LLM_VERDICT" | jq -r '.reason')
             echo "  LLM judge: ${LLM_PASS_BOOL} — ${REASON}" >&2
