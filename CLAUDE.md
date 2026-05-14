@@ -176,6 +176,32 @@ GitHub Issue (User Story)  →  TestLink Test Case  →  YAML Test Script
 - **YAML** = execution authority (what actually runs in CI)
 - If they conflict, update YAML to match TestLink
 
+### LLM Judge Scope
+
+The LLM judge has exactly one purpose: validating that an LLM-generated response is **meaningful for its prompt**. Every other check is deterministic.
+
+| Check type | How to validate | Tool |
+|------------|-----------------|------|
+| LLM response is meaningful for the prompt | Send `(prompt, output)` to the judge endpoint, parse `{pass, reason}` verdict | LLM judge (`--llm` flag) |
+| Stdout / API response shape | Regex match, exact match, non-empty assertion in the test step itself | Bash + `grep` / `jq` / shell tests |
+| Container log signal (CUDA errors, fallback warnings, OOM) | Pattern match against captured container logs | SimpleJudge `expectPatterns` / `rejectPatterns` |
+| Crash / non-crash | Exit code of the test step | Bash `set -e` and step exit status |
+
+**Why this matters**
+
+- The judge is slow (one LLM call per assertion) and costs GPU time.
+- Using it where deterministic checks suffice hides regressions when the judge itself drifts (cf. #149 / #151 — judge prompt bias).
+- Confining the judge to response-meaningfulness makes failures debuggable: a judge "FAIL" always points at the same class of problem.
+
+**Test step design rule**
+
+When adding or modifying a test:
+- If you're validating a string contains some text → regex in `expectPatterns`, not the judge.
+- If you're validating no CUDA error occurred → pattern in `rejectPatterns`, not the judge.
+- If you're validating a model produced coherent prose → judge with `--llm`.
+
+This is the principle that #142 (scope LLM judge to response checks) and #147 / #149 / #151 (throughput judge for response-meaningfulness) already moved us toward. Don't re-introduce LLM-judging for static checks.
+
 ## Skill Quick Reference
 
 Extracted triggers and key rules from each skill. Use these to recognize when to load a skill, and as a fallback if the Skill tool is unavailable.
