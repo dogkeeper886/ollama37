@@ -166,6 +166,10 @@ GitHub Issue (User Story)  →  YAML Test Case (intent + steps)
 - **YAML `steps:` + `expectPatterns:` / `rejectPatterns:`** = execution authority (what actually runs in CI)
 - Both live in the same file by design (one source of truth, no drift surface)
 
+### Workflow-level pattern (non-TC workflows)
+
+The flow above governs the TC framework (build / runtime / inference / models). Perf benchmarks, experiments, and profiling workflows (`test-throughput.yml`, `test-fa-k80.yml`, `test-kv-rotate.yml`, `test-profile.yml`) follow a separate unified pattern documented in the [`test-workflow-pattern`](./.claude/skills/test-workflow-pattern/SKILL.md) skill: one extracted bash script per workflow, shared helpers from `cicd/scripts/lib/`, structured JSON output, standardized container handling.
+
 ### LLM Judge Scope
 
 The LLM judge has exactly one purpose: validating that an LLM-generated response is **meaningful for its prompt**. Every other check is deterministic.
@@ -247,6 +251,10 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 - **Trigger**: Before pushing changes to `.github/workflows/*.yml`
 - **Rules**: Validate `jq -n '{...}'` object templates with `jq -n` against placeholder values (catches reserved-word collisions like `label`, `break`); shellcheck `run:` blocks (catches redirect-order bugs like `2>&1 > file`); actionlint for workflow structure. Most CI bugs in this project's history (jq reserved word, shell redirect, header staleness) were locally testable in isolation.
 
+### test-workflow-pattern
+- **Trigger**: Authoring or refactoring a `.github/workflows/test-*.yml` workflow that runs on the K80 runner (perf benchmarks, experiments, profiling) — not a TC-framework correctness suite
+- **Rules**: One entry point per workflow (`bash cicd/scripts/test-<name>.sh`); no inline test logic in YAML; source helpers from `cicd/scripts/lib/`; emit structured JSON to `/tmp/test-<name>-results.json`; exit non-zero on validation failure; standardized pre/post container handling.
+
 ## Logging Guidelines
 
 All debug logging must be **level-gated and permanent** — never add temporary log lines that need manual removal.
@@ -316,11 +324,11 @@ When creating or updating skills and commands, follow the format guides in `.cla
 **Design principle**: Skills define *when* and *what*. Commands define *how* (invoked via `/slash`). Keep executable content in commands, not skills.
 
 ### Skill files (`.claude/skills/<name>/SKILL.md`)
-`build`, `debug`, `ci`, `test`, `git-flow`, `plan`, `implement`, `add-test`, `trace`, `instrument`, `profile`, `annotate`, `script-review`, `lint-ci`
+`build`, `debug`, `ci`, `test`, `git-flow`, `plan`, `implement`, `add-test`, `test-workflow-pattern`, `trace`, `instrument`, `profile`, `annotate`, `script-review`, `lint-ci`
 
 ### Slash commands (`.claude/commands/<category>/`)
 - **dev-workflow/**: `/plan`, `/implement`
-- **build-test/**: `/build`, `/debug`, `/test`, `/ci`, `/add-test`
+- **build-test/**: `/build`, `/debug`, `/test`, `/ci`, `/add-test`, `/test-workflow`
 - **code-analysis/**: `/trace`, `/instrument`, `/profile`, `/annotate`
 - **project/**: `/script-review`
 - **utility/**: `/session-summary`
