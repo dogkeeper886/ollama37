@@ -73,6 +73,20 @@ Required fields:
 - `rejectPatterns` — List of regex patterns that must NOT match output
 - `timeout` — Optional per-step timeout in milliseconds
 
+## When to use the LLM judge vs deterministic checks
+
+Per CLAUDE.md → "LLM Judge Scope", the LLM judge is ONLY for validating that an LLM-generated response is meaningful for its prompt. Everything else is deterministic.
+
+| Validation | Mechanism |
+|-----------|-----------|
+| Response contains specific text | `expectPatterns: ["regex"]` |
+| Response avoids error string | `rejectPatterns: ["CUBLAS_STATUS"]` |
+| Step crashes the runner | Exit code (default; no extra config) |
+| Container log signals | `expectPatterns` / `rejectPatterns` matched against captured logs |
+| Generated prose is coherent and on-topic | LLM judge (run suite with `--llm`); set `criteria:` field describing what "meaningful" means |
+
+Do not write tests that rely on the LLM judge to confirm static facts (e.g. "response contains '4'"). That's what `expectPatterns` is for.
+
 ## Related files
 - Test cases: `cicd/tests/testcases/<suite>/`
 - Framework docs: `cicd/README.md`
