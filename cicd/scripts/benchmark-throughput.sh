@@ -1,12 +1,16 @@
 #!/bin/bash
-# benchmark-throughput.sh - Compare model inference speed (tok/s) across models
+# benchmark-throughput.sh - Measure model inference speed AND validate output.
+#
+# Two responsibilities, separated by mode:
+#   - perf: tok/s, durations, VRAM (always)
+#   - output check: simple (response non-empty) or dual (also LLM-judge meaningful)
 #
 # Usage:
 #   ./benchmark-throughput.sh [options] model1 [model2 ...]
 #
 # Examples:
 #   ./benchmark-throughput.sh gemma3:4b
-#   ./benchmark-throughput.sh gemma3:4b qwen3:4b llama3.2:3b
+#   ./benchmark-throughput.sh --llm --judge-model gemma3:12b-judge gemma3:4b
 #   ./benchmark-throughput.sh -n 256 gemma3:4b qwen3:4b
 #
 # Options:
@@ -14,7 +18,12 @@
 #   -n, --num-predict N     Max tokens to generate (default: 128)
 #   -c, --context N         Context size (default: 2048)
 #   -o, --output FILE       Save JSON report to file
+#       --llm               Also run LLM judge on each response (dual mode)
+#       --judge-model M     Judge model name (default: gemma3:12b-judge)
+#       --judge-host URL    Judge ollama host (default: $JUDGE_HOST or same as --host)
 #   -h, --help              Show this help
+#
+# Exit status: non-zero if any model fails the output check (simple or dual).
 
 set -euo pipefail
 
@@ -22,12 +31,15 @@ OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
 NUM_PREDICT=128
 NUM_CTX=2048
 OUTPUT=""
+LLM_JUDGE=0
+JUDGE_MODEL="${JUDGE_MODEL:-gemma3:12b-judge}"
+JUDGE_HOST="${JUDGE_HOST:-}"
 MODELS=()
 
 PROMPT="Explain how a computer works to a curious 10-year-old. Be fun and use analogies."
 
 usage() {
-    sed -n '2,16p' "$0" | sed 's/^# \?//'
+    sed -n '2,24p' "$0" | sed 's/^# \?//'
     exit 1
 }
 
@@ -37,11 +49,17 @@ while [[ $# -gt 0 ]]; do
         -n|--num-predict) NUM_PREDICT="$2"; shift 2 ;;
         -c|--context) NUM_CTX="$2"; shift 2 ;;
         -o|--output) OUTPUT="$2"; shift 2 ;;
+        --llm) LLM_JUDGE=1; shift ;;
+        --judge-model) JUDGE_MODEL="$2"; shift 2 ;;
+        --judge-host) JUDGE_HOST="$2"; shift 2 ;;
         -h|--help) usage ;;
         -*) echo "Unknown option: $1"; usage ;;
         *) MODELS+=("$1"); shift ;;
     esac
 done
+
+# Default judge host falls back to the model host if unset.
+JUDGE_HOST="${JUDGE_HOST:-$OLLAMA_HOST}"
 
 if [ ${#MODELS[@]} -eq 0 ]; then
     echo "No models specified." >&2
@@ -124,7 +142,9 @@ bench_model() {
         return 1
     fi
 
-    # Build per-model result with all key factors
+    # Build per-model result. `response` is the full generated text — needed
+    # for output validation (simple non-empty check, optional LLM judge) and
+    # for human inspection in the JSON artifact.
     echo "$response" | jq \
         --arg model "$model" \
         --arg gpu_info "$gpu_info" \
@@ -140,6 +160,7 @@ bench_model() {
             load_duration_s: ((.load_duration // 0) / 1e9 * 100 | round / 100),
             gpu_offload_pct: $gpu_pct,
             num_ctx: $num_ctx,
+            response: (.response // ""),
             gpu_info: $gpu_info
         }'
 
@@ -148,12 +169,92 @@ bench_model() {
         -d "{\"model\":\"${model}\",\"keep_alive\":0}" > /dev/null 2>&1 || true
 }
 
+# Run the LLM judge against (model, prompt, response). Returns a JSON object
+# with `pass` and `reason`. Falls back to pass=false if the judge endpoint is
+# unreachable or returns malformed JSON — a missing judge must not silently
+# pass a broken response.
+judge_response() {
+    local model="$1"
+    local prompt_text="$2"
+    local response_text="$3"
+
+    local judge_prompt
+    judge_prompt=$(jq -nc \
+        --arg model "$model" \
+        --arg prompt "$prompt_text" \
+        --arg response "$response_text" \
+        '{
+            role: "Decide whether the response is meaningful for the prompt. A meaningful response addresses the prompt with coherent text in the right language and topic. Reject empty, garbled, repetitive nonsense, off-topic, or error-message responses.",
+            rules: [
+                "Truncation at the token limit is fine if the visible text is coherent and on-topic.",
+                "Accept reasonable variations in phrasing.",
+                "An API-level error message in the response is FAIL."
+            ],
+            model_under_test: $model,
+            prompt: $prompt,
+            response: $response,
+            respond: {
+                format: "Respond with a single JSON object",
+                fields: {
+                    pass: "true if the response is meaningful and on-topic, false otherwise",
+                    reason: "Brief explanation"
+                }
+            }
+        }')
+
+    local judge_payload judge_raw verdict_text
+    judge_payload=$(jq -nc \
+        --arg model "$JUDGE_MODEL" \
+        --arg prompt "$judge_prompt" \
+        '{model:$model, prompt:$prompt, stream:false, format:"json", options:{temperature:0.1, num_predict:512}}')
+
+    judge_raw=$(curl -sf --max-time 300 "${JUDGE_HOST}/api/generate" -d "$judge_payload" 2>/dev/null || true)
+    if [ -z "$judge_raw" ]; then
+        echo '{"pass":false,"reason":"judge endpoint unreachable or timed out"}'
+        return
+    fi
+
+    verdict_text=$(echo "$judge_raw" | jq -r '.response // ""' 2>/dev/null)
+    if [ -z "$verdict_text" ] || ! echo "$verdict_text" | jq empty 2>/dev/null; then
+        echo '{"pass":false,"reason":"judge returned non-JSON response"}'
+        return
+    fi
+
+    # Normalize to {pass, reason}.
+    echo "$verdict_text" | jq -c '{pass: (.pass // false), reason: (.reason // "no reason given")}'
+}
+
+# Simple coherence check: response must be non-empty after trimming whitespace.
+# Returns 0 if pass, 1 if fail; writes "{pass, reason}" JSON to stdout.
+simple_check() {
+    local response_text="$1"
+    local trimmed
+    trimmed=$(echo -n "$response_text" | tr -d '[:space:]')
+    if [ -z "$trimmed" ]; then
+        echo '{"pass":false,"reason":"empty or whitespace-only response"}'
+        return 1
+    fi
+    echo '{"pass":true,"reason":"non-empty response"}'
+    return 0
+}
+
+if [ "$LLM_JUDGE" -eq 1 ]; then
+    JUDGE_MODE_LABEL="dual (simple + LLM)"
+else
+    JUDGE_MODE_LABEL="simple (non-empty response)"
+fi
+
 echo "" >&2
 echo "=== Throughput Benchmark ===" >&2
 echo "Models:      ${MODELS[*]}" >&2
 echo "NumPredict:  ${NUM_PREDICT}" >&2
 echo "Context:     ${NUM_CTX}" >&2
 echo "Host:        ${OLLAMA_HOST}" >&2
+echo "Judge mode:  ${JUDGE_MODE_LABEL}" >&2
+if [ "$LLM_JUDGE" -eq 1 ]; then
+    echo "Judge model: ${JUDGE_MODEL}" >&2
+    echo "Judge host:  ${JUDGE_HOST}" >&2
+fi
 echo "Git SHA:     ${GIT_SHA}" >&2
 echo "" >&2
 
@@ -171,6 +272,7 @@ echo "" >&2
 
 # Run each model
 RESULTS="[]"
+FAILED_CHECKS=0
 for model in "${MODELS[@]}"; do
     echo "--- ${model} ---" >&2
 
@@ -179,14 +281,19 @@ for model in "${MODELS[@]}"; do
         echo "  Pulling ${model}..." >&2
         curl -sf "${OLLAMA_HOST}/api/pull" -d "{\"name\":\"${model}\",\"stream\":false}" > /dev/null 2>&1 || {
             echo "  ERROR: Failed to pull ${model}, skipping" >&2
+            FAILED_CHECKS=$((FAILED_CHECKS + 1))
             continue
         }
     fi
 
     echo "  Warming up & loading..." >&2
-    RESULT=$(bench_model "$model") || { echo "  ERROR: Benchmark failed, skipping" >&2; continue; }
+    RESULT=$(bench_model "$model") || {
+        echo "  ERROR: Benchmark failed, skipping" >&2
+        FAILED_CHECKS=$((FAILED_CHECKS + 1))
+        continue
+    }
 
-    # Print per-model summary
+    # Print per-model perf summary
     GPU_PCT=$(echo "$RESULT" | jq -r '.gpu_offload_pct')
     IN_TOK=$(echo "$RESULT" | jq -r '.in_tokens')
     OUT_TOK=$(echo "$RESULT" | jq -r '.out_tokens')
@@ -202,6 +309,52 @@ for model in "${MODELS[@]}"; do
     fi
     echo "  GPU offload: ${GPU_PCT}% | In: ${IN_TOK} tok | Out: ${OUT_TOK} tok" >&2
     echo "  Prompt: ${PROMPT_TPS} tok/s | Generate: ${EVAL_TPS} tok/s" >&2
+
+    # Output validation. Perf numbers without a coherence check are misleading
+    # — a model can output 128 tokens of garbage at 50 tok/s. Simple mode
+    # rejects empty/whitespace; dual also runs an LLM judge.
+    RESPONSE_TEXT=$(echo "$RESULT" | jq -r '.response // ""')
+    RESPONSE_LEN=${#RESPONSE_TEXT}
+    PREVIEW=$(printf '%s' "$RESPONSE_TEXT" | head -c 200)
+    echo "  Response (${RESPONSE_LEN} chars): ${PREVIEW}" >&2
+
+    SIMPLE_VERDICT=$(simple_check "$RESPONSE_TEXT") || true
+    SIMPLE_PASS=$(echo "$SIMPLE_VERDICT" | jq -r '.pass')
+
+    LLM_VERDICT='null'
+    LLM_PASS_BOOL='null'
+    if [ "$LLM_JUDGE" -eq 1 ]; then
+        if [ "$SIMPLE_PASS" = "true" ]; then
+            echo "  Running LLM judge (${JUDGE_MODEL})..." >&2
+            LLM_VERDICT=$(judge_response "$model" "$PROMPT" "$RESPONSE_TEXT")
+            LLM_PASS_BOOL=$(echo "$LLM_VERDICT" | jq -r '.pass')
+            REASON=$(echo "$LLM_VERDICT" | jq -r '.reason')
+            echo "  LLM judge: ${LLM_PASS_BOOL} — ${REASON}" >&2
+        else
+            echo "  LLM judge: skipped (simple check already failed)" >&2
+        fi
+    fi
+
+    # Overall pass = simple AND (no llm judge OR llm judge pass)
+    if [ "$SIMPLE_PASS" = "true" ] && { [ "$LLM_JUDGE" -eq 0 ] || [ "$LLM_PASS_BOOL" = "true" ]; }; then
+        OVERALL_PASS=true
+        echo "  Output check: PASS" >&2
+    else
+        OVERALL_PASS=false
+        FAILED_CHECKS=$((FAILED_CHECKS + 1))
+        REASON=$(echo "$SIMPLE_VERDICT" | jq -r '.reason')
+        if [ "$LLM_JUDGE" -eq 1 ] && [ "$SIMPLE_PASS" = "true" ]; then
+            REASON=$(echo "$LLM_VERDICT" | jq -r '.reason')
+        fi
+        echo "  Output check: FAIL — ${REASON}" >&2
+    fi
+
+    # Attach verdict block to the result.
+    RESULT=$(echo "$RESULT" | jq \
+        --argjson simple "$SIMPLE_VERDICT" \
+        --argjson llm "$LLM_VERDICT" \
+        --argjson overall "$OVERALL_PASS" \
+        '. + {check: {overall_pass: $overall, simple: $simple, llm: $llm}}')
 
     RESULTS=$(echo "$RESULTS" | jq --argjson r "$RESULT" '. + [$r]')
     echo "" >&2
@@ -269,10 +422,10 @@ for i in $(seq 0 $((GPU_COUNT - 1))); do
     VRAM_SEP="${VRAM_SEP}$(printf " %5s" "-----")"
 done
 
-printf "%-25s %6s %7s %12s %10s %5s %s\n" \
-    "MODEL" "IN" "OUT" "PROMPT tok/s" "GEN tok/s" "GPU%" "VRAM Used (MiB)" >&2
-printf "%-25s %6s %7s %12s %10s %5s" \
-    "-------------------------" "------" "-------" "------------" "----------" "-----" >&2
+printf "%-25s %5s %6s %7s %12s %10s %5s %s\n" \
+    "MODEL" "CHECK" "IN" "OUT" "PROMPT tok/s" "GEN tok/s" "GPU%" "VRAM Used (MiB)" >&2
+printf "%-25s %5s %6s %7s %12s %10s %5s" \
+    "-------------------------" "-----" "------" "-------" "------------" "----------" "-----" >&2
 printf "%s\n" "$VRAM_SEP" >&2
 
 echo "$RESULTS" | jq -r '.[] |
@@ -283,15 +436,24 @@ echo "$RESULTS" | jq -r '.[] |
         else "n/a"
         end
     ) as $vram |
-    "\(.model)|\(.in_tokens)|\(.out_tokens)|\(.prompt_eval_tps)|\(.eval_tps)|\(.gpu_offload_pct)|\($vram)"
-' | while IFS='|' read -r model in_tok out_tok prompt_tps eval_tps gpu_pct vram_rest; do
+    ((.check.overall_pass // false) | if . then "PASS" else "FAIL" end) as $check |
+    "\(.model)|\($check)|\(.in_tokens)|\(.out_tokens)|\(.prompt_eval_tps)|\(.eval_tps)|\(.gpu_offload_pct)|\($vram)"
+' | while IFS='|' read -r model check in_tok out_tok prompt_tps eval_tps gpu_pct vram_rest; do
     # Build per-GPU used columns
     VRAM_COLS=""
     IFS='|' read -ra USED_VALS <<< "$vram_rest"
     for val in "${USED_VALS[@]}"; do
         VRAM_COLS="${VRAM_COLS}$(printf " %5s" "$val")"
     done
-    printf "%-25s %6s %7s %12s %10s %4s%%%s\n" \
-        "$model" "$in_tok" "$out_tok" "$prompt_tps" "$eval_tps" "$gpu_pct" "$VRAM_COLS" >&2
+    printf "%-25s %5s %6s %7s %12s %10s %4s%%%s\n" \
+        "$model" "$check" "$in_tok" "$out_tok" "$prompt_tps" "$eval_tps" "$gpu_pct" "$VRAM_COLS" >&2
 done
 echo "" >&2
+
+# Surface the overall verdict so callers can rely on the exit code instead of
+# parsing the JSON to find failed coherence checks.
+if [ "$FAILED_CHECKS" -gt 0 ]; then
+    echo "OUTPUT CHECK FAILED: ${FAILED_CHECKS} model(s) did not pass" >&2
+    exit 1
+fi
+echo "OUTPUT CHECK PASSED: ${#MODELS[@]} model(s) produced valid responses" >&2
