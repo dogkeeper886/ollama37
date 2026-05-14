@@ -14,6 +14,10 @@ name: K80 FA Validation
 #      C. FA on,  KV q8_0
 #    Captures KV cache size, total VRAM (nvidia-smi), and tokens/sec per
 #    config. Use num_ctx + num_predict + model + prompt to vary the workload.
+#
+# Follows the unified test-workflow-pattern (#158): test logic lives in
+# cicd/scripts/test-fa-k80.sh; this YAML orchestrates container lifecycle
+# (stop production → run script → restart production → upload artifacts).
 
 on:
   workflow_dispatch:
@@ -87,24 +91,21 @@ jobs:
     runs-on: self-hosted
     environment: cicd-1
     timeout-minutes: 45
+    env:
+      JUDGE_HOST: http://localhost:11435
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install test runner dependencies
-        run: cd cicd/tests && npm ci
-
       - name: Stop existing ollama37 container
         run: |
           docker stop ollama37 || true
-          # Defensive: clear any stale FA-test container from a prior failed run.
-          docker rm -f ollama37-fa-test 2>/dev/null || true
+          # Defensive: clear any stale FA-test containers from prior failed runs.
+          docker rm -f ollama37-fa-test \
+                       ollama37-fa-test-baseline ollama37-fa-test-fa \
+                       ollama37-fa-test-off-f16 ollama37-fa-test-on-f16 \
+                       ollama37-fa-test-on-q8_0 2>/dev/null || true
 
           # Poll until VRAM drops below 1 GiB or 30s timeout.
           for i in $(seq 1 30); do
@@ -117,325 +118,56 @@ jobs:
           done
           nvidia-smi --query-gpu=memory.used --format=csv,noheader
 
-      - name: Run inference
-        id: infer
+      - name: Run FA validation
+        env:
+          MODEL: ${{ inputs.model }}
+          PROMPT: ${{ inputs.prompt }}
+          NUM_PREDICT: ${{ inputs.num_predict }}
+          NUM_CTX: ${{ inputs.num_ctx }}
+          BENCHMARK: ${{ inputs.benchmark }}
+          KV_CACHE_TYPE: ${{ inputs.kv_cache_type }}
+          BASELINE_COMPARE: ${{ inputs.baseline_compare }}
         run: |
-          set -e
-          # Clean any leftovers from prior runs so artifacts only contain
-          # this run's outputs.
-          rm -rf /tmp/fa-test
-          mkdir -p /tmp/fa-test
-          chmod 777 /tmp/fa-test
-
-          MODEL="${{ inputs.model }}"
-          PROMPT="${{ inputs.prompt }}"
-          NUM_PREDICT="${{ inputs.num_predict }}"
-          NUM_CTX="${{ inputs.num_ctx }}"
-          BENCHMARK="${{ inputs.benchmark }}"
-          KV_CACHE_TYPE="${{ inputs.kv_cache_type }}"
-          BASELINE="${{ inputs.baseline_compare }}"
-
-          # Reusable: start container with given FA + KV settings, run a
-          # deterministic inference, capture response + logs + metrics.
-          # Args: $1 = label, $2 = enable_fa (0|1), $3 = kv_cache_type ("" or q8_0/q4_0)
-          # Writes: $out_dir/{response.json, container-logs.log, metrics.json,
-          #                   fa-related-logs.log}
-          run_inference() {
-            local label="$1"
-            local enable_fa="$2"
-            local kv_type="$3"
-            local out_dir="/tmp/fa-test/${label}"
-            mkdir -p "$out_dir"
-
-            echo ""
-            echo "=========================================="
-            echo "=== Run: $label (enable_fa=$enable_fa, kv_cache_type=${kv_type:-f16}, num_ctx=$NUM_CTX) ==="
-            echo "=========================================="
-
-            # Force OLLAMA_FLASH_ATTENTION explicitly. Models like Gemma3 default
-            # f.FlashAttention()=true, so leaving it unset enables FA via model
-            # default + #117's K80 gate. Explicit "0" or "1" guarantees behavior.
-            local fa_args
-            if [ "$enable_fa" = "1" ]; then
-              fa_args="-e OLLAMA_FLASH_ATTENTION=1"
-            else
-              fa_args="-e OLLAMA_FLASH_ATTENTION=0"
-            fi
-
-            local kv_args=""
-            if [ -n "$kv_type" ]; then
-              kv_args="-e OLLAMA_KV_CACHE_TYPE=$kv_type"
-            fi
-
-            local cname="ollama37-fa-test-${label}"
-            docker rm -f "$cname" 2>/dev/null || true
-
-            docker run -d --rm \
-              --name "$cname" \
-              --runtime nvidia \
-              --gpus all \
-              -e NVIDIA_VISIBLE_DEVICES=all \
-              -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-              -e OLLAMA_HOST=0.0.0.0:11434 \
-              -e OLLAMA_DEBUG=1 \
-              $fa_args $kv_args \
-              -v ollama-data:/root/.ollama \
-              -p 11434:11434 \
-              ollama37:latest
-
-            # Wait for the API to come up (max 60s).
-            for i in $(seq 1 60); do
-              if curl -sf http://localhost:11434/ >/dev/null 2>&1; then
-                echo "ollama API ready after ${i}s"
-                break
-              fi
-              sleep 1
-            done
-
-            if ! curl -sf http://localhost:11434/ >/dev/null 2>&1; then
-              echo "::error::API never came up for $label"
-              docker logs "$cname" > "$out_dir/container-logs.log" 2>&1 || true
-              docker stop --time 30 "$cname" || true
-              return 1
-            fi
-
-            # Issue deterministic inference with explicit num_ctx.
-            curl -s http://localhost:11434/api/generate \
-              -d "$(jq -n \
-                  --arg model "$MODEL" \
-                  --arg prompt "$PROMPT" \
-                  --argjson num_predict "$NUM_PREDICT" \
-                  --argjson num_ctx "$NUM_CTX" \
-                  '{model: $model, prompt: $prompt, stream: false,
-                    options: {num_predict: $num_predict, num_ctx: $num_ctx,
-                              temperature: 0, seed: 42}}')" \
-              > "$out_dir/response.json"
-
-            # Snapshot total VRAM right after inference, before stopping container.
-            # KV cache + model weights + activation buffers are all live at this point.
-            nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits \
-              > "$out_dir/vram-mib.txt"
-            local vram=$(cat "$out_dir/vram-mib.txt" | head -1 | tr -d ' ')
-
-            # Capture container logs (proper redirect order).
-            docker logs "$cname" > "$out_dir/container-logs.log" 2>&1
-            echo "[$label] Log size: $(wc -l < $out_dir/container-logs.log) lines"
-
-            # Validate the inference produced a response.
-            if ! jq -e '.response' "$out_dir/response.json" >/dev/null 2>&1; then
-              echo "::error::[$label] inference call did not return a 'response' field"
-              echo "--- response.json ---"
-              cat "$out_dir/response.json"
-              echo "--- last 50 log lines ---"
-              tail -50 "$out_dir/container-logs.log"
-              docker stop --time 30 "$cname" || true
-              return 1
-            fi
-
-            # Extract metrics. KV cache size pulled from container log
-            # (the runtime emits "kv cache" device=CUDA0 size="N MiB" lines).
-            local kv_mib
-            kv_mib=$(grep -oE '"kv cache" device=[^ ]+ size="[0-9.]+ MiB"' "$out_dir/container-logs.log" \
-                       | head -1 | grep -oE '[0-9.]+ MiB' | grep -oE '[0-9.]+') || kv_mib="unknown"
-
-            # Note: jq reserved words (label, break, etc.) must be quoted as
-            # object keys. Quoting all keys defensively.
-            jq -n \
-              --arg config "$label" \
-              --arg model "$MODEL" \
-              --argjson enable_fa "$enable_fa" \
-              --arg kv_type "${kv_type:-f16}" \
-              --argjson num_ctx "$NUM_CTX" \
-              --argjson num_predict "$NUM_PREDICT" \
-              --slurpfile resp "$out_dir/response.json" \
-              --arg vram "$vram" \
-              --arg kv_mib "$kv_mib" \
-              '{
-                "config": $config,
-                "model": $model,
-                "enable_fa": ($enable_fa == 1),
-                "kv_cache_type": $kv_type,
-                "num_ctx": $num_ctx,
-                "num_predict": $num_predict,
-                "eval_count": ($resp[0].eval_count // 0),
-                "eval_duration_ns": ($resp[0].eval_duration // 0),
-                "prompt_eval_duration_ns": ($resp[0].prompt_eval_duration // 0),
-                "tokens_per_sec": (if ($resp[0].eval_duration // 0) > 0
-                                   then ($resp[0].eval_count / ($resp[0].eval_duration / 1000000000))
-                                   else 0 end),
-                "vram_used_mib": ($vram | tonumber),
-                "kv_cache_mib": $kv_mib,
-                "response_preview": ($resp[0].response // "" | .[0:120])
-              }' \
-              > "$out_dir/metrics.json"
-
-            echo "[$label] metrics:"
-            cat "$out_dir/metrics.json"
-
-            # Surface FA-related log lines for quick scanning.
-            grep -iE "flash[_ ]?att|fattn|FLASH_ATTN|kv.cache" "$out_dir/container-logs.log" \
-              > "$out_dir/fa-related-logs.log" || true
-
-            docker stop --time 30 "$cname" || true
-
-            # Wait for VRAM to release before next run.
-            for i in $(seq 1 30); do
-              local used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1 | tr -d ' ')
-              if [ "$used" -lt 1024 ]; then
-                break
-              fi
-              sleep 1
-            done
-            return 0
-          }
-
+          ARGS=(
+            --model "$MODEL"
+            --prompt "$PROMPT"
+            --num-predict "$NUM_PREDICT"
+            --num-ctx "$NUM_CTX"
+          )
           if [ "$BENCHMARK" = "true" ]; then
-            # Three-config benchmark.
-            run_inference "off-f16" "0" ""
-            run_inference "on-f16"  "1" ""
-            run_inference "on-q8_0" "1" "q8_0"
+            ARGS+=(--benchmark)
+          fi
+          if [ -n "$KV_CACHE_TYPE" ]; then
+            ARGS+=(--kv-cache-type "$KV_CACHE_TYPE")
+          fi
+          if [ "$BASELINE_COMPARE" = "true" ]; then
+            ARGS+=(--baseline-compare)
+          fi
 
-            echo ""
-            echo "=========================================="
-            echo "=== Benchmark comparison ($MODEL, num_ctx=$NUM_CTX, num_predict=$NUM_PREDICT) ==="
-            echo "=========================================="
+          bash cicd/scripts/test-fa-k80.sh "${ARGS[@]}"
 
-            # Build a markdown comparison table from per-config metrics.json.
-            jq -s '. as $rows
-                   | "| Config | KV cache (MiB) | Total VRAM (MiB) | tokens/sec | eval (s) |\n|---|---|---|---|---|\n"
-                     + ($rows | map(
-                       "| \(.config) | \(.kv_cache_mib) | \(.vram_used_mib) | \(.tokens_per_sec | . * 100 | round / 100) | \(.eval_duration_ns / 1000000000 | . * 100 | round / 100) |"
-                     ) | join("\n"))' \
-              /tmp/fa-test/off-f16/metrics.json \
-              /tmp/fa-test/on-f16/metrics.json \
-              /tmp/fa-test/on-q8_0/metrics.json \
-              -r | tee /tmp/fa-test/benchmark-table.md
-
-            # Combined json summary.
-            jq -s '.' \
-              /tmp/fa-test/off-f16/metrics.json \
-              /tmp/fa-test/on-f16/metrics.json \
-              /tmp/fa-test/on-q8_0/metrics.json \
-              > /tmp/fa-test/benchmark-summary.json
-
-            # Surface as GitHub Actions step summary so it shows on the run page.
+      - name: Publish summary tables
+        if: always()
+        run: |
+          if [ -f /tmp/fa-test/benchmark-table.md ]; then
             {
               echo "## K80 FA benchmark"
               echo ""
-              echo "**Model**: $MODEL · **num_ctx**: $NUM_CTX · **num_predict**: $NUM_PREDICT"
+              echo "**Model**: ${{ inputs.model }} · **num_ctx**: ${{ inputs.num_ctx }} · **num_predict**: ${{ inputs.num_predict }}"
               echo ""
               cat /tmp/fa-test/benchmark-table.md
             } >> "$GITHUB_STEP_SUMMARY"
-          else
-            # Single-run mode (back-compat).
-            if [ "$BASELINE" = "true" ]; then
-              run_inference "baseline" "0" "$KV_CACHE_TYPE"
-            fi
-            run_inference "fa" "1" "$KV_CACHE_TYPE"
-
-            if [ "$BASELINE" = "true" ]; then
-              echo ""
-              echo "=== Output comparison: baseline vs FA ==="
-              BASELINE_RESP=$(jq -r '.response' /tmp/fa-test/baseline/response.json)
-              FA_RESP=$(jq -r '.response' /tmp/fa-test/fa/response.json)
-              if [ "$BASELINE_RESP" = "$FA_RESP" ]; then
-                echo "::notice::Outputs match exactly"
-              else
-                echo "::warning::Outputs differ between baseline and FA"
-              fi
-              jq -n --arg b "$BASELINE_RESP" --arg f "$FA_RESP" \
-                '{baseline: $b, fa: $f, match: ($b == $f)}' \
-                > /tmp/fa-test/comparison.json
-            fi
           fi
-
-      - name: Judge captured responses with LLM judge
-        # Runs after the test container is stopped (VRAM freed) and before
-        # production ollama37 comes back up. Talks to the ollama37-judge
-        # container on port 11435.
-        env:
-          FA_PROMPT: ${{ inputs.prompt }}
-        run: |
-          set -e
-
-          # Fail loud if the inference step succeeded but produced no
-          # response.json files - otherwise the loop below walks zero
-          # entries and silently reports PASS.
-          if ! ls /tmp/fa-test/*/response.json >/dev/null 2>&1; then
-            echo "::error::No inference responses captured under /tmp/fa-test/ - nothing to judge"
-            exit 1
-          fi
-
-          CRITERIA="PROMPT: ${FA_PROMPT}
-
-          Response must be coherent English prose that directly addresses the prompt above. Garbled output, infinite repetition, off-topic content, single-word/single-character responses, or empty responses fail. Truncation at the num_predict limit is acceptable as long as the visible text is coherent."
-
-          cd "$GITHUB_WORKSPACE/cicd/tests"
-
-          FAILED=0
-          {
-            echo ""
-            echo "## K80 FA LLM judge verdicts"
-            echo ""
-            echo "| Config | Verdict | Reason |"
-            echo "|---|---|---|"
-          } > /tmp/fa-test/judge-table.md
-
-          for resp_file in /tmp/fa-test/*/response.json; do
-            [ -f "$resp_file" ] || continue
-            config_dir=$(dirname "$resp_file")
-            config_name=$(basename "$config_dir")
-
-            echo ""
-            echo "=========================================="
-            echo "=== Judging $config_name ==="
-            echo "=========================================="
-
-            judgment_json="$config_dir/judgment.json"
-            set +e
-            npx tsx src/cli.ts judge-response \
-              --response "$resp_file" \
-              --criteria "$CRITERIA" \
-              --test-id "FA-K80-${config_name}" \
-              --test-name "K80 FA validation - ${config_name}" \
-              --goal "FA-enabled inference produced coherent text matching the prompt" \
-              > "$judgment_json"
-            judge_exit=$?
-            set -e
-
-            if [ "$judge_exit" -eq 2 ]; then
-              echo "::warning::Judge unreachable at port 11435 - aborting remaining verdicts"
-              echo "| $config_name | judge unavailable | port 11435 not reachable |" >> /tmp/fa-test/judge-table.md
-              FAILED=1
-              break
-            fi
-
-            pass=$(jq -r '.pass' "$judgment_json")
-            reason=$(jq -r '.reason' "$judgment_json" | tr '\n|' '  ' | cut -c1-200)
-
-            if [ "$pass" = "true" ]; then
-              verdict="PASS"
-            else
-              verdict="FAIL"
-              FAILED=1
-            fi
-
-            echo "[$config_name] $verdict - $reason"
-            echo "| $config_name | $verdict | $reason |" >> /tmp/fa-test/judge-table.md
-          done
-
-          cat /tmp/fa-test/judge-table.md >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$FAILED" -ne 0 ]; then
-            echo "::error::LLM judge marked one or more FA responses as failing or could not be reached"
-            exit 1
+          if [ -f /tmp/fa-test/judge-table.md ]; then
+            cat /tmp/fa-test/judge-table.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Restart production ollama37
         if: always()
         run: |
           # Defensive cleanup of any leftover test containers.
-          docker rm -f ollama37-fa-test ollama37-fa-test-baseline ollama37-fa-test-fa \
+          docker rm -f ollama37-fa-test \
+                       ollama37-fa-test-baseline ollama37-fa-test-fa \
                        ollama37-fa-test-off-f16 ollama37-fa-test-on-f16 \
                        ollama37-fa-test-on-q8_0 2>/dev/null || true
 
@@ -464,5 +196,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fa-test-${{ github.run_id }}
-          path: /tmp/fa-test/
+          path: |
+            /tmp/fa-test/
+            /tmp/test-fa-k80-results.json
           retention-days: 30
