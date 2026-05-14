@@ -29,7 +29,7 @@ export interface TestStep {
 /**
  * Test design intent — the canonical record of WHY this test exists.
  * Read by humans / AI agents to understand purpose; not consumed by the
- * runner for execution decisions. Replaces TestLink as the design authority.
+ * runner for execution decisions. The single design authority for the test.
  */
 export interface Intent {
   /** User story or imperative goal: what value this test delivers. */
@@ -56,8 +56,6 @@ export interface TestCase {
   timeout: number;
   /** Test IDs that must pass before this test runs */
   dependencies: string[];
-  /** TestLink external ID (e.g., ollama37-21) — deprecated, see #161 */
-  testlinkId?: string;
   /** GitHub issue number this test traces to */
   issue?: number;
   /** Design intent for this test (user story + acceptance + notes). */

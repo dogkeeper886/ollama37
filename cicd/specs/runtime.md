@@ -1,12 +1,10 @@
 # Runtime Tests
 
-Exported from TestLink project: **ollama37**
 
 ---
 
 ## TC-RUNTIME-001: Container Startup
 
-**External ID:** ollama37-11
 **Importance:** High
 **Execution Type:** Automated
 
@@ -25,7 +23,6 @@ Start the ollama37 container with GPU passthrough using docker compose.
 
 ## TC-RUNTIME-002: GPU Detection
 
-**External ID:** ollama37-12
 **Importance:** High
 **Execution Type:** Automated
 
@@ -45,7 +42,6 @@ Verify Tesla K80 GPU is detected by both nvidia-smi AND Ollama CUDA runtime. Inc
 
 ## TC-RUNTIME-003: Health Check
 
-**External ID:** ollama37-13
 **Importance:** High
 **Execution Type:** Automated
 

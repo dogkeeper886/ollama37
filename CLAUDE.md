@@ -146,8 +146,8 @@ When only part of the work is complete:
 Test cases follow a **requirements-driven** flow: every test traces back to a user story.
 
 ```
-GitHub Issue (User Story)  →  TestLink Test Case  →  YAML Test Script
-(what to validate)            (how to validate)      (automated execution)
+GitHub Issue (User Story)  →  YAML Test Case (intent + steps)
+(what to validate)            (how to validate + automated execution)
 ```
 
 ### 1. User Story (GitHub Issue)
@@ -155,26 +155,16 @@ GitHub Issue (User Story)  →  TestLink Test Case  →  YAML Test Script
 - Describes WHAT needs testing and WHY
 - Has type + priority + component labels
 
-### 2. Test Case Design (TestLink)
-- Create test case in the appropriate suite via MCP tools (`mcp__testlink__create_test_case`)
-- Define steps, expected results, preconditions
-- Include GitHub issue reference in the summary field (e.g., "Related to #N")
-- Record the TestLink external ID (e.g., `ollama37-21`)
-
-### 3. Test Script (YAML)
-- Create executable YAML via `/add-test` skill
-- Must include `testlink_id` and `issue` fields linking back to TestLink and GitHub
+### 2. Test Case (YAML)
+- Create executable YAML via `/add-test` skill at `cicd/tests/testcases/<suite>/TC-<SUITE>-NNN.yml`
+- Must include an `intent:` block (`user_story`, optional `acceptance`, optional `notes`) — the canonical record of why the test exists
+- Must include the `issue:` field linking back to the GitHub issue
 - PR includes the new YAML file
 
-### TestLink Reference
-- Project: ollama37 (ID: 1)
-- Test plan: "CI/CD Pipeline v1.0" (ID: 87)
-- Suites: Build (ID: 2), Inference (ID: 3), Runtime (ID: 39), Models (ID: 122)
-
-### Authorities
-- **TestLink** = design authority (what should be tested, how)
-- **YAML** = execution authority (what actually runs in CI)
-- If they conflict, update YAML to match TestLink
+### Authority
+- **YAML `intent:` block** = design authority (the test's purpose, in writing)
+- **YAML `steps:` + `expectPatterns:` / `rejectPatterns:`** = execution authority (what actually runs in CI)
+- Both live in the same file by design (one source of truth, no drift surface)
 
 ### LLM Judge Scope
 
