@@ -1,5 +1,5 @@
-#!/bin/bash
-# benchmark-throughput.sh - Measure model inference speed AND validate output.
+#!/usr/bin/env bash
+# benchmark-throughput.sh — measure model inference speed AND validate output.
 #
 # Two responsibilities, separated by mode:
 #   - perf: tok/s, durations, VRAM (always)
@@ -24,8 +24,22 @@
 #   -h, --help              Show this help
 #
 # Exit status: non-zero if any model fails the output check (simple or dual).
+#
+# Implementation note: this script follows the unified test-workflow pattern
+# (.claude/skills/test-workflow-pattern/SKILL.md). Generic operations are
+# sourced from cicd/scripts/lib/ — only throughput-specific orchestration
+# (banner, GPU info, results table) lives here.
 
 set -euo pipefail
+
+# Source shared helpers
+LIB_DIR="$(cd "$(dirname "$0")" && pwd)/lib"
+# shellcheck source=lib/response_capture.sh
+source "$LIB_DIR/response_capture.sh"
+# shellcheck source=lib/simple_check.sh
+source "$LIB_DIR/simple_check.sh"
+# shellcheck source=lib/judge_response.sh
+source "$LIB_DIR/judge_response.sh"
 
 OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
 NUM_PREDICT=128
@@ -39,7 +53,7 @@ MODELS=()
 PROMPT="Explain how a computer works to a curious 10-year-old. Be fun and use analogies."
 
 usage() {
-    sed -n '2,24p' "$0" | sed 's/^# \?//'
+    sed -n '2,28p' "$0" | sed 's/^# \?//'
     exit 1
 }
 
@@ -69,11 +83,12 @@ fi
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-# Check Ollama is reachable
 if ! curl -sf "${OLLAMA_HOST}/api/tags" > /dev/null 2>&1; then
     echo "ERROR: Cannot reach Ollama at ${OLLAMA_HOST}" >&2
     exit 1
 fi
+
+# Throughput-specific helpers (GPU introspection, not generic enough for lib/)
 
 # Get per-GPU info from nvidia-smi
 get_gpu_info() {
@@ -99,160 +114,6 @@ get_gpu_offload() {
             0
         end
     ' 2>/dev/null | head -1 || echo "0"
-}
-
-# Run benchmark for one model, return JSON
-bench_model() {
-    local model="$1"
-
-    # Warmup (loads model into GPU)
-    curl -sf "${OLLAMA_HOST}/api/generate" \
-        -d "$(jq -n --arg m "$model" --argjson ctx "$NUM_CTX" \
-            '{model:$m, prompt:"Hi", stream:false, options:{num_predict:1, num_ctx:$ctx}}')" \
-        > /dev/null 2>&1 || true
-
-    # Snapshot GPU state while model is loaded
-    local gpu_info gpu_pct
-    gpu_info=$(get_gpu_info)
-    gpu_pct=$(get_gpu_offload "$model")
-
-    # Actual benchmark
-    local response
-    response=$(curl -sf "${OLLAMA_HOST}/api/generate" \
-        -d "$(jq -n \
-            --arg model "$model" \
-            --arg prompt "$PROMPT" \
-            --argjson num_predict "$NUM_PREDICT" \
-            --argjson num_ctx "$NUM_CTX" \
-            '{
-                model: $model,
-                prompt: $prompt,
-                stream: false,
-                options: {
-                    temperature: 0,
-                    seed: 42,
-                    num_predict: $num_predict,
-                    num_ctx: $num_ctx
-                }
-            }'
-        )" 2>/dev/null)
-
-    if [ -z "$response" ]; then
-        echo "ERROR: No response from ${model}" >&2
-        return 1
-    fi
-
-    # Build per-model result. `response` and `thinking` are both preserved:
-    # thinking models (qwen3.5, qwen3-vl, deepseek-r1) can produce coherent
-    # output entirely inside `.thinking` while leaving `.response` empty when
-    # num_predict caps generation before the final answer.
-    echo "$response" | jq \
-        --arg model "$model" \
-        --arg gpu_info "$gpu_info" \
-        --argjson gpu_pct "${gpu_pct:-0}" \
-        --argjson num_ctx "$NUM_CTX" \
-        '{
-            model: $model,
-            in_tokens: .prompt_eval_count,
-            out_tokens: .eval_count,
-            prompt_eval_tps: (if .prompt_eval_duration > 0 then (.prompt_eval_count / (.prompt_eval_duration / 1e9) * 100 | round / 100) else 0 end),
-            eval_tps: (if .eval_duration > 0 then (.eval_count / (.eval_duration / 1e9) * 100 | round / 100) else 0 end),
-            total_duration_s: ((.total_duration // 0) / 1e9 * 100 | round / 100),
-            load_duration_s: ((.load_duration // 0) / 1e9 * 100 | round / 100),
-            gpu_offload_pct: $gpu_pct,
-            num_ctx: $num_ctx,
-            done_reason: (.done_reason // ""),
-            response: (.response // ""),
-            thinking: (.thinking // ""),
-            gpu_info: $gpu_info
-        }'
-
-    # Unload model
-    curl -sf "${OLLAMA_HOST}/api/generate" \
-        -d "{\"model\":\"${model}\",\"keep_alive\":0}" > /dev/null 2>&1 || true
-}
-
-# Run the LLM judge against (model, prompt, output). Returns a JSON object
-# with `pass` and `reason`. Falls back to pass=false if the judge endpoint is
-# unreachable or returns malformed JSON — a missing judge must not silently
-# pass a broken response.
-#
-# The judge receives a single `output` field, not the response/thinking split.
-# Empirically, gemma3:12b-judge anchors on "response empty = fail" when given
-# both fields with a rule that thinking counts, and ignores the rule. Hiding
-# the field-name distinction eliminates that bias — the judge sees only the
-# generated text and decides on its merits.
-judge_response() {
-    local model="$1"
-    local prompt_text="$2"
-    local output_text="$3"
-
-    local judge_prompt
-    judge_prompt=$(jq -nc \
-        --arg model "$model" \
-        --arg prompt "$prompt_text" \
-        --arg output "$output_text" \
-        '{
-            role: "Decide whether the model output is meaningful for the prompt. A meaningful output addresses the prompt with coherent text in the right language and topic. Reject empty, garbled, repetitive nonsense, off-topic, or error-message output.",
-            rules: [
-                "Truncation at the token limit is fine if the visible text is coherent and on-topic.",
-                "Accept reasonable variations in phrasing.",
-                "An API-level error message in the output is FAIL."
-            ],
-            model_under_test: $model,
-            prompt: $prompt,
-            output: $output,
-            respond: {
-                format: "Respond with a single JSON object",
-                fields: {
-                    pass: "true if the output is meaningful and on-topic, false otherwise",
-                    reason: "Brief explanation"
-                }
-            }
-        }')
-
-    local judge_payload judge_raw verdict_text
-    judge_payload=$(jq -nc \
-        --arg model "$JUDGE_MODEL" \
-        --arg prompt "$judge_prompt" \
-        '{model:$model, prompt:$prompt, stream:false, format:"json", options:{temperature:0.1, num_predict:512}}')
-
-    judge_raw=$(curl -sf --max-time 300 "${JUDGE_HOST}/api/generate" -d "$judge_payload" 2>/dev/null || true)
-    if [ -z "$judge_raw" ]; then
-        echo '{"pass":false,"reason":"judge endpoint unreachable or timed out"}'
-        return
-    fi
-
-    verdict_text=$(echo "$judge_raw" | jq -r '.response // ""' 2>/dev/null)
-    if [ -z "$verdict_text" ] || ! echo "$verdict_text" | jq empty 2>/dev/null; then
-        echo '{"pass":false,"reason":"judge returned non-JSON response"}'
-        return
-    fi
-
-    # Normalize to {pass, reason}.
-    echo "$verdict_text" | jq -c '{pass: (.pass // false), reason: (.reason // "no reason given")}'
-}
-
-# Simple coherence check: either response or thinking must be non-empty after
-# trimming whitespace. Thinking models can produce coherent output entirely
-# in `.thinking` when num_predict caps generation before the final answer.
-# Returns 0 if pass, 1 if fail; writes "{pass, reason, source}" JSON to stdout.
-simple_check() {
-    local response_text="$1"
-    local thinking_text="${2:-}"
-    local r_trim t_trim
-    r_trim=$(echo -n "$response_text" | tr -d '[:space:]')
-    t_trim=$(echo -n "$thinking_text" | tr -d '[:space:]')
-    if [ -n "$r_trim" ]; then
-        echo '{"pass":true,"reason":"non-empty response","source":"response"}'
-        return 0
-    fi
-    if [ -n "$t_trim" ]; then
-        echo '{"pass":true,"reason":"non-empty thinking (response empty)","source":"thinking"}'
-        return 0
-    fi
-    echo '{"pass":false,"reason":"both response and thinking are empty/whitespace","source":"none"}'
-    return 1
 }
 
 if [ "$LLM_JUDGE" -eq 1 ]; then
@@ -304,23 +165,46 @@ for model in "${MODELS[@]}"; do
     fi
 
     echo "  Warming up & loading..." >&2
-    RESULT=$(bench_model "$model") || {
-        echo "  ERROR: Benchmark failed, skipping" >&2
+
+    # The helper does warmup → bench → unload. We snapshot GPU state mid-call
+    # via a background poll; simpler to just snapshot after the warmup (which
+    # response_capture does first) — but the helper's bench+unload sequence
+    # means by the time response_capture returns the model is already
+    # unloaded. To capture GPU info while loaded, do a one-shot ps lookup
+    # before invoking the helper, then call the helper.
+    #
+    # Approach: warm the model ourselves with a tiny prime, snapshot GPU
+    # state, then call response_capture (which warms again — harmless, the
+    # model is already loaded — and benches). The double-warm cost is
+    # negligible compared to the bench call itself.
+    curl -sf "${OLLAMA_HOST}/api/generate" \
+        -d "$(jq -nc --arg m "$model" --argjson ctx "$NUM_CTX" \
+            '{model:$m, prompt:"Hi", stream:false, options:{num_predict:1, num_ctx:$ctx}}')" \
+        > /dev/null 2>&1 || true
+    GPU_INFO_LOADED=$(get_gpu_info)
+    GPU_PCT=$(get_gpu_offload "$model")
+
+    RESULT=$(response_capture "$OLLAMA_HOST" "$model" "$PROMPT" "$NUM_PREDICT" "$NUM_CTX") || {
+        echo "  ERROR: response_capture failed, skipping" >&2
         FAILED_CHECKS=$((FAILED_CHECKS + 1))
         continue
     }
 
+    # Merge GPU info into the result (response_capture doesn't know about GPUs)
+    RESULT=$(echo "$RESULT" | jq \
+        --arg gpu_info "$GPU_INFO_LOADED" \
+        --argjson gpu_pct "${GPU_PCT:-0}" \
+        --argjson num_ctx "$NUM_CTX" \
+        '. + {gpu_offload_pct: $gpu_pct, num_ctx: $num_ctx, gpu_info: $gpu_info}')
+
     # Print per-model perf summary
-    GPU_PCT=$(echo "$RESULT" | jq -r '.gpu_offload_pct')
     IN_TOK=$(echo "$RESULT" | jq -r '.in_tokens')
     OUT_TOK=$(echo "$RESULT" | jq -r '.out_tokens')
     PROMPT_TPS=$(echo "$RESULT" | jq -r '.prompt_eval_tps')
     EVAL_TPS=$(echo "$RESULT" | jq -r '.eval_tps')
 
-    # Per-GPU VRAM while this model is loaded
-    GPU_LINE=$(echo "$RESULT" | jq -r '.gpu_info')
-    if [ -n "$GPU_LINE" ] && [ "$GPU_LINE" != "null" ]; then
-        echo "$GPU_LINE" | while IFS=', ' read -r idx name used total free; do
+    if [ -n "$GPU_INFO_LOADED" ] && [ "$GPU_INFO_LOADED" != "null" ]; then
+        echo "$GPU_INFO_LOADED" | while IFS=', ' read -r idx name used total free; do
             echo "  GPU ${idx}: ${used}/${total} MiB" >&2
         done
     fi
@@ -328,9 +212,7 @@ for model in "${MODELS[@]}"; do
     echo "  Prompt: ${PROMPT_TPS} tok/s | Generate: ${EVAL_TPS} tok/s" >&2
 
     # Output validation. Perf numbers without a coherence check are misleading
-    # — a model can output 128 tokens of garbage at 50 tok/s. Simple mode
-    # rejects empty/whitespace; dual also runs an LLM judge. Both consider
-    # `.thinking` alongside `.response` for thinking models.
+    # — a model can output 128 tokens of garbage at 50 tok/s.
     RESPONSE_TEXT=$(echo "$RESULT" | jq -r '.response // ""')
     THINKING_TEXT=$(echo "$RESULT" | jq -r '.thinking // ""')
     DONE_REASON=$(echo "$RESULT" | jq -r '.done_reason // ""')
@@ -350,14 +232,14 @@ for model in "${MODELS[@]}"; do
     LLM_PASS_BOOL='null'
     if [ "$LLM_JUDGE" -eq 1 ]; then
         if [ "$SIMPLE_PASS" = "true" ]; then
-            # Combine thinking + response into a single output blob. The judge
-            # sees one `output` field — no response/thinking distinction — so
-            # it cannot anchor on "response empty = fail" for thinking models.
+            # Combine thinking + response into a single `output` for the judge.
+            # The judge can't anchor on "response empty = fail" if the
+            # response/thinking distinction isn't surfaced to it.
             JUDGE_OUTPUT="${THINKING_TEXT}${THINKING_TEXT:+
 
 }${RESPONSE_TEXT}"
             echo "  Running LLM judge (${JUDGE_MODEL})..." >&2
-            LLM_VERDICT=$(judge_response "$model" "$PROMPT" "$JUDGE_OUTPUT")
+            LLM_VERDICT=$(judge_response "$JUDGE_HOST" "$JUDGE_MODEL" "$model" "$PROMPT" "$JUDGE_OUTPUT")
             LLM_PASS_BOOL=$(echo "$LLM_VERDICT" | jq -r '.pass')
             REASON=$(echo "$LLM_VERDICT" | jq -r '.reason')
             echo "  LLM judge: ${LLM_PASS_BOOL} — ${REASON}" >&2
@@ -427,7 +309,6 @@ GPU_NAME=""
 if [ "$(echo "$RESULTS" | jq 'length')" -gt 0 ]; then
     FIRST_GPU_INFO=$(echo "$RESULTS" | jq -r '.[0].gpu_info // ""')
     if [ -n "$FIRST_GPU_INFO" ] && [ "$FIRST_GPU_INFO" != "null" ]; then
-        # Parse with jq to handle GPU names with spaces (e.g., "Tesla K80")
         GPU_COUNT=$(echo "$FIRST_GPU_INFO" | grep -c .)
         GPU_NAME=$(echo "$FIRST_GPU_INFO" | head -1 | cut -d',' -f2 | sed 's/^ *//;s/ *$//')
         GPU_TOTAL=$(echo "$FIRST_GPU_INFO" | head -1 | cut -d',' -f4 | sed 's/^ *//;s/ *$//')
@@ -438,7 +319,6 @@ fi
 echo "=== Results ===" >&2
 echo "" >&2
 
-# Print GPU info header (constant across all models)
 if [ "$GPU_COUNT" -gt 0 ]; then
     GPU_LABELS=$(for i in $(seq 0 $((GPU_COUNT - 1))); do printf "GPU%d" "$i"; [ "$i" -lt $((GPU_COUNT - 1)) ] && printf ", " || true; done)
     echo "GPU: ${GPU_COUNT}x ${GPU_NAME} | VRAM: ${GPU_TOTAL} MiB each (${GPU_LABELS})" >&2
@@ -470,7 +350,6 @@ echo "$RESULTS" | jq -r '.[] |
     ((.check.overall_pass // false) | if . then "PASS" else "FAIL" end) as $check |
     "\(.model)|\($check)|\(.in_tokens)|\(.out_tokens)|\(.prompt_eval_tps)|\(.eval_tps)|\(.gpu_offload_pct)|\($vram)"
 ' | while IFS='|' read -r model check in_tok out_tok prompt_tps eval_tps gpu_pct vram_rest; do
-    # Build per-GPU used columns
     VRAM_COLS=""
     IFS='|' read -ra USED_VALS <<< "$vram_rest"
     for val in "${USED_VALS[@]}"; do
