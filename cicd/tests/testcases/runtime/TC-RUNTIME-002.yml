@@ -5,7 +5,9 @@ priority: 2
 timeout: 120000
 dependencies:
   - TC-RUNTIME-001
-goal: "Verify Tesla K80 GPU is detected by nvidia-smi and Ollama CUDA runtime"
+intent:
+  user_story: |
+    Verify Tesla K80 GPU is detected by nvidia-smi and Ollama CUDA runtime
 
 steps:
   - name: Check nvidia-smi inside container

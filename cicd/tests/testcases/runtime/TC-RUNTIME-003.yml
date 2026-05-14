@@ -5,7 +5,9 @@ priority: 3
 timeout: 60000
 dependencies:
   - TC-RUNTIME-001
-goal: "Verify Ollama server health check and API responsiveness"
+intent:
+  user_story: |
+    Verify Ollama server health check and API responsiveness
 
 steps:
   - name: Check container health status

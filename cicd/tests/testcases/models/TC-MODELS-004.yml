@@ -6,7 +6,9 @@ timeout: 900000
 dependencies: []
 testlink_id: ollama37-21
 issue: 30
-goal: "Validate qwen3.5:9b DeltaNet architecture runs on K80 compute 3.7"
+intent:
+  user_story: |
+    Validate qwen3.5:9b DeltaNet architecture runs on K80 compute 3.7
 
 steps:
   - name: Test inference

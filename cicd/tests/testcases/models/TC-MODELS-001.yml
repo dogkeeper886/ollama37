@@ -4,7 +4,9 @@ suite: models
 priority: 1
 timeout: 900000
 dependencies: []
-goal: "Validate gpt-oss:20b (~20B params) runs on K80 compute 3.7"
+intent:
+  user_story: |
+    Validate gpt-oss:20b (~20B params) runs on K80 compute 3.7
 
 steps:
   - name: Test inference

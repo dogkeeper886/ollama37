@@ -4,7 +4,9 @@ suite: build
 priority: 1
 timeout: 60000
 dependencies: []
-goal: "Verify builder Docker image contains required build tools (CUDA 11.4, GCC 10, Go)"
+intent:
+  user_story: |
+    Verify builder Docker image contains required build tools (CUDA 11.4, GCC 10, Go)
 
 steps:
   - name: Check builder image exists

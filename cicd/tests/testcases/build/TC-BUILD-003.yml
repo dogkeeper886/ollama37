@@ -6,7 +6,9 @@ timeout: 60000
 dependencies:
   - TC-BUILD-001
   - TC-BUILD-002
-goal: "Verify Docker image sizes are within expected ranges"
+intent:
+  user_story: |
+    Verify Docker image sizes are within expected ranges
 
 steps:
   - name: Check builder image size

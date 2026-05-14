@@ -6,7 +6,9 @@ timeout: 600000
 dependencies: []
 testlink_id: ollama37-29
 issue: 55
-goal: "Validate gemma3:4b runs on K80 compute 3.7 (single GPU)"
+intent:
+  user_story: |
+    Validate gemma3:4b runs on K80 compute 3.7 (single GPU)
 
 steps:
   - name: Test inference

@@ -7,7 +7,9 @@ dependencies:
   - TC-RUNTIME-001
 testlink_id: ""
 issue: "130"
-goal: "Verify GET /api/metrics returns HTTP 200 and well-formed JSON conforming to the documented schema"
+intent:
+  user_story: |
+    Verify GET /api/metrics returns HTTP 200 and well-formed JSON conforming to the documented schema
 
 steps:
   - name: Endpoint returns HTTP 200
