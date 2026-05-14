@@ -172,38 +172,40 @@ bench_model() {
         -d "{\"model\":\"${model}\",\"keep_alive\":0}" > /dev/null 2>&1 || true
 }
 
-# Run the LLM judge against (model, prompt, response, thinking). Returns a
-# JSON object with `pass` and `reason`. Falls back to pass=false if the judge
-# endpoint is unreachable or returns malformed JSON — a missing judge must
-# not silently pass a broken response.
+# Run the LLM judge against (model, prompt, output). Returns a JSON object
+# with `pass` and `reason`. Falls back to pass=false if the judge endpoint is
+# unreachable or returns malformed JSON — a missing judge must not silently
+# pass a broken response.
+#
+# The judge receives a single `output` field, not the response/thinking split.
+# Empirically, gemma3:12b-judge anchors on "response empty = fail" when given
+# both fields with a rule that thinking counts, and ignores the rule. Hiding
+# the field-name distinction eliminates that bias — the judge sees only the
+# generated text and decides on its merits.
 judge_response() {
     local model="$1"
     local prompt_text="$2"
-    local response_text="$3"
-    local thinking_text="${4:-}"
+    local output_text="$3"
 
     local judge_prompt
     judge_prompt=$(jq -nc \
         --arg model "$model" \
         --arg prompt "$prompt_text" \
-        --arg response "$response_text" \
-        --arg thinking "$thinking_text" \
+        --arg output "$output_text" \
         '{
             role: "Decide whether the model output is meaningful for the prompt. A meaningful output addresses the prompt with coherent text in the right language and topic. Reject empty, garbled, repetitive nonsense, off-topic, or error-message output.",
             rules: [
-                "Thinking models emit two fields: `thinking` (internal reasoning) and `response` (final answer). Either is acceptable evidence of meaningful output — judge them together.",
-                "Truncation at the token limit is fine if the visible text is coherent and on-topic. Many models exhaust the budget inside `thinking` and leave `response` empty; that is not a failure.",
+                "Truncation at the token limit is fine if the visible text is coherent and on-topic.",
                 "Accept reasonable variations in phrasing.",
-                "An API-level error message in either field is FAIL."
+                "An API-level error message in the output is FAIL."
             ],
             model_under_test: $model,
             prompt: $prompt,
-            response: $response,
-            thinking: $thinking,
+            output: $output,
             respond: {
                 format: "Respond with a single JSON object",
                 fields: {
-                    pass: "true if the output is meaningful and on-topic (consider response and thinking together), false otherwise",
+                    pass: "true if the output is meaningful and on-topic, false otherwise",
                     reason: "Brief explanation"
                 }
             }
@@ -348,8 +350,14 @@ for model in "${MODELS[@]}"; do
     LLM_PASS_BOOL='null'
     if [ "$LLM_JUDGE" -eq 1 ]; then
         if [ "$SIMPLE_PASS" = "true" ]; then
+            # Combine thinking + response into a single output blob. The judge
+            # sees one `output` field — no response/thinking distinction — so
+            # it cannot anchor on "response empty = fail" for thinking models.
+            JUDGE_OUTPUT="${THINKING_TEXT}${THINKING_TEXT:+
+
+}${RESPONSE_TEXT}"
             echo "  Running LLM judge (${JUDGE_MODEL})..." >&2
-            LLM_VERDICT=$(judge_response "$model" "$PROMPT" "$RESPONSE_TEXT" "$THINKING_TEXT")
+            LLM_VERDICT=$(judge_response "$model" "$PROMPT" "$JUDGE_OUTPUT")
             LLM_PASS_BOOL=$(echo "$LLM_VERDICT" | jq -r '.pass')
             REASON=$(echo "$LLM_VERDICT" | jq -r '.reason')
             echo "  LLM judge: ${LLM_PASS_BOOL} — ${REASON}" >&2
