@@ -6,7 +6,9 @@ timeout: 900000
 dependencies: []
 testlink_id: ollama37-27
 issue: 55
-goal: "Validate gemma4:e4b runs on K80 compute 3.7 (single GPU)"
+intent:
+  user_story: |
+    Validate gemma4:e4b runs on K80 compute 3.7 (single GPU)
 
 steps:
   - name: Test inference

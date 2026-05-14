@@ -5,7 +5,9 @@ priority: 2
 timeout: 1800000
 dependencies:
   - TC-BUILD-001
-goal: "Build the ollama37 runtime Docker image from local source without errors"
+intent:
+  user_story: |
+    Build the ollama37 runtime Docker image from local source without errors
 
 steps:
   - name: Navigate and build runtime image

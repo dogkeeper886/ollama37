@@ -6,7 +6,9 @@ timeout: 600000
 dependencies: []
 testlink_id: ollama37-26
 issue: 39
-goal: "Validate FunctionGemma generates valid tool calls on K80 compute 3.7"
+intent:
+  user_story: |
+    Validate FunctionGemma generates valid tool calls on K80 compute 3.7
 
 steps:
   - name: Test tool calling via chat API

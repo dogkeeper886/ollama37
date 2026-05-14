@@ -27,6 +27,20 @@ export interface TestStep {
 }
 
 /**
+ * Test design intent — the canonical record of WHY this test exists.
+ * Read by humans / AI agents to understand purpose; not consumed by the
+ * runner for execution decisions. Replaces TestLink as the design authority.
+ */
+export interface Intent {
+  /** User story or imperative goal: what value this test delivers. */
+  userStory: string;
+  /** What must be true for this test to be considered correct (human-readable). */
+  acceptance?: string[];
+  /** Free-form notes: prerequisites, gotchas, acceptable warnings. */
+  notes?: string;
+}
+
+/**
  * A complete test case definition.
  */
 export interface TestCase {
@@ -42,11 +56,13 @@ export interface TestCase {
   timeout: number;
   /** Test IDs that must pass before this test runs */
   dependencies: string[];
-  /** TestLink external ID (e.g., ollama37-21) */
+  /** TestLink external ID (e.g., ollama37-21) — deprecated, see #161 */
   testlinkId?: string;
   /** GitHub issue number this test traces to */
   issue?: number;
-  /** One-line test objective for LLM judge context */
+  /** Design intent for this test (user story + acceptance + notes). */
+  intent?: Intent;
+  /** One-line objective, retained for LLM judge context and backwards compat with pre-intent YAMLs. */
   goal?: string;
   /** Test steps to execute */
   steps: TestStep[];

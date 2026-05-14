@@ -7,7 +7,7 @@ import { readFileSync } from 'fs';
 import { glob } from 'glob';
 import yaml from 'js-yaml';
 import path from 'path';
-import { TestCase, TestStep } from './types.js';
+import { Intent, TestCase, TestStep } from './types.js';
 
 /**
  * Loads and manages test case definitions from YAML files.
@@ -219,6 +219,36 @@ export class TestLoader {
       });
     }
 
+    // Parse intent block. Warn (not fail) if missing so migration can be
+    // incremental — pre-intent YAMLs still load via the legacy goal: field.
+    let intent: Intent | undefined;
+    if (raw.intent && typeof raw.intent === 'object' && !Array.isArray(raw.intent)) {
+      const rawIntent = raw.intent as Record<string, unknown>;
+      const userStory =
+        typeof rawIntent.user_story === 'string' ? rawIntent.user_story : '';
+      if (!userStory) {
+        console.warn(
+          `[WARN] ${filePath}: intent block present but missing 'user_story' field`
+        );
+      } else {
+        intent = {
+          userStory,
+          acceptance: Array.isArray(rawIntent.acceptance)
+            ? rawIntent.acceptance.filter((x): x is string => typeof x === 'string')
+            : undefined,
+          notes: typeof rawIntent.notes === 'string' ? rawIntent.notes : undefined,
+        };
+      }
+    } else if (raw.intent === undefined) {
+      // Only warn if the test also lacks goal: (so pre-intent YAMLs that still
+      // have goal: are quietly tolerated during the #156 migration window).
+      if (typeof raw.goal !== 'string') {
+        console.warn(
+          `[WARN] ${filePath}: missing 'intent:' block (and no legacy goal:) — see #156`
+        );
+      }
+    }
+
     return {
       id: raw.id as string,
       name: raw.name as string,
@@ -228,6 +258,7 @@ export class TestLoader {
       dependencies: Array.isArray(raw.dependencies) ? raw.dependencies : [],
       testlinkId: typeof raw.testlink_id === 'string' ? raw.testlink_id : undefined,
       issue: typeof raw.issue === 'number' ? raw.issue : undefined,
+      intent,
       goal: typeof raw.goal === 'string' ? raw.goal : undefined,
       steps,
       criteria: typeof raw.criteria === 'string' ? raw.criteria : '',

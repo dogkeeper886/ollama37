@@ -4,7 +4,9 @@ suite: models
 priority: 2
 timeout: 900000
 dependencies: []
-goal: "Validate gemma3:27b (~27B params) runs on K80 compute 3.7"
+intent:
+  user_story: |
+    Validate gemma3:27b (~27B params) runs on K80 compute 3.7
 
 steps:
   - name: Test inference

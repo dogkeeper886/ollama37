@@ -4,7 +4,9 @@ suite: inference
 priority: 1
 timeout: 600000
 dependencies: []
-goal: "Pull gemma3:4b test model into the container"
+intent:
+  user_story: |
+    Pull gemma3:4b test model into the container
 
 steps:
   - name: Pull test model

@@ -6,7 +6,9 @@ timeout: 1200000
 dependencies: []
 testlink_id: ollama37-30
 issue: 55
-goal: "Validate deepseek-r1:32b runs on K80 compute 3.7 (multi-GPU)"
+intent:
+  user_story: |
+    Validate deepseek-r1:32b runs on K80 compute 3.7 (multi-GPU)
 
 steps:
   - name: Test inference

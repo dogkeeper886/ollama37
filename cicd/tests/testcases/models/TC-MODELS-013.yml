@@ -6,7 +6,9 @@ timeout: 600000
 dependencies: []
 testlink_id: ""
 issue: ""
-goal: "Validate ministral-3:3b runs on K80 compute 3.7 (single GPU)"
+intent:
+  user_story: |
+    Validate ministral-3:3b runs on K80 compute 3.7 (single GPU)
 
 steps:
   - name: Test inference

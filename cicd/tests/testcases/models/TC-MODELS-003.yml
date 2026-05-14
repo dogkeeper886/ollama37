@@ -4,7 +4,9 @@ suite: models
 priority: 3
 timeout: 900000
 dependencies: []
-goal: "Validate deepseek-r1:14b (~14B params) runs on K80 compute 3.7"
+intent:
+  user_story: |
+    Validate deepseek-r1:14b (~14B params) runs on K80 compute 3.7
 
 steps:
   - name: Test inference

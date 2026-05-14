@@ -5,7 +5,9 @@ priority: 2
 timeout: 300000
 dependencies:
   - TC-INFERENCE-001
-goal: "Test inference via Ollama REST API and verify GPU memory allocation"
+intent:
+  user_story: |
+    Test inference via Ollama REST API and verify GPU memory allocation
 
 steps:
   - name: Test generate endpoint
