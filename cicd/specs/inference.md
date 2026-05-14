@@ -1,12 +1,10 @@
 # Inference Tests
 
-Exported from TestLink project: **ollama37**
 
 ---
 
 ## TC-INFERENCE-001: Model Pull
 
-**External ID:** ollama37-14
 **Importance:** High
 **Execution Type:** Automated
 
@@ -24,7 +22,6 @@ Pull the gemma3:4b model for testing inside the container.
 
 ## TC-INFERENCE-002: API Inference Test
 
-**External ID:** ollama37-15
 **Importance:** High
 **Execution Type:** Automated
 

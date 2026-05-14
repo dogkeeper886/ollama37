@@ -4,7 +4,6 @@ suite: models
 priority: 2
 timeout: 600000
 dependencies: []
-testlink_id: ""
 issue: ""
 intent:
   user_story: |

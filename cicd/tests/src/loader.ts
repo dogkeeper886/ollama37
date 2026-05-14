@@ -256,7 +256,6 @@ export class TestLoader {
       priority: typeof raw.priority === 'number' ? raw.priority : 1,
       timeout: typeof raw.timeout === 'number' ? raw.timeout : 60000,
       dependencies: Array.isArray(raw.dependencies) ? raw.dependencies : [],
-      testlinkId: typeof raw.testlink_id === 'string' ? raw.testlink_id : undefined,
       issue: typeof raw.issue === 'number' ? raw.issue : undefined,
       intent,
       goal: typeof raw.goal === 'string' ? raw.goal : undefined,

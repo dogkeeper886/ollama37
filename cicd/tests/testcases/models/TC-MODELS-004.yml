@@ -4,7 +4,6 @@ suite: models
 priority: 4
 timeout: 900000
 dependencies: []
-testlink_id: ollama37-21
 issue: 30
 intent:
   user_story: |
