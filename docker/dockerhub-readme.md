@@ -33,7 +33,7 @@ Run modern LLMs on NVIDIA Tesla K80 and other CUDA Compute Capability 3.7 GPUs. 
 ### Docker (Recommended)
 ```bash
 # Pull and run
-docker pull dogkeeper886/ollama37:v2.0.3
+docker pull dogkeeper886/ollama37:v2.1.0
 docker run --runtime=nvidia --gpus all -p 11434:11434 dogkeeper886/ollama37
 ```
 
