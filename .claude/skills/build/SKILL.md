@@ -13,6 +13,14 @@ Build ollama37 from source — native binary or Docker runtime image. Use `/buil
 - Building or rebuilding the Docker runtime container
 - Verifying code changes that affect the compiled binary or CUDA libraries
 
+## Preflight — verify the toolchain first (do this before any build command)
+Don't assume a local build environment exists; check it at runtime:
+- `which go` / `which nvcc` (and `gcc`)
+- **Present** → build locally (native or docker, below).
+- **Absent** → build via `/ci` (`test-build.yml`) on the K80 runner; do not attempt a local `go build`/`make`.
+
+This is a runtime check, not a fixed verdict — the box may or may not have the toolchain on any given day. Check, then choose.
+
 ## Environment
 - GCC version: 10.5
 - CUDA version: 11.4.4

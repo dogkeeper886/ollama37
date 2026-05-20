@@ -206,6 +206,7 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 
 ### build
 - **Trigger**: Compiling from source, building Docker images, verifying compiled changes
+- **Preflight**: Verify the toolchain exists first (`which go` / `which nvcc`) — don't assume it. Present → build locally; absent → build via `/ci` (`test-build.yml`). A runtime check, not a baked "no local env" verdict.
 
 ### debug
 - **Trigger**: Server startup failures, GPU detection issues, CUBLAS errors, runtime problems
