@@ -218,8 +218,8 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 
 ### model-support
 - **Trigger**: A request to support / run / load a new model — **before** `/plan`
-- **Rule 0 (verify before doubt)**: Never reject a model as "fabricated" because it is absent from training data or the source looks unfamiliar — a post-cutoff model *always* looks new. Web-search to confirm it exists **first**.
-- **Rule**: Then identity-check. Read HF `config.json` (`architectures`/`model_type`), grep our `model.Register`, compare upstream Ollama. Classify as already-supported / variant / renamed-stripped / genuinely-new. Only genuinely-new goes to `/plan`; the rest are a smoke test or a small restore/extend issue.
+- **Rule 0 (verify before doubt)**: Earn every "no" with evidence. Two kinds of doubt: (1) *is it real* — a post-cutoff model always looks unfamiliar; web-search before doubting; (2) *is it reachable* — "MLX/can't load/wrong quant/out of scope" are claims, not facts; "can't load directly" ≠ "can't be made to work" (trace conversion paths like MLX→GGUF before rejecting). Never dismiss any part at first glance.
+- **Rule**: Then identity-check. Read HF `config.json` (`architectures`/`model_type`), grep our `model.Register`, compare upstream Ollama. Classify as already-supported / variant / renamed-stripped / **reachable-via-conversion** / genuinely-new. Only genuinely-new goes to `/plan`; conversion cases get a trace; the rest are a smoke test or a small restore/extend issue.
 
 ### plan
 - **Trigger**: User describes a feature, enhancement, removal, or bug to plan

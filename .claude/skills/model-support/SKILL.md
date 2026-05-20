@@ -15,12 +15,20 @@ something already in the tree.
 - Before `/plan` would create implementation issues for model work
 
 ## Rule 0 — Verify before you doubt (the most important rule)
-**Never reject, downgrade, or call a model request "fabricated" because it is missing
-from your training data or because the pasted source has odd-looking lines.** Your
-knowledge has a cutoff; "I've never heard of it" is not evidence it does not exist. A
-new model released after the cutoff will *always* look unfamiliar — that is expected,
-not suspicious. The first action for any model request is a web search to confirm it
-exists. Only after confirming do you proceed to the identity check below.
+**Never reject, downgrade, dismiss, or call any part of a model request "fabricated",
+"unreadable", "unsupported", or "out of scope" without tracing it first.** This applies
+to two kinds of doubt:
+
+1. **Doubt that it's real** — your knowledge has a cutoff; "I've never heard of it" is
+   not evidence it does not exist. A model released after the cutoff *always* looks
+   unfamiliar. Web-search to confirm it exists before doubting.
+2. **Doubt that it's reachable** — "MLX/can't load/wrong quant/won't fit" are *claims*,
+   not facts. Trace them. "Can't load **directly**" is not "can't be made to work" — a
+   conversion or adaptation path (e.g. MLX→safetensors→GGUF, requantize) may exist. A
+   dismissal is only valid once you've traced the path and shown it dead-ends.
+
+Every "no" in this skill must be earned by evidence, never given at first glance. Only
+after Rule 0 do you proceed to the identity check.
 
 ## Why this exists
 "Support Qwen3.6" (#170) was first met with skepticism — it was flagged as "likely
@@ -64,8 +72,12 @@ REQUEST: "support / run model X"
             ├─ Already supported ──→ smoke test only (/test)
             ├─ Variant (MoE/size) ─→ one small "extend" issue
             ├─ Renamed/stripped ───→ one small "restore" issue
+            ├─ Reachable via conv. → trace conversion path (MLX→GGUF, requant) — never drop
             └─ Genuinely new ──────→ full plan via /plan
 ```
+
+Note: the gate before CLASSIFY rejects a path **only after tracing** it. "Out of scope"
+is a traced conclusion, never a first-glance label (see Rule 0).
 
 ## The identity check (after Rule 0 confirms it exists)
 
@@ -96,13 +108,22 @@ REQUEST: "support / run model X"
 | Same `model_type`/arch already registered and previously run | **Already supported** | Smoke test only (`/test`); no implementation issues |
 | Sibling variant (MoE/size) of a registered arch | **Variant** | Restore/extend dispatch entries; one small issue |
 | Arch exists upstream but our fork renamed/stripped it | **Renamed/stripped** | Diff our fork vs upstream, restore the dropped wiring; small issue |
+| Not directly loadable but the arch is one we support (wrong format/quant) | **Reachable via conversion** | Trace the conversion path (e.g. MLX→GGUF, requantize); do NOT drop on sight |
 | No matching arch in our tree or upstream | **Genuinely new** | Full implementation plan via `/plan` |
 
-## K80 reality gate (always, before committing to a variant)
-- Weights at Q4 + KV cache vs **24 GB per K80**; large MoE needs multiple boards.
-- No FP8 / FP4 / BF16 hardware (compute capability 3.7) — those quants dequant to FP32.
-- **MLX format is unreadable** — the converter only takes safetensors / pytorch.
-- 256K context is impractical on K80.
+## K80 reality gate (questions to investigate — not verdicts to apply)
+These are **questions**, each answered with evidence (a traced path), never a reflexive
+"no". A constraint only rules a variant out *after* you've traced it and shown no path.
+- **Fit**: weights at Q4 + KV cache vs 24 GB/board — does it fit, or split across boards?
+- **Quant**: is the quant in our GGML type enum? If not (e.g. FP8/nvfp4), can it be
+  requantized from a higher-precision source (bf16) to one we support?
+- **Format**: is it directly loadable, or **convertible**? MLX is not loaded directly,
+  but trace MLX→safetensors→GGUF before rejecting — the underlying arch may be one we
+  already support, making the only gap a conversion step.
+- **Context**: is the needed context length practical, or can it run at a reduced ctx?
+
+Document the traced answer. "Out of scope" is a conclusion you write *after* the trace,
+with the dead-end shown — not a label you apply on sight.
 
 See `docs/traces/qwen36-feasibility.md` and `docs/traces/qwen36-load-path.md` for a
 worked example of this whole flow.

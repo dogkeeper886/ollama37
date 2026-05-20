@@ -19,10 +19,12 @@ already in the tree. Verify, then identity-check, then route to the (usually sma
 
     /model-support qwen3.6
         │
-        ├─► Step 0: VERIFY IT EXISTS — do not doubt it for being new
-        │   - A model unknown to your training data is expected, not suspicious
-        │   - WebSearch the model name; confirm HF repo / Ollama library entry
-        │   - Never reject as "fabricated" before this search
+        ├─► Step 0: VERIFY BEFORE ANY DOUBT (existence AND reachability)
+        │   - Exists? A model unknown to training data is expected, not suspicious.
+        │     WebSearch the name; confirm HF repo / Ollama library entry.
+        │   - Reachable? "MLX/can't load/wrong quant/won't fit" are CLAIMS, not facts.
+        │     "Can't load directly" ≠ "can't be made to work" (conversion may exist).
+        │   - Never reject as "fabricated" or "out of scope" before tracing it.
         │
         ├─► Step 1: Read the REAL architecture (not the marketing name)
         │   curl -sL "https://huggingface.co/<org>/<model>/raw/main/config.json" \
@@ -41,15 +43,21 @@ already in the tree. Verify, then identity-check, then route to the (usually sma
         │     | base64 -d | grep "model.Register"
         │   - Compare upstream's registered arch strings + dispatch lists to ours
         │
-        ├─► Step 4: K80 reality gate
-        │   - Weights @ Q4 + KV vs 24 GB/board; MLX unreadable; no FP8/FP4/BF16 HW;
-        │     256K context impractical (compute capability 3.7)
+        ├─► Step 4: K80 reality gate — QUESTIONS to trace, not verdicts to apply
+        │   - Fit: weights @ Q4 + KV vs 24 GB/board (fit or split?)
+        │   - Quant: in our GGML enum? if not, requantizable from bf16 source?
+        │   - Format: directly loadable, or CONVERTIBLE? (MLX→safetensors→GGUF — trace
+        │     before rejecting; the arch underneath may already be supported)
+        │   - Context: practical, or runnable at reduced ctx?
+        │   - "Out of scope" is written only AFTER a trace shows a dead-end
         │
         ├─► Step 5: Classify + route
         │   ┌────────────────────────────────────────────┬───────────────────────────┐
         │   │ Already supported (arch registered + run)   │ Smoke test only (/test)   │
         │   │ Variant (MoE/size sibling of a reg. arch)   │ One small "extend" issue  │
         │   │ Renamed/stripped from upstream              │ One small "restore" issue │
+        │   │ Reachable via conversion (fmt/quant gap,    │ Trace conversion path;    │
+        │   │   arch already supported)                   │ never drop on sight       │
         │   │ Genuinely new arch (no match anywhere)      │ Full plan via /plan       │
         │   └────────────────────────────────────────────┴───────────────────────────┘
         │
