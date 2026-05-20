@@ -250,7 +250,8 @@ func (kv KV) OllamaEngineRequired() bool {
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
-		"qwen35",
+		"qwen35", "qwen35moe",
+		"qwen3next",
 	}, kv.Architecture())
 }
 
@@ -890,7 +891,7 @@ func (f GGML) SupportsFlashAttention() bool {
 
 	// qwen35 is hybrid (DeltaNet + attention) and needs the OllamaEngine;
 	// flash attention is handled via SupportsFlashAttentionInNewEngine instead.
-	if slices.Contains([]string{"gemma2", "qwen35"}, arch) {
+	if slices.Contains([]string{"gemma2", "qwen35", "qwen35moe", "qwen3next"}, arch) {
 		return false
 	}
 
@@ -940,7 +941,8 @@ func (f GGML) FlashAttention() bool {
 		"gemma3",
 		"gptoss", "gpt-oss",
 		"qwen3", "qwen3moe",
-		"qwen35",
+		"qwen35", "qwen35moe",
+		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
 }
