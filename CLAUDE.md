@@ -102,7 +102,7 @@ The AI agent follows this state machine for all work. **Every state transition u
 
 | From | To | Condition |
 |------|----|-----------|
-| REQUEST → PLAN | User describes work | Always |
+| REQUEST → PLAN | User describes work | Always — **but** if the request is to support/run/load a model, run `/model-support` first; only a **genuinely-new architecture** proceeds to a full `/plan`. Already-supported / variant / renamed-stripped classifications skip to a smoke test or a single small issue. |
 | PLAN → APPROVAL | Issues created | Always — never skip user approval |
 | APPROVAL → IMPLEMENTING | User says "yes" / "go" / "start" | User must explicitly approve |
 | IMPLEMENTING → TESTING | Code compiles, no obvious errors | Load `build` skill, verify |
@@ -216,8 +216,14 @@ Extracted triggers and key rules from each skill. Use these to recognize when to
 ### ci
 - **Trigger**: Remote builds/tests, GitHub Actions, pre-merge verification
 
+### model-support
+- **Trigger**: A request to support / run / load a new model — **before** `/plan`
+- **Rule 0 (verify before doubt)**: Earn every "no" with evidence. Two kinds of doubt: (1) *is it real* — a post-cutoff model always looks unfamiliar; web-search before doubting; (2) *is it reachable* — "MLX/can't load/wrong quant/out of scope" are claims, not facts; "can't load directly" ≠ "can't be made to work" (trace conversion paths like MLX→GGUF before rejecting). Never dismiss any part at first glance.
+- **Rule**: Then identity-check. Read HF `config.json` (`architectures`/`model_type`), grep our `model.Register`, compare upstream Ollama. Classify as already-supported / variant / renamed-stripped / **reachable-via-conversion** / genuinely-new. Only genuinely-new goes to `/plan`; conversion cases get a trace; the rest are a smoke test or a small restore/extend issue.
+
 ### plan
 - **Trigger**: User describes a feature, enhancement, removal, or bug to plan
+- **Note**: For model-support requests, run `/model-support` first — most "new model" asks are not new architectures.
 
 ### implement
 - **Trigger**: Picking up a GitHub Issue to start work (after user approval)
@@ -324,10 +330,10 @@ When creating or updating skills and commands, follow the format guides in `.cla
 **Design principle**: Skills define *when* and *what*. Commands define *how* (invoked via `/slash`). Keep executable content in commands, not skills.
 
 ### Skill files (`.claude/skills/<name>/SKILL.md`)
-`build`, `debug`, `ci`, `test`, `git-flow`, `plan`, `implement`, `add-test`, `test-workflow-pattern`, `trace`, `instrument`, `profile`, `annotate`, `script-review`, `lint-ci`
+`build`, `debug`, `ci`, `test`, `git-flow`, `model-support`, `plan`, `implement`, `add-test`, `test-workflow-pattern`, `trace`, `instrument`, `profile`, `annotate`, `script-review`, `lint-ci`
 
 ### Slash commands (`.claude/commands/<category>/`)
-- **dev-workflow/**: `/plan`, `/implement`
+- **dev-workflow/**: `/model-support`, `/plan`, `/implement`
 - **build-test/**: `/build`, `/debug`, `/test`, `/ci`, `/add-test`, `/test-workflow`
 - **code-analysis/**: `/trace`, `/instrument`, `/profile`, `/annotate`
 - **project/**: `/script-review`
