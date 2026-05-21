@@ -47,14 +47,10 @@ type GPUMetrics struct {
 	VRAMUsed        uint64 `json:"vram_used,omitempty"`
 	VRAMAccounted   uint64 `json:"vram_accounted,omitempty"`
 	VRAMUnaccounted uint64 `json:"vram_unaccounted,omitempty"`
-	// Labeled components of the unaccounted memory (#98), in bytes:
-	// VRAMContext = CUDA primary context + driver/kernel baseline,
-	// VRAMCublas = cuBLAS GEMM workspace,
-	// VRAMSlack = remainder (allocator pool slack / other), = unaccounted - context - cublas.
-	VRAMContext uint64 `json:"vram_context,omitempty"`
-	VRAMCublas  uint64 `json:"vram_cublas,omitempty"`
-	VRAMSlack   uint64 `json:"vram_slack,omitempty"`
 	// HasModelLayers is true when a loaded model placed layers on this device.
+	// The labeled components of the unaccounted memory (context, cuBLAS) are
+	// reported per model in ModelMetrics.VRAMBreakdown (#98), since they are
+	// only measurable in the model-runner process.
 	HasModelLayers bool `json:"has_model_layers"`
 	// Ghost flags a device carrying physical usage above idle while holding no
 	// model layers — the signature of the 93 MiB ghost allocation (#98/#138)
@@ -146,8 +142,6 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			VRAMFree:    d.FreeMemory,
 			ComputeCap:  compute,
 			LibraryPath: libPath,
-			VRAMContext: d.ContextMemory,
-			VRAMCublas:  d.CublasMemory,
 		})
 	}
 
@@ -202,10 +196,6 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 		g.VRAMAccounted = accountedByGPU[g.ID]
 		if g.VRAMUsed > g.VRAMAccounted {
 			g.VRAMUnaccounted = g.VRAMUsed - g.VRAMAccounted
-		}
-		// Slack = unaccounted minus the labeled CUDA context + cuBLAS components.
-		if labeled := g.VRAMContext + g.VRAMCublas; g.VRAMUnaccounted > labeled {
-			g.VRAMSlack = g.VRAMUnaccounted - labeled
 		}
 		g.HasModelLayers = layersByGPU[g.ID]
 		if !g.HasModelLayers && g.VRAMUsed > idleBaselineBytes {

@@ -753,8 +753,6 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 		C.ggml_backend_dev_memory(dev, &props.memory_free, &props.memory_total)
 		info.TotalMemory = (uint64)(props.memory_total)
 		info.FreeMemory = (uint64)(props.memory_free)
-		info.ContextMemory = (uint64)(props.context_memory)
-		info.CublasMemory = (uint64)(props.cublas_memory)
 
 		deviceInfos = append(deviceInfos, info)
 	}
