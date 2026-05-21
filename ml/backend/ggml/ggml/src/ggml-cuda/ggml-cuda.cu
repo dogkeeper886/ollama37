@@ -95,6 +95,10 @@ void ggml_cuda_error(const char * stmt, const char * func, const char * file, in
 
 // this is faster on Windows
 // probably because the Windows CUDA libraries forget to make this check before invoking the drivers
+// ollama (#98): cached per-device labels for otherwise-unaccounted VRAM (bytes).
+size_t g_memlabel_context_bytes[GGML_CUDA_MAX_DEVICES] = {0};
+size_t g_memlabel_cublas_bytes[GGML_CUDA_MAX_DEVICES]  = {0};
+
 void ggml_cuda_set_device(int device) {
     int current_device;
     CUDA_CHECK(cudaGetDevice(&current_device));
@@ -114,6 +118,7 @@ void ggml_cuda_set_device(int device) {
         ctx_logged[device] = true;
         size_t free_b = 0, total_b = 0;
         if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) {
+            g_memlabel_context_bytes[device] = total_b - free_b;
             GGML_LOG_DEBUG("memlabel: device %d CUDA primary context+baseline = %zu MiB\n",
                            device, (total_b - free_b) / (1024 * 1024));
         }
@@ -3707,6 +3712,16 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
     // Memory reporting is disabled to avoid allocation of a CUDA primary context (~300 MB per device).
     // If you need the memory data, call ggml_backend_dev_memory() explicitly.
     props->memory_total = props->memory_free = 0;
+
+    // ollama (#98): report cached allocation labels (no CUDA call here, so this
+    // does not create a context). 0 until the device has been activated.
+    if (ctx->device >= 0 && ctx->device < GGML_CUDA_MAX_DEVICES) {
+        props->context_memory = g_memlabel_context_bytes[ctx->device];
+        props->cublas_memory  = g_memlabel_cublas_bytes[ctx->device];
+    } else {
+        props->context_memory = 0;
+        props->cublas_memory  = 0;
+    }
 
 #if defined(GGML_USE_HIP)
     int cc = ggml_cuda_info().devices[ctx->device].cc - GGML_CUDA_CC_OFFSET_AMD;

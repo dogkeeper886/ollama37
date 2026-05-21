@@ -272,6 +272,12 @@ type DeviceInfo struct {
 	// FreeMemory is the amount of memory currently available on the device for loading models
 	FreeMemory uint64 `json:"free_memory,omitempty"`
 
+	// ContextMemory and CublasMemory label otherwise-unaccounted VRAM (#98):
+	// the CUDA primary context + driver/kernel baseline, and the cuBLAS GEMM
+	// workspace. 0 until the device has been activated / used for a matmul.
+	ContextMemory uint64 `json:"context_memory,omitempty"`
+	CublasMemory  uint64 `json:"cublas_memory,omitempty"`
+
 	// ComputeMajor is the major version of capabilities of the device
 	// if unsupported by the backend, -1 will be returned
 	ComputeMajor int

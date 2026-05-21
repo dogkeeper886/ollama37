@@ -884,6 +884,12 @@ struct ggml_cuda_device_info {
 const ggml_cuda_device_info & ggml_cuda_info();
 
 void ggml_cuda_set_device(int device);
+
+// ollama (#98): cached per-device labels for otherwise-unaccounted VRAM, in
+// bytes. Filled lazily at first device activation / first cuBLAS handle creation
+// so device props can report them without creating a CUDA context.
+extern size_t g_memlabel_context_bytes[GGML_CUDA_MAX_DEVICES];
+extern size_t g_memlabel_cublas_bytes[GGML_CUDA_MAX_DEVICES];
 int ggml_cuda_get_device();
 
 struct ggml_cuda_pool {
@@ -1031,6 +1037,9 @@ struct ggml_backend_cuda_context {
             CUBLAS_CHECK(cublasCreate(&cublas_handles[device]));
             CUBLAS_CHECK(cublasSetMathMode(cublas_handles[device], CUBLAS_TF32_TENSOR_OP_MATH));
             cudaMemGetInfo(&free_after, &total_b);
+            if (device >= 0 && device < GGML_CUDA_MAX_DEVICES && free_before > free_after) {
+                g_memlabel_cublas_bytes[device] = free_before - free_after;
+            }
             GGML_LOG_DEBUG("memlabel: device %d cuBLAS workspace = %zu MiB\n",
                            device, (free_before - free_after) / (1024 * 1024));
         }
