@@ -106,6 +106,10 @@ type Backend struct {
 	// requiredMemory is the cumulative memory allocations needed by the backend
 	requiredMemory *ml.BackendMemory
 
+	// gpuDevices holds the GPU device handles parallel to requiredMemory.GPUs,
+	// so per-device allocation labels (#98) can be read at report time.
+	gpuDevices []C.ggml_backend_dev_t
+
 	// btDeviceMemory maps from a buffer type to the memory allocations associated with that device
 	btDeviceMemory map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory
 
@@ -429,6 +433,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		sched:             sched,
 		schedBackends:     schedBackends,
 		schedBufts:        schedBufts,
+		gpuDevices:        gpus,
 		input:             deviceBufferTypes[input.d],
 		output:            output.d,
 		layers: func() map[int]layerDevice {
@@ -646,6 +651,17 @@ nextDevice:
 }
 
 func (b *Backend) BackendMemory() ml.BackendMemory {
+	// Enrich per-GPU allocation labels (#98) at report time — by now the CUDA
+	// context and cuBLAS workspace exist, and get_props reads cached values
+	// (no new CUDA context is created).
+	for i := range b.requiredMemory.GPUs {
+		if i < len(b.gpuDevices) {
+			var props C.struct_ggml_backend_dev_props
+			C.ggml_backend_dev_get_props(b.gpuDevices[i], &props)
+			b.requiredMemory.GPUs[i].Context = uint64(props.context_memory)
+			b.requiredMemory.GPUs[i].Cublas = uint64(props.cublas_memory)
+		}
+	}
 	return *b.requiredMemory
 }
 

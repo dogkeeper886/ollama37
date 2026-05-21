@@ -130,6 +130,12 @@ type DeviceMemory struct {
 
 	// Graph is the size of the compute graph. It is not per-layer.
 	Graph uint64
+
+	// Context and Cublas label otherwise-unaccounted device VRAM (#98):
+	// the CUDA primary context + driver/kernel baseline, and the cuBLAS GEMM
+	// workspace. Populated at report time from cached per-device measurements.
+	Context uint64
+	Cublas  uint64
 }
 
 func sumMemory(mem []uint64) uint64 {

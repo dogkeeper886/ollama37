@@ -77,9 +77,11 @@ type ModelMetrics struct {
 // VRAMBreakdown decomposes VRAM usage into its three components. Only the Go
 // engine (ollamaServer) tracks this; for llamacpp models it is omitted.
 type VRAMBreakdown struct {
-	Weights uint64 `json:"weights"`  // model weights on GPU
-	KVCache uint64 `json:"kv_cache"` // K/V attention cache
-	Graph   uint64 `json:"graph"`    // scratch compute buffer
+	Weights uint64 `json:"weights"`           // model weights on GPU
+	KVCache uint64 `json:"kv_cache"`          // K/V attention cache
+	Graph   uint64 `json:"graph"`             // scratch compute buffer
+	Context uint64 `json:"context,omitempty"` // CUDA primary context + driver/kernel baseline (#98)
+	Cublas  uint64 `json:"cublas,omitempty"`  // cuBLAS GEMM workspace (#98)
 }
 
 type ErrorCounters struct {
@@ -243,7 +245,7 @@ func perGPUBreakdown(mem *ml.BackendMemory) map[string]*VRAMBreakdown {
 	}
 	out := make(map[string]*VRAMBreakdown, len(mem.GPUs))
 	for _, g := range mem.GPUs {
-		b := &VRAMBreakdown{Graph: g.Graph}
+		b := &VRAMBreakdown{Graph: g.Graph, Context: g.Context, Cublas: g.Cublas}
 		for _, w := range g.Weights {
 			b.Weights += w
 		}
