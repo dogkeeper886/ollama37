@@ -104,6 +104,20 @@ void ggml_cuda_set_device(int device) {
     }
 
     CUDA_CHECK(cudaSetDevice(device));
+
+    // Label the "unaccounted" memory (#98): the first activation of a device
+    // creates its CUDA primary context. total-free here (before any GGML buffer
+    // or cuBLAS handle) is the bare context + driver baseline — the dominant
+    // component of the ghost allocation on a layerless GPU.
+    static bool ctx_logged[GGML_CUDA_MAX_DEVICES] = {false};
+    if (device >= 0 && device < GGML_CUDA_MAX_DEVICES && !ctx_logged[device]) {
+        ctx_logged[device] = true;
+        size_t free_b = 0, total_b = 0;
+        if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) {
+            GGML_LOG_DEBUG("memlabel: device %d CUDA primary context+baseline = %zu MiB\n",
+                           device, (total_b - free_b) / (1024 * 1024));
+        }
+    }
 }
 
 int ggml_cuda_get_device() {

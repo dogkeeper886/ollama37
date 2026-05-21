@@ -1024,8 +1024,15 @@ struct ggml_backend_cuda_context {
     cublasHandle_t cublas_handle(int device) {
         if (cublas_handles[device] == nullptr) {
             ggml_cuda_set_device(device);
+            // Label the "unaccounted" memory (#98): cublasCreate allocates a GEMM
+            // workspace. Snapshot free before/after to attribute that component.
+            size_t free_before = 0, free_after = 0, total_b = 0;
+            cudaMemGetInfo(&free_before, &total_b);
             CUBLAS_CHECK(cublasCreate(&cublas_handles[device]));
             CUBLAS_CHECK(cublasSetMathMode(cublas_handles[device], CUBLAS_TF32_TENSOR_OP_MATH));
+            cudaMemGetInfo(&free_after, &total_b);
+            GGML_LOG_DEBUG("memlabel: device %d cuBLAS workspace = %zu MiB\n",
+                           device, (free_before - free_after) / (1024 * 1024));
         }
         return cublas_handles[device];
     }
