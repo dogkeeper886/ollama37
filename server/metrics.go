@@ -38,6 +38,23 @@ type GPUMetrics struct {
 	VRAMFree    uint64 `json:"vram_free,omitempty"`
 	ComputeCap  string `json:"compute_cap,omitempty"` // e.g. "3.7"
 	LibraryPath string `json:"library_path,omitempty"`
+
+	// Allocation attribution (derived). VRAMUsed is the physical usage on the
+	// device (total - free, from NVML). VRAMAccounted is the sum that loaded
+	// models report placing here. VRAMUnaccounted = used - accounted is
+	// allocation the model layout does not explain — CUDA primary contexts,
+	// "ghost" allocations, or other processes sharing the device.
+	VRAMUsed        uint64 `json:"vram_used,omitempty"`
+	VRAMAccounted   uint64 `json:"vram_accounted,omitempty"`
+	VRAMUnaccounted uint64 `json:"vram_unaccounted,omitempty"`
+	// HasModelLayers is true when a loaded model placed layers on this device.
+	HasModelLayers bool `json:"has_model_layers"`
+	// Ghost flags a device carrying physical usage above idle while holding no
+	// model layers — the signature of the 93 MiB ghost allocation (#98/#138)
+	// that wakes an otherwise-idle GPU. NOTE: VRAMUsed is physical and includes
+	// any other process on the device, so treat Ghost as a flag to investigate,
+	// not proof of an ollama-created context.
+	Ghost bool `json:"ghost,omitempty"`
 }
 
 type ModelMetrics struct {
@@ -150,6 +167,35 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			m.VRAMBreakdown = perGPUBreakdown(mem)
 		}
 		models = append(models, m)
+	}
+
+	// Attribute physical per-GPU usage against what loaded models account for.
+	// The gap surfaces ghost/context allocations (#98/#138): a device with
+	// usage above idle but no model layers is flagged as a ghost to investigate.
+	const idleBaselineBytes = 20 * 1024 * 1024 // K80 idle is ~4 MiB; allow margin
+	accountedByGPU := make(map[string]uint64, len(gpus))
+	layersByGPU := make(map[string]bool, len(gpus))
+	for _, m := range models {
+		for id, v := range m.VRAMByGPU {
+			accountedByGPU[id] += v
+		}
+		for _, id := range m.GPUs {
+			layersByGPU[id] = true
+		}
+	}
+	for i := range gpus {
+		g := &gpus[i]
+		if g.VRAMTotal > g.VRAMFree {
+			g.VRAMUsed = g.VRAMTotal - g.VRAMFree
+		}
+		g.VRAMAccounted = accountedByGPU[g.ID]
+		if g.VRAMUsed > g.VRAMAccounted {
+			g.VRAMUnaccounted = g.VRAMUsed - g.VRAMAccounted
+		}
+		g.HasModelLayers = layersByGPU[g.ID]
+		if !g.HasModelLayers && g.VRAMUsed > idleBaselineBytes {
+			g.Ghost = true
+		}
 	}
 
 	c.JSON(http.StatusOK, MetricsResponse{
