@@ -109,18 +109,36 @@ void ggml_cuda_set_device(int device) {
 
     CUDA_CHECK(cudaSetDevice(device));
 
-    // Label the "unaccounted" memory (#98): the first activation of a device
-    // creates its CUDA primary context. total-free here (before any GGML buffer
-    // or cuBLAS handle) is the bare context + driver baseline — the dominant
-    // component of the ghost allocation on a layerless GPU.
-    static bool ctx_logged[GGML_CUDA_MAX_DEVICES] = {false};
-    if (device >= 0 && device < GGML_CUDA_MAX_DEVICES && !ctx_logged[device]) {
-        ctx_logged[device] = true;
-        size_t free_b = 0, total_b = 0;
-        if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) {
-            g_memlabel_context_bytes[device] = total_b - free_b;
-            GGML_LOG_DEBUG("memlabel: device %d CUDA primary context+baseline = %zu MiB\n",
-                           device, (total_b - free_b) / (1024 * 1024));
+    // Label the "unaccounted" memory (#98), without inducing it. cudaMemGetInfo
+    // would be the first CUDA call on a freshly-set device and would *create* the
+    // primary context we want to measure (a Heisenbug that manufactures ghosts on
+    // layerless GPUs). Instead poll the driver API cuDevicePrimaryCtxGetState,
+    // which reports whether the runtime already created the context WITHOUT
+    // creating one. Measure only on the transition to active, so:
+    //   - we never induce a context, and
+    //   - active==true on a device with no layers is the runtime's *own* ghost.
+    static int ctx_active_state[GGML_CUDA_MAX_DEVICES];
+    static bool ctx_state_init = false;
+    if (!ctx_state_init) {
+        for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) ctx_active_state[i] = -1;
+        ctx_state_init = true;
+    }
+    if (device >= 0 && device < GGML_CUDA_MAX_DEVICES) {
+        CUdevice cudev;
+        unsigned int flags = 0;
+        int active = 0;
+        if (cuDeviceGet(&cudev, device) == CUDA_SUCCESS &&
+            cuDevicePrimaryCtxGetState(cudev, &flags, &active) == CUDA_SUCCESS &&
+            active != ctx_active_state[device]) {
+            ctx_active_state[device] = active;
+            if (active) {
+                size_t free_b = 0, total_b = 0;
+                if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) { // safe: ctx already active
+                    g_memlabel_context_bytes[device] = total_b - free_b;
+                    GGML_LOG_DEBUG("memlabel: device %d primary context active, baseline = %zu MiB\n",
+                                   device, (total_b - free_b) / (1024 * 1024));
+                }
+            }
         }
     }
 }
