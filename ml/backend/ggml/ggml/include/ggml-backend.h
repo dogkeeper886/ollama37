@@ -177,6 +177,13 @@ extern "C" {
         const char *library;
         // number with which the devices are accessed (Vulkan)
         const char *numeric_id;
+        // ollama (#98): labeled components of otherwise-unaccounted VRAM, in
+        // bytes. context_memory = CUDA primary context + driver/kernel baseline;
+        // cublas_memory = cuBLAS GEMM workspace. 0 until the device is activated.
+        // Read from cached per-device measurements, so fetching props does not
+        // create a CUDA context.
+        size_t context_memory;
+        size_t cublas_memory;
     };
 
     GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);
