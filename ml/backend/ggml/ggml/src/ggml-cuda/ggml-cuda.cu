@@ -93,12 +93,12 @@ void ggml_cuda_error(const char * stmt, const char * func, const char * file, in
     GGML_ABORT(GGML_CUDA_NAME " error");
 }
 
-// this is faster on Windows
-// probably because the Windows CUDA libraries forget to make this check before invoking the drivers
 // ollama (#98): cached per-device labels for otherwise-unaccounted VRAM (bytes).
 size_t g_memlabel_context_bytes[GGML_CUDA_MAX_DEVICES] = {0};
 size_t g_memlabel_cublas_bytes[GGML_CUDA_MAX_DEVICES]  = {0};
 
+// this is faster on Windows
+// probably because the Windows CUDA libraries forget to make this check before invoking the drivers
 void ggml_cuda_set_device(int device) {
     int current_device;
     CUDA_CHECK(cudaGetDevice(&current_device));
@@ -109,35 +109,29 @@ void ggml_cuda_set_device(int device) {
 
     CUDA_CHECK(cudaSetDevice(device));
 
-    // Label the "unaccounted" memory (#98), without inducing it. cudaMemGetInfo
-    // would be the first CUDA call on a freshly-set device and would *create* the
-    // primary context we want to measure (a Heisenbug that manufactures ghosts on
-    // layerless GPUs). Instead poll the driver API cuDevicePrimaryCtxGetState,
-    // which reports whether the runtime already created the context WITHOUT
-    // creating one. Measure only on the transition to active, so:
-    //   - we never induce a context, and
-    //   - active==true on a device with no layers is the runtime's *own* ghost.
-    static int ctx_active_state[GGML_CUDA_MAX_DEVICES];
-    static bool ctx_state_init = false;
-    if (!ctx_state_init) {
-        for (int i = 0; i < GGML_CUDA_MAX_DEVICES; ++i) ctx_active_state[i] = -1;
-        ctx_state_init = true;
-    }
-    if (device >= 0 && device < GGML_CUDA_MAX_DEVICES) {
+    // Label the "unaccounted" memory (#98), without inducing it, and without
+    // adding cost to this hot path once measured. cudaMemGetInfo would be the
+    // first CUDA call on a freshly-set device and would *create* the primary
+    // context we want to measure (a Heisenbug that manufactures ghosts on
+    // layerless GPUs). Until a device is measured, poll the driver API
+    // cuDevicePrimaryCtxGetState (non-creating) to detect when the runtime has
+    // created the context, then measure once and never touch the driver here
+    // again. ctx_measured is best-effort (set-once, value-stable), so an
+    // unsynchronized racing read at worst causes a redundant measurement.
+    static bool ctx_measured[GGML_CUDA_MAX_DEVICES] = {false};
+    if (device >= 0 && device < GGML_CUDA_MAX_DEVICES && !ctx_measured[device]) {
         CUdevice cudev;
         unsigned int flags = 0;
         int active = 0;
         if (cuDeviceGet(&cudev, device) == CUDA_SUCCESS &&
             cuDevicePrimaryCtxGetState(cudev, &flags, &active) == CUDA_SUCCESS &&
-            active != ctx_active_state[device]) {
-            ctx_active_state[device] = active;
-            if (active) {
-                size_t free_b = 0, total_b = 0;
-                if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) { // safe: ctx already active
-                    g_memlabel_context_bytes[device] = total_b - free_b;
-                    GGML_LOG_DEBUG("memlabel: device %d primary context active, baseline = %zu MiB\n",
-                                   device, (total_b - free_b) / (1024 * 1024));
-                }
+            active) {
+            ctx_measured[device] = true;
+            size_t free_b = 0, total_b = 0;
+            if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess) { // safe: ctx already active
+                g_memlabel_context_bytes[device] = total_b - free_b;
+                GGML_LOG_DEBUG("memlabel: device %d primary context active, baseline = %zu MiB\n",
+                               device, (total_b - free_b) / (1024 * 1024));
             }
         }
     }

@@ -174,9 +174,38 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 		models = append(models, m)
 	}
 
-	// Attribute physical per-GPU usage against what loaded models account for.
-	// The gap surfaces ghost/context allocations (#98/#138): a device with
-	// usage above idle but no model layers is flagged as a ghost to investigate.
+	attributeGPUUsage(gpus, models)
+
+	c.JSON(http.StatusOK, MetricsResponse{
+		GPUs:   gpus,
+		Models: models,
+		Errors: s.sched.metrics.snapshot(),
+		Totals: ServerTotals{
+			LoadedModels: len(runners),
+			GPUCount:     len(devices),
+		},
+	})
+}
+
+func (m *serverMetrics) snapshot() ErrorCounters {
+	if m == nil {
+		return ErrorCounters{}
+	}
+	return ErrorCounters{
+		LoadFailures:    m.loadFailures.Load(),
+		LoadRequireFull: m.loadRequireFull.Load(),
+		LoadOther:       m.loadOther.Load(),
+		EvictionsTotal:  m.evictionsTotal.Load(),
+	}
+}
+
+// attributeGPUUsage fills the derived per-GPU attribution fields (VRAMUsed,
+// VRAMAccounted, VRAMUnaccounted, HasModelLayers, Ghost) in place, from physical
+// device usage and what loaded models report placing on each device. A device
+// carrying usage above idle while holding no model layers is flagged as a ghost
+// to investigate (#98/#138). VRAMUsed is physical, so it includes any other
+// process on the device — Ghost is a flag, not proof of an ollama context.
+func attributeGPUUsage(gpus []GPUMetrics, models []ModelMetrics) {
 	const idleBaselineBytes = 20 * 1024 * 1024 // K80 idle is ~4 MiB; allow margin
 	accountedByGPU := make(map[string]uint64, len(gpus))
 	layersByGPU := make(map[string]bool, len(gpus))
@@ -201,28 +230,6 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 		if !g.HasModelLayers && g.VRAMUsed > idleBaselineBytes {
 			g.Ghost = true
 		}
-	}
-
-	c.JSON(http.StatusOK, MetricsResponse{
-		GPUs:   gpus,
-		Models: models,
-		Errors: s.sched.metrics.snapshot(),
-		Totals: ServerTotals{
-			LoadedModels: len(runners),
-			GPUCount:     len(devices),
-		},
-	})
-}
-
-func (m *serverMetrics) snapshot() ErrorCounters {
-	if m == nil {
-		return ErrorCounters{}
-	}
-	return ErrorCounters{
-		LoadFailures:    m.loadFailures.Load(),
-		LoadRequireFull: m.loadRequireFull.Load(),
-		LoadOther:       m.loadOther.Load(),
-		EvictionsTotal:  m.evictionsTotal.Load(),
 	}
 }
 
