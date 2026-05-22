@@ -1,33 +1,34 @@
-id: TC-MODELS-014
-name: qwen3.6:27b Inference
+id: TC-MODELS-015
+name: qwen3.6:35b MoE Inference
 suite: models
 priority: 4
 timeout: 1200000
 dependencies: []
-issue: 176
+issue: 182
 
 intent:
   user_story: |
-    Validate qwen3.6:27b runs on K80 compute 3.7. Qwen3.6 reuses the Qwen3.5
-    architecture (HF model_type qwen3_5 -> GGUF arch qwen35), which the native
-    engine already supports — so this confirms the "already supported" claim on a
-    real qwen3.6 checkpoint, not a from-scratch port.
+    Validate qwen3.6:35b (35B-A3B) runs on K80 compute 3.7 through the MoE path.
+    This is the qwen35moe architecture (HF model_type qwen3_5_moe) -> the sparse
+    expert-routing MLP, wired in #179 and first validated in #182. It is distinct
+    from TC-MODELS-014 (qwen3.6:27b, the DENSE qwen35 path) and is the only test
+    that exercises the MoE / expert-routing code.
   acceptance:
-    - API returns a coherent response (no garbage), proving the qwen35 path loads qwen3.6 weights
+    - API returns a coherent response (no garbage), proving the qwen35moe sparse path computes correctly
     - No CUDA / CUBLAS errors
     - Model does not spread across more GPUs than its footprint needs
     - Model unloads cleanly
   notes: |
-    Prerequisite: qwen3.6:27b must be pre-pulled on the runner before this test.
-    Dense variant (~17GB), splits across 2x K80 GPUs (each ~11441 MiB).
-    Acceptable warning (NOT an error): "flash attention enabled but not supported
-    by gpu" — K80 has no FA; normal fallback.
+    Prerequisite: qwen3.6:35b must be pre-pulled on the runner before this test.
+    MoE variant (~24GB Q4_K_M): 40 layers (30 recurrent DeltaNet + 10 attention)
+    with a 256-expert MoE FFN. Needs 3x K80 dies (total exceeds 2x ~11441 MiB).
+    Flash attention is off for qwen35moe (not in the new-engine FA allowlist).
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"qwen3.6:27b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":512}}' \
+        -d '{"model":"qwen3.6:35b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":512}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -62,26 +63,25 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"qwen3.6:27b","keep_alive":0}'
+        -d '{"model":"qwen3.6:35b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate qwen3.6:27b (~17GB VRAM, multi-GPU layer splitting) runs on K80 (compute 3.7).
-  Qwen3.6 reuses the qwen35 (Qwen3.5 DeltaNet hybrid) architecture, so it loads through
-  the existing native-engine path. Model exceeds a single K80 GPU (~11441 MiB), requires
-  splitting across 2x K80 GPUs.
+  Validate qwen3.6:35b (35B-A3B MoE, ~24GB VRAM, multi-GPU) runs on K80 (compute 3.7)
+  through the qwen35moe -> sparse expert-routing path (distinct from the dense qwen35
+  path in TC-MODELS-014). The model exceeds 2x K80 GPUs (2x ~11441 MiB), so 3x is
+  expected and correct.
   Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:
-  - API returns JSON with "response" field containing coherent text
+  - API returns JSON with "response" field containing coherent text (MoE path computes correctly)
   - GPU memory is allocated on multiple GPUs (visible in nvidia-smi)
   - GPU count: model must not use more GPUs than needed. Each K80 GPU has 11441 MiB.
-    If total VRAM fits in (active_gpus - 1) GPUs, the model is wasting GPUs.
+    35B-A3B legitimately needs 3 GPUs; flag only if total fits in (active_gpus - 1).
   - No CUDA/CUBLAS errors in output
   - Model unloads successfully
 
   Acceptable warnings (NOT errors):
-  - "flash attention enabled but not supported by gpu" - K80 does not support
-    flash attention, this is a normal fallback warning, NOT an error
+  - "flash attention enabled but not supported by gpu" - K80 has no FA; normal fallback.
