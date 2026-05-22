@@ -1,9 +1,40 @@
-// K80 port shim: CUDA 11.4 omits the top-level <cuda/std/array> header but DOES
-// define cuda::std::array (in a versioned inline namespace) via the libcu++
-// detail headers that the other cuda/std includes pull in (tuple/limits/etc.).
-// So this header just needs to exist and ensure that definition is available —
-// it must NOT define its own cuda::std::array (that collides with the real one:
-// "cuda::std::array is ambiguous"). Pull in <cuda/std/tuple>, which transitively
-// makes the real definition visible.
+// K80 port shim: CUDA 11.4 omits the top-level <cuda/std/array> header. libcu++
+// only *forward-declares* cuda::std::array (in its versioned inline namespace, via
+// the detail headers that <cuda/std/tuple> pulls in); the full definition lives in
+// detail/libcxx/include/array, which can't be included directly here (its internal
+// <__config> needs the libcu++ internal include path).
+//
+// MLX uses cuda::std::array<T,N> by value (e.g. const_param returns it), so it
+// needs a COMPLETE type. Provide the definition inside libcu++'s inline namespace
+// (via _LIBCUDACXX_BEGIN/END_NAMESPACE_STD) so it *completes* the existing forward
+// declaration rather than adding a second, ambiguous one.
 #pragma once
-#include <cuda/std/tuple>
+
+#include <cuda/std/detail/__config> // _LIBCUDACXX_BEGIN/END_NAMESPACE_STD
+#include <cstddef>
+
+_LIBCUDACXX_BEGIN_NAMESPACE_STD
+
+template <class _Tp, size_t _Size>
+struct array {
+  _Tp __elems_[_Size];
+
+  __host__ __device__ constexpr _Tp& operator[](size_t __i) { return __elems_[__i]; }
+  __host__ __device__ constexpr const _Tp& operator[](size_t __i) const {
+    return __elems_[__i];
+  }
+  __host__ __device__ constexpr _Tp* data() { return __elems_; }
+  __host__ __device__ constexpr const _Tp* data() const { return __elems_; }
+  __host__ __device__ constexpr size_t size() const { return _Size; }
+  __host__ __device__ constexpr bool empty() const { return _Size == 0; }
+  __host__ __device__ constexpr _Tp& front() { return __elems_[0]; }
+  __host__ __device__ constexpr const _Tp& front() const { return __elems_[0]; }
+  __host__ __device__ constexpr _Tp& back() { return __elems_[_Size - 1]; }
+  __host__ __device__ constexpr const _Tp& back() const { return __elems_[_Size - 1]; }
+  __host__ __device__ constexpr _Tp* begin() { return __elems_; }
+  __host__ __device__ constexpr const _Tp* begin() const { return __elems_; }
+  __host__ __device__ constexpr _Tp* end() { return __elems_ + _Size; }
+  __host__ __device__ constexpr const _Tp* end() const { return __elems_ + _Size; }
+};
+
+_LIBCUDACXX_END_NAMESPACE_STD
