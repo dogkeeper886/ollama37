@@ -9,7 +9,8 @@
 #include <memory>
 
 #include <cuda_runtime.h>
-#include <cuda/atomic>
+// K80 port: dropped <cuda/atomic> (libcu++ atomics hard-gate at sm_60); the
+// AtomicEvent signaling is ported to volatile + __threadfence_system in event.cu.
 
 namespace mlx::core::cu {
 

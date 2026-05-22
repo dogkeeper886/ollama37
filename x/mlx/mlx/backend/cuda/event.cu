@@ -174,18 +174,20 @@ class CopyableCudaEvent {
 // AtomicEvent implementations
 ///////////////////////////////////////////////////////////////////////////////
 
+// K80 port: libcu++ cuda::atomic_ref (system scope, with .wait()/.notify_all())
+// hard-gates at sm_60. Kepler (sm_37) instead polls a volatile flag in
+// mapped/managed memory; the callers wrap signals with __threadfence_system to
+// provide CPU<->GPU ordering (see event_signal_kernel). AtomicEvent is already
+// the "much slower" path, so a busy-poll is acceptable.
 __host__ __device__ void event_wait(uint32_t* ptr, uint32_t value) {
-  cuda::atomic_ref<uint32_t> ac(*ptr);
-  uint32_t current;
-  while ((current = ac.load()) < value) {
-    ac.wait(current);
+  volatile uint32_t* flag = ptr;
+  while (*flag < value) {
   }
 }
 
 __host__ __device__ void event_signal(uint32_t* ptr, uint32_t value) {
-  cuda::atomic_ref<uint32_t> ac(*ptr);
-  ac.store(value);
-  ac.notify_all();
+  volatile uint32_t* flag = ptr;
+  *flag = value;
 }
 
 __global__ void event_wait_kernel(uint32_t* ptr, uint32_t value) {
