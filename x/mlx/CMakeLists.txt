@@ -42,6 +42,14 @@ add_library(mlx STATIC
     ${MLX_SRC}/utils.cpp
     ${MLX_SRC}/linalg.cpp
     ${MLX_SRC}/version.cpp
+    # backend/common — device-agnostic backend helpers (host C++)
+    ${MLX_SRC}/backend/common/broadcasting.cpp
+    ${MLX_SRC}/backend/common/compiled.cpp
+    ${MLX_SRC}/backend/common/common.cpp
+    ${MLX_SRC}/backend/common/load.cpp
+    ${MLX_SRC}/backend/common/reduce.cpp
+    ${MLX_SRC}/backend/common/slicing.cpp
+    ${MLX_SRC}/backend/common/utils.cpp
 )
 
 target_include_directories(mlx PRIVATE
