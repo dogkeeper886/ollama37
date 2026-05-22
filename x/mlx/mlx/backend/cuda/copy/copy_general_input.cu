@@ -21,7 +21,7 @@ __global__ void copy_g_nd(
   auto block = cg::this_thread_block();
   auto grid = cg::this_grid();
   IdxT index_rest =
-      grid.block_index().y * block.dim_threads().y + block.thread_index().y;
+      blockIdx.y * blockDim.y + block.thread_index().y;
   if (index_rest >= size_rest) {
     return;
   }
@@ -29,7 +29,7 @@ __global__ void copy_g_nd(
   auto shape_x = shape[NDIM - 1];
   auto stride_x = strides[NDIM - 1];
   IdxT index_x =
-      grid.block_index().x * block.dim_threads().x + block.thread_index().x;
+      blockIdx.x * blockDim.x + block.thread_index().x;
   auto idx =
       elem_to_loc_nd<NDIM>(index_rest * shape_x, shape.data(), strides.data());
   auto in_vec =
@@ -53,7 +53,7 @@ __global__ void copy_g(
   auto block = cg::this_thread_block();
   auto grid = cg::this_grid();
   IdxT index_rest =
-      grid.block_index().y * block.dim_threads().y + block.thread_index().y;
+      blockIdx.y * blockDim.y + block.thread_index().y;
   if (index_rest >= size_rest) {
     return;
   }
@@ -61,7 +61,7 @@ __global__ void copy_g(
   auto shape_x = shape[ndim - 1];
   auto stride_x = strides[ndim - 1];
   IdxT index_x =
-      grid.block_index().x * block.dim_threads().x + block.thread_index().x;
+      blockIdx.x * blockDim.x + block.thread_index().x;
   auto idx =
       elem_to_loc(index_rest * shape_x, shape.data(), strides.data(), ndim);
   auto in_vec =
@@ -83,8 +83,8 @@ copy_col_row(const In* in, Out* out, int64_t rows, int64_t cols) {
   auto block = cg::this_thread_block();
   auto grid = cg::this_grid();
 
-  auto tile_row = grid.block_index().x * TILE_SIZE * N_READS;
-  auto tile_col = grid.block_index().y * TILE_SIZE * N_READS;
+  auto tile_row = blockIdx.x * TILE_SIZE * N_READS;
+  auto tile_col = blockIdx.y * TILE_SIZE * N_READS;
 
   auto tidx = block.thread_index().x;
   auto tidy = N_READS * block.thread_index().y;

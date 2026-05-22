@@ -114,8 +114,8 @@ __global__ void contiguous_scan(const T* in, U* out, int32_t axis_size) {
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WARP_SIZE>(block);
 
-  in += grid.block_rank() * axis_size;
-  out += grid.block_rank() * axis_size;
+  in += mlx_block_rank() * axis_size;
+  out += mlx_block_rank() * axis_size;
 
   __shared__ U warp_sums[WARP_SIZE];
 
@@ -226,8 +226,8 @@ __global__ void strided_scan(
   }
 
   // Compute offsets.
-  int64_t offset = (grid.block_rank() / stride_blocks) * axis_size * stride;
-  int64_t global_index_x = (grid.block_rank() % stride_blocks) * BN;
+  int64_t offset = (mlx_block_rank() / stride_blocks) * axis_size * stride;
+  int64_t global_index_x = (mlx_block_rank() % stride_blocks) * BN;
   uint32_t read_offset_y = (block.thread_rank() * N_READS) / BN;
   uint32_t read_offset_x = (block.thread_rank() * N_READS) % BN;
   uint32_t scan_offset_y = warp.thread_rank();

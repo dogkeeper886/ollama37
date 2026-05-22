@@ -48,7 +48,7 @@ __global__ void unary_g(
   auto block = cg::this_thread_block();
   auto grid = cg::this_grid();
   IdxT index_rest =
-      grid.block_index().y * block.dim_threads().y + block.thread_index().y;
+      blockIdx.y * blockDim.y + block.thread_index().y;
   if (index_rest >= size_rest) {
     return;
   }
@@ -56,7 +56,7 @@ __global__ void unary_g(
   auto shape_x = shape[ndim - 1];
   auto stride_x = strides[ndim - 1];
   IdxT index_x =
-      grid.block_index().x * block.dim_threads().x + block.thread_index().x;
+      blockIdx.x * blockDim.x + block.thread_index().x;
   auto idx =
       elem_to_loc(index_rest * shape_x, shape.data(), strides.data(), ndim);
   auto in_vec =

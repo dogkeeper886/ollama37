@@ -16,7 +16,7 @@ namespace cg = cooperative_groups;
 template <typename T, int group_size, int bits>
 __global__ void
 affine_quantize(const T* w, uint8_t* out, T* scales, T* biases, size_t size) {
-  auto block_size = cg::this_thread_block().dim_threads();
+  auto block_size = blockDim;
   auto block_idx = cg::this_thread_block().group_index();
   auto idx_in_block = cg::this_thread_block().thread_index();
 
@@ -133,7 +133,7 @@ __global__ void affine_dequantize(
     const T* biases,
     T* out,
     size_t size) {
-  auto block_size = cg::this_thread_block().dim_threads();
+  auto block_size = blockDim;
   auto block_idx = cg::this_thread_block().group_index();
   auto idx_in_block = cg::this_thread_block().thread_index();
 

@@ -146,7 +146,7 @@ __global__ void binary_two_g_nd(
   auto block = cg::this_thread_block();
   auto grid = cg::this_grid();
   IdxT index_rest =
-      grid.block_index().y * block.dim_threads().y + block.thread_index().y;
+      blockIdx.y * blockDim.y + block.thread_index().y;
   if (index_rest >= size_rest) {
     return;
   }
@@ -155,7 +155,7 @@ __global__ void binary_two_g_nd(
   auto a_stride_x = a_strides[NDIM - 1];
   auto b_stride_x = b_strides[NDIM - 1];
   IdxT index_x =
-      grid.block_index().x * block.dim_threads().x + block.thread_index().x;
+      blockIdx.x * blockDim.x + block.thread_index().x;
   auto [a_idx, b_idx] = elem_to_loc_nd<NDIM>(
       index_rest * shape_x, shape.data(), a_strides.data(), b_strides.data());
   auto a_vec =
@@ -189,7 +189,7 @@ __global__ void binary_two_g(
   auto block = cg::this_thread_block();
   auto grid = cg::this_grid();
   IdxT index_rest =
-      grid.block_index().y * block.dim_threads().y + block.thread_index().y;
+      blockIdx.y * blockDim.y + block.thread_index().y;
   if (index_rest >= size_rest) {
     return;
   }
@@ -198,7 +198,7 @@ __global__ void binary_two_g(
   auto a_stride_x = a_strides[ndim - 1];
   auto b_stride_x = b_strides[ndim - 1];
   IdxT index_x =
-      grid.block_index().x * block.dim_threads().x + block.thread_index().x;
+      blockIdx.x * blockDim.x + block.thread_index().x;
   auto [a_idx, b_idx] = elem_to_loc(
       index_rest * shape_x,
       shape.data(),

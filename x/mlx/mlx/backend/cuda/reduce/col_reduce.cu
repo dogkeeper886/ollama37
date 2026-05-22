@@ -104,7 +104,7 @@ __global__ void col_reduce_looped(
   constexpr int threads_per_row = BN / N_READS;
 
   // Compute the indices for the tile
-  size_t tile_idx = grid.block_rank();
+  size_t tile_idx = mlx_block_rank();
   size_t tile_x = tile_idx % ((args.reduction_stride + BN - 1) / BN);
   size_t tile_y = tile_idx / ((args.reduction_stride + BN - 1) / BN);
   size_t tile_out = tile_y / out_size;

@@ -67,7 +67,7 @@ __global__ void rms_norm_small(
   __shared__ typename BlockReduceT::TempStorage temp;
 
   auto row =
-      (grid.block_rank() * block.dim_threads().y) + block.thread_index().y;
+      (mlx_block_rank() * blockDim.y) + block.thread_index().y;
   if (row >= n_rows) {
     return;
   }
@@ -111,8 +111,8 @@ __global__ void rms_norm(
   using BlockReduceT = BlockBroadcastReduce<float, BLOCK_DIM>;
   __shared__ typename BlockReduceT::TempStorage temp;
 
-  x += grid.block_rank() * axis_size;
-  out += grid.block_rank() * axis_size;
+  x += mlx_block_rank() * axis_size;
+  out += mlx_block_rank() * axis_size;
 
   // Normalizer.
   float normalizer = 0;
@@ -165,7 +165,7 @@ __global__ void rms_norm_vjp_small(
   __shared__ typename BlockReduceF2::TempStorage temp;
 
   auto row =
-      (grid.block_rank() * block.dim_threads().y) + block.thread_index().y;
+      (mlx_block_rank() * blockDim.y) + block.thread_index().y;
   if (row >= n_rows) {
     return;
   }
@@ -226,10 +226,10 @@ __global__ void rms_norm_vjp(
   using BlockReduceF2 = BlockBroadcastReduce<float2, BLOCK_DIM>;
   __shared__ typename BlockReduceF2::TempStorage temp;
 
-  x += grid.block_rank() * axis_size;
-  g += grid.block_rank() * axis_size;
-  gx += grid.block_rank() * axis_size;
-  gw += grid.block_rank() * axis_size;
+  x += mlx_block_rank() * axis_size;
+  g += mlx_block_rank() * axis_size;
+  gx += mlx_block_rank() * axis_size;
+  gw += mlx_block_rank() * axis_size;
 
   // Normalizer.
   float2 factors = {};

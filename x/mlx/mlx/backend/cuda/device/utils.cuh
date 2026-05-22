@@ -23,6 +23,17 @@ namespace mlx::core::cu {
 // CUDA kernel utils
 ///////////////////////////////////////////////////////////////////////////////
 
+// K80 port: cooperative_groups grid_group::block_rank() is absent in CUDA 11.4
+// (added in a later CCCL). For non-cluster grids it is the linear block index.
+// Other missing cg accessors are replaced inline: block_index()->blockIdx,
+// dim_threads()->blockDim, num_threads()->product(blockDim).
+__device__ __forceinline__ unsigned long long mlx_block_rank() {
+  return static_cast<unsigned long long>(blockIdx.x) +
+      static_cast<unsigned long long>(gridDim.x) *
+      (static_cast<unsigned long long>(blockIdx.y) +
+       static_cast<unsigned long long>(gridDim.y) * blockIdx.z);
+}
+
 // To pass shape/strides to kernels via constant memory, their size must be
 // known at compile time.
 using Shape = cuda::std::array<int32_t, MAX_NDIM>;

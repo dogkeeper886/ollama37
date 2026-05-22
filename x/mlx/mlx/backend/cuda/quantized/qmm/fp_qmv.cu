@@ -34,7 +34,7 @@ __device__ void adjust_matrix_offsets(
     const Shape w_shape,
     const Strides w_strides,
     const Strides s_strides) {
-  uint32_t idx = cg::this_grid().block_index().z;
+  uint32_t idx = blockIdx.z;
   if (x_batch_ndims == 1) {
     x += idx * x_strides[0];
   } else {

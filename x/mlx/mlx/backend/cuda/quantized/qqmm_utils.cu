@@ -103,7 +103,7 @@ __global__ void swizzle_scales(
   // thread (1, 0) loads rows 0,32,64,96 of of tile 1, etc.
   // The store is strided within a warp (stride 32 int4s), so we first
   // write to shared memory, then do a coalesced store from shared to global
-  auto block_size = cg::this_thread_block().dim_threads();
+  auto block_size = blockDim;
   auto block_idx = cg::this_thread_block().group_index();
   auto idx_in_block = cg::this_thread_block().thread_index();
 

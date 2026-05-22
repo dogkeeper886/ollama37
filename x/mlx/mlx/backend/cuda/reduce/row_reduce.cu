@@ -97,7 +97,7 @@ row_reduce_simple(const T* in, U* out, size_t n_rows, int size) {
   }
 
   const size_t start_row =
-      min(n_rows - M, static_cast<size_t>(grid.block_rank() * M));
+      min(n_rows - M, static_cast<size_t>(mlx_block_rank() * M));
   const size_t full_blocks = size / (block.size() * N);
   const size_t final_offset = full_blocks * (block.size() * N);
   in += start_row * size + block.thread_rank() * N;
@@ -135,10 +135,10 @@ row_reduce_simple(const T* in, U* out, size_t n_rows, int size) {
   block_reduce(block, warp, accs.val, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {
-    if (grid.block_rank() * M + M <= n_rows) {
+    if (mlx_block_rank() * M + M <= n_rows) {
       store_vector(out, 0, accs);
     } else {
-      short offset = grid.block_rank() * M + M - n_rows;
+      short offset = mlx_block_rank() * M + M - n_rows;
       for (int i = offset; i < M; i++) {
         out[i] = accs[i];
       }
@@ -155,7 +155,7 @@ __global__ void row_reduce_looped(
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WARP_SIZE>(block);
 
-  size_t out_idx = grid.block_rank();
+  size_t out_idx = mlx_block_rank();
 
   Op op;
 

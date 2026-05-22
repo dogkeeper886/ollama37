@@ -65,8 +65,8 @@ __global__ void layer_norm(
   using BlockReduceT = BlockBroadcastReduce<float, BLOCK_DIM>;
   __shared__ typename BlockReduceT::TempStorage temp;
 
-  x += grid.block_rank() * axis_size;
-  out += grid.block_rank() * axis_size;
+  x += mlx_block_rank() * axis_size;
+  out += mlx_block_rank() * axis_size;
 
   // Sum.
   float sum = 0;
@@ -139,10 +139,10 @@ __global__ void layer_norm_vjp(
     typename BlockReduceF3::TempStorage f3;
   } temp;
 
-  x += grid.block_rank() * axis_size;
-  g += grid.block_rank() * axis_size;
-  gx += grid.block_rank() * axis_size;
-  gw += grid.block_rank() * axis_size;
+  x += mlx_block_rank() * axis_size;
+  g += mlx_block_rank() * axis_size;
+  gx += mlx_block_rank() * axis_size;
+  gw += mlx_block_rank() * axis_size;
 
   // Sum.
   float sum = 0;

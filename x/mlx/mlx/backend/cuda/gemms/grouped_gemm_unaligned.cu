@@ -58,7 +58,7 @@ __global__ void prepare_grouped_mm_data(
 
   // Since |indices| is sorted, the position where element changes would be its
   // cumulative histogram.
-  size_t elems_per_block = block.num_threads() * N_READS;
+  size_t elems_per_block = (blockDim.x * blockDim.y * blockDim.z) * N_READS;
   for (int r = 0; r < cuda::ceil_div(size, elems_per_block); ++r) {
     // TODO: Use vectorized read.
     for (int i = 0; i < N_READS; ++i) {

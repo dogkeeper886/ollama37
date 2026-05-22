@@ -33,7 +33,7 @@ __global__ void logsumexp(const T* in, T* out, int axis_size) {
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WARP_SIZE>(block);
 
-  in += grid.block_rank() * axis_size;
+  in += mlx_block_rank() * axis_size;
 
   cg::greater<AccT> max_op;
   cg::plus<AccT> plus_op;
@@ -90,7 +90,7 @@ __global__ void logsumexp(const T* in, T* out, int axis_size) {
 
   // Write output.
   if (block.thread_rank() == 0) {
-    out[grid.block_rank()] = isinf(maxval) ? maxval : log(normalizer) + maxval;
+    out[mlx_block_rank()] = isinf(maxval) ? maxval : log(normalizer) + maxval;
   }
 }
 

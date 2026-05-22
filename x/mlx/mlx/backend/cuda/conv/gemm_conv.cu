@@ -27,7 +27,7 @@ __global__ void naive_unfold_nd(
   int index_batch = tid.z / out_pixels; // [0, N)
   int index_out_spatial = tid.z % out_pixels; // [0, H_out * W_out)
   int index_wt_spatial =
-      tid.x * block.dim_threads().x + lid.x; // [0, H_wt * W_wt)
+      tid.x * blockDim.x + lid.x; // [0, H_wt * W_wt)
 
   if (index_wt_spatial >= filter_size / params.C) {
     return;

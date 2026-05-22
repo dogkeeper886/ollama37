@@ -29,7 +29,7 @@ __global__ void all_reduce(T* in, U* out, size_t block_step, size_t size) {
   U accs[M];
   accs[0] = init;
 
-  size_t start = grid.block_rank() * block_step;
+  size_t start = mlx_block_rank() * block_step;
   size_t end = start + block_step;
   size_t check = min(end, size);
 
@@ -53,7 +53,7 @@ __global__ void all_reduce(T* in, U* out, size_t block_step, size_t size) {
   block_reduce(block, warp, accs, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {
-    out[grid.block_rank()] = accs[0];
+    out[mlx_block_rank()] = accs[0];
   }
 }
 

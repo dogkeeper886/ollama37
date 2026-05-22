@@ -62,7 +62,7 @@ __global__ void fp_quantize_dequantize(
 
   using Tx2 = Vector2_t<T>;
   uint32_t rbits = 0; // reserved bits for future use
-  auto block_size = cg::this_thread_block().dim_threads();
+  auto block_size = blockDim;
   auto block_idx = cg::this_thread_block().group_index();
   auto idx_in_block = cg::this_thread_block().thread_index();
   auto tidx = block_idx.x * block_size.x + idx_in_block.x;
@@ -145,7 +145,7 @@ __global__ void fp_quantize_rowwise(
   using Tx2 = Vector2_t<T>;
   using Tx4 = Vector4_t<T>;
   uint32_t rbits = 0; // reserved bits for future use
-  auto block_size = cg::this_thread_block().dim_threads();
+  auto block_size = blockDim;
   auto block_idx = cg::this_thread_block().group_index();
   auto idx_in_block = cg::this_thread_block().thread_index();
   auto tidx = block_idx.x * block_size.x + idx_in_block.x;
@@ -347,7 +347,7 @@ __global__ void fp_dequantize(
     T* out,
     size_t size,
     float* global_scale = nullptr) {
-  auto block_size = cg::this_thread_block().dim_threads();
+  auto block_size = blockDim;
   auto block_idx = cg::this_thread_block().group_index();
   auto idx_in_block = cg::this_thread_block().thread_index();
 
