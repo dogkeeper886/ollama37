@@ -90,6 +90,49 @@ MLX_DEFINE_HALF_CMP(__nv_bfloat16, __bfloat162float, >=)
 MLX_DEFINE_HALF_CMP(__nv_bfloat16, __bfloat162float, ==)
 MLX_DEFINE_HALF_CMP(__nv_bfloat16, __bfloat162float, !=)
 
+// K80 port: CUDA provides native __half/__nv_bfloat16 arithmetic & comparison
+// operators only for __CUDA_ARCH__ >= 530. On sm_37 (Kepler) those are absent, so
+// half-op-half expressions fall back to the many implicit half->builtin
+// conversions and become ambiguous ("more than one conversion function ...").
+// Define the half-op-half operators (computed via float) for the sub-530 device
+// build. Guarded to device + sub-530 so sm_53+ keeps the native operators.
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ < 530)
+
+#define MLX_DEFINE_HALF_HALF_OP(HALF, HALF2FLOAT, FLOAT2HALF, OP) \
+  __forceinline__ __device__ HALF operator OP(HALF x, HALF y) {   \
+    return FLOAT2HALF(HALF2FLOAT(x) OP HALF2FLOAT(y));            \
+  }
+#define MLX_DEFINE_HALF_HALF_CMP(HALF, HALF2FLOAT, OP)            \
+  __forceinline__ __device__ bool operator OP(HALF x, HALF y) {   \
+    return HALF2FLOAT(x) OP HALF2FLOAT(y);                        \
+  }
+
+MLX_DEFINE_HALF_HALF_OP(__half, __half2float, __float2half, +)
+MLX_DEFINE_HALF_HALF_OP(__half, __half2float, __float2half, -)
+MLX_DEFINE_HALF_HALF_OP(__half, __half2float, __float2half, *)
+MLX_DEFINE_HALF_HALF_OP(__half, __half2float, __float2half, /)
+MLX_DEFINE_HALF_HALF_OP(__nv_bfloat16, __bfloat162float, __float2bfloat16, +)
+MLX_DEFINE_HALF_HALF_OP(__nv_bfloat16, __bfloat162float, __float2bfloat16, -)
+MLX_DEFINE_HALF_HALF_OP(__nv_bfloat16, __bfloat162float, __float2bfloat16, *)
+MLX_DEFINE_HALF_HALF_OP(__nv_bfloat16, __bfloat162float, __float2bfloat16, /)
+MLX_DEFINE_HALF_HALF_CMP(__half, __half2float, <)
+MLX_DEFINE_HALF_HALF_CMP(__half, __half2float, >)
+MLX_DEFINE_HALF_HALF_CMP(__half, __half2float, <=)
+MLX_DEFINE_HALF_HALF_CMP(__half, __half2float, >=)
+MLX_DEFINE_HALF_HALF_CMP(__half, __half2float, ==)
+MLX_DEFINE_HALF_HALF_CMP(__half, __half2float, !=)
+MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, <)
+MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, >)
+MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, <=)
+MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, >=)
+MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, ==)
+MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, !=)
+
+#undef MLX_DEFINE_HALF_HALF_OP
+#undef MLX_DEFINE_HALF_HALF_CMP
+
+#endif // sm_37 half-op-half operators
+
 #undef MLX_DEFINE_HALF_OP
 #undef MLX_DEFINE_HALF_CMP
 
