@@ -1,0 +1,17 @@
+// K80 port shim: <cuda/cmath> is not in CUDA 11.4's libcu++.
+//
+// MLX's CUDA backend uses only cuda::ceil_div from it (integer ceil-division for
+// grid/block sizing). Provide that, and pull in <cuda/std/cmath> (which 11.4 does
+// ship) so the cuda::std::* math used alongside it is available.
+#pragma once
+
+#include <cuda/std/cmath>
+
+namespace cuda {
+
+template <class T, class U>
+__host__ __device__ constexpr auto ceil_div(T a, U b) -> decltype((a + b - 1) / b) {
+  return (a + b - 1) / b;
+}
+
+} // namespace cuda

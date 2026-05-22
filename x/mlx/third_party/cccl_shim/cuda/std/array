@@ -1,0 +1,44 @@
+// K80 port: minimal <cuda/std/array> shim.
+//
+// CUDA 11.4's bundled libcu++ ships most of cuda/std/* (tuple, limits,
+// type_traits, complex, cmath, ...) but NOT <cuda/std/array>, which MLX's CUDA
+// backend includes (device/utils.cuh) and uses widely (cuda::std::array<T,N> for
+// shapes/strides in device code). This provides a device-callable fixed array
+// with the surface MLX uses. The include search puts this dir before the CUDA
+// toolkit include, so only <cuda/std/array> is shadowed; the real headers
+// (tuple, limits, ...) still come from the toolkit.
+#pragma once
+
+#include <cstddef>
+
+namespace cuda {
+namespace std {
+
+template <class T, size_t N>
+struct array {
+  T __elems[N];
+
+  __host__ __device__ constexpr T& operator[](size_t i) { return __elems[i]; }
+  __host__ __device__ constexpr const T& operator[](size_t i) const {
+    return __elems[i];
+  }
+
+  __host__ __device__ constexpr T* data() { return __elems; }
+  __host__ __device__ constexpr const T* data() const { return __elems; }
+
+  __host__ __device__ constexpr size_t size() const { return N; }
+  __host__ __device__ constexpr bool empty() const { return N == 0; }
+
+  __host__ __device__ constexpr T& front() { return __elems[0]; }
+  __host__ __device__ constexpr const T& front() const { return __elems[0]; }
+  __host__ __device__ constexpr T& back() { return __elems[N - 1]; }
+  __host__ __device__ constexpr const T& back() const { return __elems[N - 1]; }
+
+  __host__ __device__ constexpr T* begin() { return __elems; }
+  __host__ __device__ constexpr const T* begin() const { return __elems; }
+  __host__ __device__ constexpr T* end() { return __elems + N; }
+  __host__ __device__ constexpr const T* end() const { return __elems + N; }
+};
+
+} // namespace std
+} // namespace cuda
