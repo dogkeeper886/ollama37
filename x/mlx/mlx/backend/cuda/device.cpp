@@ -247,26 +247,16 @@ void CommandEncoder::add_kernel_node_raw(
     dim3 cluster_dim,
     uint32_t smem_bytes,
     void** params) {
-  bool use_cluster = !is_empty_dim(cluster_dim);
-  assert(!use_cluster || device_.compute_capability_major() >= 9);
+  // K80 port: thread-block clusters are sm_90+, and the CUDA-12 extended-launch
+  // API (cudaLaunchKernelExC / cluster attributes) doesn't exist in CUDA 11.4.
+  // Kepler never uses clusters, so launch with the classic runtime API.
+  assert(is_empty_dim(cluster_dim));
+  (void)cluster_dim;
 
   if (!use_cuda_graphs()) {
     node_count_++;
-    cudaLaunchConfig_t config = {};
-    config.gridDim = grid_dim;
-    config.blockDim = block_dim;
-    config.dynamicSmemBytes = smem_bytes;
-    config.stream = stream();
-    cudaLaunchAttribute attr = {};
-    if (use_cluster) {
-      attr.id = cudaLaunchAttributeClusterDimension;
-      attr.val.clusterDim.x = cluster_dim.x;
-      attr.val.clusterDim.y = cluster_dim.y;
-      attr.val.clusterDim.z = cluster_dim.z;
-      config.attrs = &attr;
-      config.numAttrs = 1;
-    }
-    CHECK_CUDA_ERROR(cudaLaunchKernelExC(&config, func, params));
+    CHECK_CUDA_ERROR(cudaLaunchKernel(
+        func, grid_dim, block_dim, params, smem_bytes, stream()));
     return;
   }
 
@@ -276,15 +266,7 @@ void CommandEncoder::add_kernel_node_raw(
   kernel_params.blockDim = block_dim;
   kernel_params.kernelParams = params;
   kernel_params.sharedMemBytes = smem_bytes;
-  cudaGraphNode_t node = add_kernel_node_raw(kernel_params);
-  if (use_cluster) {
-    cudaKernelNodeAttrValue attr = {};
-    attr.clusterDim.x = cluster_dim.x;
-    attr.clusterDim.y = cluster_dim.y;
-    attr.clusterDim.z = cluster_dim.z;
-    CHECK_CUDA_ERROR(cudaGraphKernelNodeSetAttribute(
-        node, cudaLaunchAttributeClusterDimension, &attr));
-  }
+  add_kernel_node_raw(kernel_params);
 }
 
 void CommandEncoder::add_kernel_node_raw(
@@ -294,30 +276,18 @@ void CommandEncoder::add_kernel_node_raw(
     dim3 cluster_dim,
     uint32_t smem_bytes,
     void** params) {
-  bool use_cluster = !is_empty_dim(cluster_dim);
-  assert(!use_cluster || device_.compute_capability_major() >= 9);
+  // K80 port: clusters are sm_90+; CUDA 11.4 has no cuLaunchKernelEx / cluster
+  // attributes. Kepler never uses clusters, so use the classic driver launch.
+  assert(is_empty_dim(cluster_dim));
+  (void)cluster_dim;
 
   if (!use_cuda_graphs()) {
     node_count_++;
-    CUlaunchConfig config = {};
-    config.gridDimX = grid_dim.x;
-    config.gridDimY = grid_dim.y;
-    config.gridDimZ = grid_dim.z;
-    config.blockDimX = block_dim.x;
-    config.blockDimY = block_dim.y;
-    config.blockDimZ = block_dim.z;
-    config.sharedMemBytes = smem_bytes;
-    config.hStream = stream();
-    CUlaunchAttribute attr = {};
-    if (use_cluster) {
-      attr.id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-      attr.value.clusterDim.x = cluster_dim.x;
-      attr.value.clusterDim.y = cluster_dim.y;
-      attr.value.clusterDim.z = cluster_dim.z;
-      config.attrs = &attr;
-      config.numAttrs = 1;
-    }
-    CHECK_CUDA_ERROR(cuLaunchKernelEx(&config, func, params, nullptr));
+    CHECK_CUDA_ERROR(cuLaunchKernel(
+        func,
+        grid_dim.x, grid_dim.y, grid_dim.z,
+        block_dim.x, block_dim.y, block_dim.z,
+        smem_bytes, stream(), params, nullptr));
     return;
   }
 
@@ -331,15 +301,7 @@ void CommandEncoder::add_kernel_node_raw(
   kernel_params.blockDimZ = block_dim.z;
   kernel_params.kernelParams = params;
   kernel_params.sharedMemBytes = smem_bytes;
-  CUgraphNode node = add_kernel_node_raw(kernel_params);
-  if (use_cluster) {
-    CUlaunchAttributeValue attr = {};
-    attr.clusterDim.x = cluster_dim.x;
-    attr.clusterDim.y = cluster_dim.y;
-    attr.clusterDim.z = cluster_dim.z;
-    CHECK_CUDA_ERROR(cuGraphKernelNodeSetAttribute(
-        node, CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION, &attr));
-  }
+  add_kernel_node_raw(kernel_params);
 }
 
 cudaGraphNode_t CommandEncoder::add_kernel_node_raw(
@@ -395,16 +357,9 @@ std::pair<std::string, bool> subgraph_to_key(cudaGraph_t graph) {
         key += "M";
         break;
       case cudaGraphNodeTypeKernel: {
-        cudaLaunchAttributeValue cluster_dim;
-        CHECK_CUDA_ERROR(cudaGraphKernelNodeGetAttribute(
-            node, cudaLaunchAttributeClusterDimension, &cluster_dim));
-        // Only allow dim.x to be greater than 1
-        if (cluster_dim.clusterDim.y > 1 || cluster_dim.clusterDim.z > 1) {
-          is_updatable = false;
-        } else {
-          key += "K";
-          key += std::to_string(cluster_dim.clusterDim.x);
-        }
+        // K80 port: no thread-block clusters on sm_37 (cluster dim is always 1),
+        // and the CUDA-12 cluster-attribute query doesn't exist in CUDA 11.4.
+        key += "K1";
         break;
       }
       case cudaGraphNodeTypeWaitEvent:
