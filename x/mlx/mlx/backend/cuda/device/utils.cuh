@@ -290,8 +290,24 @@ elem_to_loc_nd(IdxT elem, const int* shape, const int64_t* strides) {
   return loc;
 }
 
+// K80 port: structured bindings on cuda::std::tuple fall back to aggregate
+// decomposition under nvcc 11.4 (libcu++ tuple_size/get aren't hooked into ::std),
+// which hits tuple's private members. Return plain aggregates instead so
+// `auto [a, b] = elem_to_loc(...)` decomposes by public members.
+template <typename IdxT>
+struct Loc2 {
+  IdxT a;
+  IdxT b;
+};
+template <typename IdxT>
+struct Loc3 {
+  IdxT a;
+  IdxT b;
+  IdxT c;
+};
+
 template <int NDIM, typename IdxT = int64_t>
-inline __host__ __device__ cuda::std::tuple<IdxT, IdxT> elem_to_loc_nd(
+inline __host__ __device__ Loc2<IdxT> elem_to_loc_nd(
     IdxT elem,
     const int* shape,
     const int64_t* a_strides,
@@ -305,11 +321,11 @@ inline __host__ __device__ cuda::std::tuple<IdxT, IdxT> elem_to_loc_nd(
     b_loc += dim_idx * IdxT(b_strides[i]);
     elem /= shape[i];
   }
-  return cuda::std::make_tuple(a_loc, b_loc);
+  return {a_loc, b_loc};
 }
 
 template <int NDIM, typename IdxT = int64_t>
-inline __host__ __device__ cuda::std::tuple<IdxT, IdxT, IdxT> elem_to_loc_nd(
+inline __host__ __device__ Loc3<IdxT> elem_to_loc_nd(
     IdxT elem,
     const int* shape,
     const int64_t* a_strides,
@@ -326,11 +342,11 @@ inline __host__ __device__ cuda::std::tuple<IdxT, IdxT, IdxT> elem_to_loc_nd(
     c_loc += dim_idx * IdxT(c_strides[i]);
     elem /= shape[i];
   }
-  return cuda::std::make_tuple(a_loc, b_loc, c_loc);
+  return {a_loc, b_loc, c_loc};
 }
 
 template <typename IdxT = int64_t>
-inline __host__ __device__ cuda::std::tuple<IdxT, IdxT> elem_to_loc(
+inline __host__ __device__ Loc2<IdxT> elem_to_loc(
     IdxT elem,
     const int* shape,
     const int64_t* a_strides,
@@ -344,11 +360,11 @@ inline __host__ __device__ cuda::std::tuple<IdxT, IdxT> elem_to_loc(
     b_loc += dim_idx * IdxT(b_strides[i]);
     elem /= shape[i];
   }
-  return cuda::std::make_tuple(a_loc, b_loc);
+  return {a_loc, b_loc};
 }
 
 template <typename IdxT = int64_t>
-inline __host__ __device__ cuda::std::tuple<IdxT, IdxT, IdxT> elem_to_loc(
+inline __host__ __device__ Loc3<IdxT> elem_to_loc(
     IdxT elem,
     const int* shape,
     const int64_t* a_strides,
@@ -365,7 +381,7 @@ inline __host__ __device__ cuda::std::tuple<IdxT, IdxT, IdxT> elem_to_loc(
     c_loc += dim_idx * IdxT(c_strides[i]);
     elem /= shape[i];
   }
-  return cuda::std::make_tuple(a_loc, b_loc, c_loc);
+  return {a_loc, b_loc, c_loc};
 }
 
 ///////////////////////////////////////////////////////////////////////////////
