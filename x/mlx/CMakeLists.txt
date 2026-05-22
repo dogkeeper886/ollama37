@@ -6,7 +6,7 @@
 # the CUDA backend (CUTLASS/tensor-core paths rewritten to cuBLAS/SIMT).
 
 cmake_minimum_required(VERSION 3.21)
-project(mlx_k80 CXX)
+project(mlx_k80 CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,3 +63,89 @@ target_compile_definitions(mlx PRIVATE
     FMT_UNICODE=0
     MLX_VERSION="${MLX_VER}"
 )
+
+###############################################################################
+# CUDA backend (sm_37) — ON-PATH kernels only (see docs/traces/mlx-cuda-runtime-path.md)
+#
+# Build only the kernels the qwen3.5/3.6 inference path runs. Excluded entirely:
+# fft, hadamard, distributed, cuDNN conv, FP8, and the CUTLASS qmm/gemm variants.
+# Deferred (focused rewrites, added later): matmul.cpp + gemms (dense via cuBLAS),
+# quantized (dequant+cuBLAS), conv1d (custom kernel), and the JIT subsystem
+# (jit_module/indexing/custom_kernel need a generated cuda_jit_sources.h).
+###############################################################################
+find_package(CUDAToolkit REQUIRED)
+
+set(CUDA_SRC ${MLX_SRC}/backend/cuda)
+
+# Host-side (.cpp -> gcc): no device code per MLX convention.
+set(MLX_CUDA_HOST
+    ${CUDA_SRC}/allocator.cpp
+    ${CUDA_SRC}/compiled.cpp
+    ${CUDA_SRC}/cublas_utils.cpp
+    ${CUDA_SRC}/device.cpp
+    ${CUDA_SRC}/device_info.cpp
+    ${CUDA_SRC}/eval.cpp
+    ${CUDA_SRC}/fence.cpp
+    ${CUDA_SRC}/load.cpp
+    ${CUDA_SRC}/primitives.cpp
+    ${CUDA_SRC}/slicing.cpp
+    ${CUDA_SRC}/utils.cpp
+    ${CUDA_SRC}/worker.cpp
+    ${CUDA_SRC}/scaled_dot_product_attention.cpp
+)
+
+# Device-side (.cu -> nvcc).
+file(GLOB MLX_CUDA_KERNELS
+    ${CUDA_SRC}/binary/*.cu
+    ${CUDA_SRC}/unary/*.cu
+    ${CUDA_SRC}/reduce/*.cu
+    ${CUDA_SRC}/copy/*.cu
+)
+list(APPEND MLX_CUDA_KERNELS
+    ${CUDA_SRC}/event.cu
+    ${CUDA_SRC}/kernel_utils.cu
+    ${CUDA_SRC}/copy.cu
+    ${CUDA_SRC}/arange.cu
+    ${CUDA_SRC}/arg_reduce.cu
+    ${CUDA_SRC}/binary_two.cu
+    ${CUDA_SRC}/ternary.cu
+    ${CUDA_SRC}/reduce.cu
+    ${CUDA_SRC}/rms_norm.cu
+    ${CUDA_SRC}/layer_norm.cu
+    ${CUDA_SRC}/rope.cu
+    ${CUDA_SRC}/scan.cu
+    ${CUDA_SRC}/sort.cu
+    ${CUDA_SRC}/softmax.cu
+    ${CUDA_SRC}/logsumexp.cu
+    ${CUDA_SRC}/random.cu
+    ${CUDA_SRC}/scaled_dot_product_attention.cu
+)
+
+target_sources(mlx PRIVATE ${MLX_CUDA_HOST} ${MLX_CUDA_KERNELS})
+
+set_target_properties(mlx PROPERTIES
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    CUDA_ARCHITECTURES 37
+)
+
+# nvcc 11.4 has no C++20; MLX device code needs relaxed-constexpr + extended-lambda.
+# __grid_constant__ is a CUDA-11.7+ qualifier absent in 11.4 -> define it empty.
+target_compile_options(mlx PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
+)
+target_compile_definitions(mlx PRIVATE __grid_constant__=)
+
+# cccl_shim must precede the toolkit include so the missing libcu++/fp8 headers
+# resolve to our shims; nvtx_stub for the no-op nvtx3.
+target_include_directories(mlx BEFORE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cccl_shim
+)
+target_include_directories(mlx PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nvtx_stub
+    ${CUDAToolkit_INCLUDE_DIRS}   # host .cpp need <cuda.h>/<cuda_runtime.h> (nvcc adds these for .cu)
+)
+
+target_link_libraries(mlx PRIVATE CUDA::cudart CUDA::cublas)
