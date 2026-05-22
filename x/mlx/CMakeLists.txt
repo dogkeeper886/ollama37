@@ -1,68 +1,57 @@
-# Standalone MLX build for the K80 (sm_37) port — #188.
+# K80 port of MLX — builds the VENDORED mlx/ source (x/mlx/mlx) with the existing
+# builder toolchain: gcc-10 / nvcc 11.4, C++17, sm_37. No clang, no FetchContent,
+# no builder/env changes — the source is ported to fit the toolchain (#187/#188).
 #
-# This is intentionally NOT wired into the main Ollama CMake build yet: that build
-# compiles GGML-CUDA with nvcc, but MLX requires C++20 device code and nvcc 11.4
-# has no C++20. clang DOES support C++20 + sm_37 against the CUDA 11.4 toolkit
-# (verified), so MLX must be built with clang as the CUDA compiler:
-#
-#   cmake -S x/mlx -B build/mlx -G Ninja \
-#         -DCMAKE_CUDA_COMPILER=clang++ -DCMAKE_CUDA_ARCHITECTURES=37
-#   cmake --build build/mlx
-#
-# Mixing nvcc (GGML) and clang (MLX) in one CMake project isn't possible, so the
-# spike stays standalone until the runner integration (#191) decides how to ship it.
+# Built incrementally: core first (this commit), then backend/common + cpu, then
+# the CUDA backend (CUTLASS/tensor-core paths rewritten to cuBLAS/SIMT).
 
-cmake_minimum_required(VERSION 3.25)
-project(mlx_k80 CXX CUDA)
+cmake_minimum_required(VERSION 3.21)
+project(mlx_k80 CXX)
 
-# Pin MLX core to the version upstream Ollama uses (shared file at repo root).
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../MLX_VERSION" MLX_GIT_TAG)
-string(STRIP "${MLX_GIT_TAG}" MLX_GIT_TAG)
-message(STATUS "MLX K80 port: building MLX @ ${MLX_GIT_TAG}")
-
-# CUDA backend only. No Metal (that's the macOS path); safetensors loader on so we
-# can actually load model weights; GGUF loader off (we don't need MLX's GGUF).
-set(MLX_BUILD_METAL OFF CACHE BOOL "" FORCE)
-set(MLX_BUILD_GGUF OFF CACHE BOOL "" FORCE)
-set(MLX_BUILD_SAFETENSORS ON CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-
-# Target Kepler. Caller overrides with -DCMAKE_CUDA_ARCHITECTURES=37.
-if(NOT CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 37)
-endif()
-set(MLX_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES})
-
-if(CMAKE_CUDA_COMPILER)
-    set(MLX_BUILD_CUDA ON CACHE BOOL "Build MLX CUDA backend" FORCE)
-else()
-    message(FATAL_ERROR "MLX K80 build needs a CUDA compiler (pass -DCMAKE_CUDA_COMPILER=clang++)")
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
 
-include(FetchContent)
-FetchContent_Declare(
-    mlx
-    GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
-    GIT_TAG ${MLX_GIT_TAG}
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../MLX_VERSION" MLX_VER)
+string(STRIP "${MLX_VER}" MLX_VER)
+message(STATUS "MLX K80 port: vendored MLX @ ${MLX_VER}")
+
+set(MLX_SRC ${CMAKE_CURRENT_SOURCE_DIR}/mlx)
+
+# Core (host C++). Ported to C++17 — see device.h/stream.h (explicit ==/!=).
+add_library(mlx STATIC
+    ${MLX_SRC}/array.cpp
+    ${MLX_SRC}/compile.cpp
+    ${MLX_SRC}/device.cpp
+    ${MLX_SRC}/dtype.cpp
+    ${MLX_SRC}/dtype_utils.cpp
+    ${MLX_SRC}/export.cpp
+    ${MLX_SRC}/einsum.cpp
+    ${MLX_SRC}/fast.cpp
+    ${MLX_SRC}/fft.cpp
+    ${MLX_SRC}/ops.cpp
+    ${MLX_SRC}/graph_utils.cpp
+    ${MLX_SRC}/primitives.cpp
+    ${MLX_SRC}/random.cpp
+    ${MLX_SRC}/scheduler.cpp
+    ${MLX_SRC}/stream.cpp
+    ${MLX_SRC}/transforms.cpp
+    ${MLX_SRC}/utils.cpp
+    ${MLX_SRC}/linalg.cpp
+    ${MLX_SRC}/version.cpp
 )
-FetchContent_MakeAvailable(mlx)
 
-# MLX's CUDA kernels (CUTLASS-heavy) can each consume several GB while compiling.
-# Cap concurrent CUDA compiles by a per-file RAM budget so the build host doesn't
-# OOM. Ninja-only (JOB_POOLS has no effect under Make). Mirrors upstream Ollama.
-if(CMAKE_GENERATOR STREQUAL "Ninja")
-    file(GLOB_RECURSE _mlx_cu "${mlx_SOURCE_DIR}/mlx/backend/cuda/*.cu")
-    if(_mlx_cu)
-        set(MLX_CUDA_RAM_MB 22000 CACHE STRING "per-file RAM budget (MB) for cuda compile pool")
-        cmake_host_system_information(RESULT _ram_mb QUERY TOTAL_PHYSICAL_MEMORY)
-        math(EXPR _pool "${_ram_mb} / ${MLX_CUDA_RAM_MB}")
-        if(_pool LESS 2)
-            set(_pool 2)
-        endif()
-        set_property(GLOBAL APPEND PROPERTY JOB_POOLS cuda_compile=${_pool})
-        foreach(f ${_mlx_cu})
-            set_property(SOURCE "${f}" TARGET_DIRECTORY mlx PROPERTY JOB_POOL_COMPILE cuda_compile)
-        endforeach()
-        message(STATUS "MLX cuda_compile pool: ${_pool} (host RAM ${_ram_mb} MB)")
-    endif()
-endif()
+target_include_directories(mlx PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}                       # "mlx/..." -> vendored tree
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fmt/include
+)
+
+# fmt header-only (vendored); FMT_UNICODE=0 mirrors MLX (Unicode fmt fails in .cu).
+target_compile_definitions(mlx PRIVATE
+    FMT_HEADER_ONLY=1
+    FMT_UNICODE=0
+    MLX_VERSION="${MLX_VER}"
+)
