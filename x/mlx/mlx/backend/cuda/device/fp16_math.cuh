@@ -131,6 +131,16 @@ MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, >=)
 MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, ==)
 MLX_DEFINE_HALF_HALF_CMP(__nv_bfloat16, __bfloat162float, !=)
 
+// Unary minus: native operator-(__half) is also sm_53+; provide it via float so
+// expressions like `-numeric_limits<__half>::infinity()` don't fall back to the
+// ambiguous __half->builtin conversions.
+__forceinline__ __device__ __half operator-(__half x) {
+  return __float2half(-__half2float(x));
+}
+__forceinline__ __device__ __nv_bfloat16 operator-(__nv_bfloat16 x) {
+  return __float2bfloat16(-__bfloat162float(x));
+}
+
 #undef MLX_DEFINE_HALF_HALF_OP
 #undef MLX_DEFINE_HALF_HALF_CMP
 

@@ -47,7 +47,9 @@ struct Remainder {
     } else if constexpr (is_complex_v<T>) {
       return x % y;
     } else {
-      T r = cuda::std::fmod(x, y);
+      // K80 port: fmod(half/bf16) is ambiguous; compute in float/double accumulator.
+      using AccT = cuda::std::conditional_t<cuda::std::is_same_v<T, double>, double, float>;
+      T r = T(cuda::std::fmod(static_cast<AccT>(x), static_cast<AccT>(y)));
       if (r != 0 && (r < 0 != y < 0)) {
         r = r + y;
       }
@@ -232,7 +234,9 @@ struct Power {
     } else if constexpr (is_complex_v<T>) {
       return cuda::std::pow(base, exp);
     } else {
-      return cuda::std::pow(base, exp);
+      // K80 port: pow(half/bf16) is ambiguous; compute in float/double accumulator.
+      using AccT = cuda::std::conditional_t<cuda::std::is_same_v<T, double>, double, float>;
+      return T(cuda::std::pow(static_cast<AccT>(base), static_cast<AccT>(exp)));
     }
   }
 };

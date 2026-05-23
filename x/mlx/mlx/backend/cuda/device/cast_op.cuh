@@ -97,6 +97,7 @@ struct CastOp<
     DstT,
     cuda::std::enable_if_t<
         !cuda::std::is_convertible_v<SrcT, DstT> && !is_complex_v<SrcT> &&
+        !is_complex_v<DstT> && // K80 port: avoid overlap with real->complex spec
         !cuda::std::is_same_v<DstT, __half> &&
         !cuda::std::is_same_v<DstT, __nv_bfloat16> &&
         (cuda::std::is_same_v<SrcT, __half> ||
