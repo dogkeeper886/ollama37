@@ -3,7 +3,7 @@
 #include "mlx/backend/gpu/eval.h"
 #include "mlx/backend/cuda/allocator.h"
 #include "mlx/backend/cuda/cublas_utils.h"
-#include "mlx/backend/cuda/cudnn_utils.h"
+// K80 port: cuDNN not built (conv/sdpa use custom kernels) — cudnn_utils.h omitted.
 #include "mlx/backend/cuda/event.h"
 #include "mlx/primitives.h"
 #include "mlx/scheduler.h"
@@ -22,9 +22,8 @@ void init() {
 void new_stream(Stream s) {
   // Make sure the handles get destroyed after CommandEncoder.
   init_cublas_handles_cache();
-  init_cudnn_handles_cache();
-  init_cudnn_conv_cache();
-  init_cudnn_sdpa_cache();
+  // K80 port: cuDNN is not built (conv/sdpa use custom kernels, not cuDNN), so
+  // skip the cuDNN handle/conv/sdpa cache initialization.
   // Create CommandEncoder.
   assert(s.device == Device::gpu);
   auto& encoders = cu::get_command_encoders();

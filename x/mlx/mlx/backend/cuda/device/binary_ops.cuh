@@ -74,7 +74,10 @@ struct NaNEqual {
           (x.real() == y.real() && isnan(x.imag()) && isnan(y.imag())) ||
           (isnan(x.real()) && isnan(y.real()) && x.imag() == y.imag());
     } else {
-      return x == y || (isnan(x) && isnan(y));
+      // K80 port: isnan(half/bf16) is ambiguous (converts to both float and long
+      // double via the prelude's std:: imports). Cast to float — NaN-ness is
+      // preserved for every element type.
+      return x == y || (isnan(static_cast<float>(x)) && isnan(static_cast<float>(y)));
     }
   }
 };
@@ -286,7 +289,10 @@ struct RightShift {
 struct ArcTan2 {
   template <typename T>
   __device__ T operator()(T y, T x) {
-    return cuda::std::atan2(y, x);
+    // K80 port: cuda::std::atan2 is ambiguous for half/bf16 (they convert to both
+    // float and double). Compute in float for those (and float), double for double.
+    using AccT = cuda::std::conditional_t<cuda::std::is_same_v<T, double>, double, float>;
+    return T(cuda::std::atan2(static_cast<AccT>(y), static_cast<AccT>(x)));
   }
 };
 

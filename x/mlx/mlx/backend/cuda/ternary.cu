@@ -73,9 +73,9 @@ __global__ void ternary_g_nd(
   auto a_vec =
       load_vector<N_READS>(a + a_idx, index_x, shape_x, a_stride_x, false);
   auto b_vec =
-      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, T(0));
+      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, T(0.0f));
   auto c_vec =
-      load_vector<N_READS>(c + c_idx, index_x, shape_x, c_stride_x, T(0));
+      load_vector<N_READS>(c + c_idx, index_x, shape_x, c_stride_x, T(0.0f));
 
   AlignedVector<T, N_READS> out_vec;
 #pragma unroll
@@ -121,9 +121,9 @@ __global__ void ternary_g(
   auto a_vec =
       load_vector<N_READS>(a + a_idx, index_x, shape_x, a_stride_x, false);
   auto b_vec =
-      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, T(0));
+      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, T(0.0f));
   auto c_vec =
-      load_vector<N_READS>(c + c_idx, index_x, shape_x, c_stride_x, T(0));
+      load_vector<N_READS>(c + c_idx, index_x, shape_x, c_stride_x, T(0.0f));
 
   AlignedVector<T, N_READS> out_vec;
 #pragma unroll

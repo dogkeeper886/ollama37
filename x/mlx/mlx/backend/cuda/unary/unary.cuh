@@ -60,7 +60,7 @@ __global__ void unary_g(
   auto idx =
       elem_to_loc(index_rest * shape_x, shape.data(), strides.data(), ndim);
   auto in_vec =
-      load_vector<N_READS>(in + idx, index_x, shape_x, stride_x, In(0));
+      load_vector<N_READS>(in + idx, index_x, shape_x, stride_x, In(0.0f));
   AlignedVector<Out, N_READS> out_vec;
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {

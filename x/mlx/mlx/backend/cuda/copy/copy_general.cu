@@ -38,7 +38,7 @@ __global__ void copy_gg_nd(
       strides_out.data());
 
   auto in_vec =
-      load_vector<N_READS>(in + idx_in, index_x, shape_x, in_stride_x, In(0));
+      load_vector<N_READS>(in + idx_in, index_x, shape_x, in_stride_x, In(0.0f));
   AlignedVector<Out, N_READS> out_vec;
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {
@@ -77,7 +77,7 @@ __global__ void copy_gg(
       ndim);
 
   auto in_vec =
-      load_vector<N_READS>(in + idx_in, index_x, shape_x, in_stride_x, In(0));
+      load_vector<N_READS>(in + idx_in, index_x, shape_x, in_stride_x, In(0.0f));
   AlignedVector<Out, N_READS> out_vec;
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {

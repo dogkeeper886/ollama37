@@ -72,7 +72,7 @@ __global__ void layer_norm(
   float sum = 0;
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
 #pragma unroll
     for (int i = 0; i < N_READS; ++i) {
       sum += static_cast<float>(xn[i]);
@@ -107,9 +107,9 @@ __global__ void layer_norm(
   // Outputs.
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
-    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
-    auto bn = load_vector<N_READS>(b, index, axis_size, b_stride, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
+    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
+    auto bn = load_vector<N_READS>(b, index, axis_size, b_stride, T(0.0f));
 #pragma unroll
     for (int i = 0; i < N_READS; ++i) {
       float norm = (static_cast<float>(xn[i]) - mean) * normalizer;
@@ -148,7 +148,7 @@ __global__ void layer_norm_vjp(
   float sum = 0;
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
 #pragma unroll
     for (int i = 0; i < N_READS; ++i) {
       sum += static_cast<float>(xn[i]);
@@ -163,8 +163,8 @@ __global__ void layer_norm_vjp(
   float3 factors = {};
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto gn = load_vector<N_READS>(g, index, axis_size, T(0));
-    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
+    auto gn = load_vector<N_READS>(g, index, axis_size, T(0.0f));
+    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
 
     if ((index + 1) * N_READS <= axis_size) {
       auto xn = load_vector<N_READS>(x, index);
@@ -195,9 +195,9 @@ __global__ void layer_norm_vjp(
   // Outputs.
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
-    auto gn = load_vector<N_READS>(g, index, axis_size, T(0));
-    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
+    auto gn = load_vector<N_READS>(g, index, axis_size, T(0.0f));
+    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
 
     for (int i = 0; i < N_READS; i++) {
       float xi = (static_cast<float>(xn[i]) - mean) * normalizer;

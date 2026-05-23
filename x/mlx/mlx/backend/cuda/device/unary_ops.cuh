@@ -272,7 +272,7 @@ struct Sign {
     } else if constexpr (cuda::std::is_same_v<T, __nv_bfloat16>) {
       return static_cast<float>((x > T(0.f)) - (x < T(0.f)));
     } else {
-      return (x > T(0)) - (x < T(0));
+      return (x > T(0.0f)) - (x < T(0.0f));
     }
   }
 };

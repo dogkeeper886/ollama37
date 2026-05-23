@@ -95,7 +95,7 @@ __global__ void softmax(const T* in, T* out, int axis_size) {
   // Write output.
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); r++) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto vals = load_vector<N_READS>(in, index, axis_size, T(0));
+    auto vals = load_vector<N_READS>(in, index, axis_size, T(0.0f));
     for (int i = 0; i < N_READS; i++) {
       vals[i] = softmax_exp(static_cast<AccT>(vals[i]) - maxval) * normalizer;
     }

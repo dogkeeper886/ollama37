@@ -77,7 +77,7 @@ __global__ void rms_norm_small(
   // Normalizer.
   float normalizer = 0;
   auto index = block.thread_index().x;
-  auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
+  auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {
     float t = static_cast<float>(xn[i]);
@@ -88,7 +88,7 @@ __global__ void rms_norm_small(
   normalizer = rsqrt(normalizer / axis_size + eps);
 
   // Outputs.
-  auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
+  auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {
     float y = static_cast<float>(xn[i]) * normalizer;
@@ -118,7 +118,7 @@ __global__ void rms_norm(
   float normalizer = 0;
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
 #pragma unroll
     for (int i = 0; i < N_READS; ++i) {
       float t = static_cast<float>(xn[i]);
@@ -131,8 +131,8 @@ __global__ void rms_norm(
   // Outputs.
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
-    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
+    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
 #pragma unroll
     for (int i = 0; i < N_READS; ++i) {
       float y = static_cast<float>(xn[i]) * normalizer;
@@ -178,9 +178,9 @@ __global__ void rms_norm_vjp_small(
   // Normalizer.
   float2 factors = {};
   auto index = block.thread_index().x;
-  auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
-  auto gn = load_vector<N_READS>(g, index, axis_size, T(0));
-  auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
+  auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
+  auto gn = load_vector<N_READS>(g, index, axis_size, T(0.0f));
+  auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
   for (int i = 0; i < N_READS; i++) {
     float t = static_cast<float>(xn[i]);
     float wi = wn[i];
@@ -235,9 +235,9 @@ __global__ void rms_norm_vjp(
   float2 factors = {};
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
-    auto gn = load_vector<N_READS>(g, index, axis_size, T(0));
-    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
+    auto gn = load_vector<N_READS>(g, index, axis_size, T(0.0f));
+    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
     for (int i = 0; i < N_READS; i++) {
       float t = static_cast<float>(xn[i]);
       float wi = wn[i];
@@ -254,9 +254,9 @@ __global__ void rms_norm_vjp(
   // Outputs.
   for (int r = 0; r < cuda::ceil_div(axis_size, BLOCK_DIM * N_READS); ++r) {
     auto index = r * BLOCK_DIM + block.thread_rank();
-    auto xn = load_vector<N_READS>(x, index, axis_size, T(0));
-    auto gn = load_vector<N_READS>(g, index, axis_size, T(0));
-    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0));
+    auto xn = load_vector<N_READS>(x, index, axis_size, T(0.0f));
+    auto gn = load_vector<N_READS>(g, index, axis_size, T(0.0f));
+    auto wn = load_vector<N_READS>(w, index, axis_size, w_stride, T(0.0f));
     for (int i = 0; i < N_READS; i++) {
       float xi = xn[i];
       float wi = wn[i];

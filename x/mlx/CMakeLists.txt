@@ -91,7 +91,6 @@ set(MLX_CUDA_HOST
     ${CUDA_SRC}/slicing.cpp
     ${CUDA_SRC}/utils.cpp
     ${CUDA_SRC}/worker.cpp
-    ${CUDA_SRC}/scaled_dot_product_attention.cpp
 )
 
 # Device-side (.cu -> nvcc).
@@ -118,7 +117,6 @@ list(APPEND MLX_CUDA_KERNELS
     ${CUDA_SRC}/softmax.cu
     ${CUDA_SRC}/logsumexp.cu
     ${CUDA_SRC}/random.cu
-    ${CUDA_SRC}/scaled_dot_product_attention.cu
 )
 
 target_sources(mlx PRIVATE ${MLX_CUDA_HOST} ${MLX_CUDA_KERNELS})
@@ -131,10 +129,14 @@ set_target_properties(mlx PROPERTIES
 
 # nvcc 11.4 has no C++20; MLX device code needs relaxed-constexpr + extended-lambda.
 # __grid_constant__ is a CUDA-11.7+ qualifier absent in 11.4 -> define it empty.
+set(K80_PRELUDE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cccl_shim/k80_prelude.h)
 target_compile_options(mlx PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>
     $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
+    # Force-include the cmath :: re-export prelude in every TU (see k80_prelude.h).
+    "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-include ${K80_PRELUDE}>"
+    "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${K80_PRELUDE}>"
 )
 target_compile_definitions(mlx PRIVATE __grid_constant__=)
 

@@ -159,9 +159,9 @@ __global__ void binary_two_g_nd(
   auto [a_idx, b_idx] = elem_to_loc_nd<NDIM>(
       index_rest * shape_x, shape.data(), a_strides.data(), b_strides.data());
   auto a_vec =
-      load_vector<N_READS>(a + a_idx, index_x, shape_x, a_stride_x, In(0));
+      load_vector<N_READS>(a + a_idx, index_x, shape_x, a_stride_x, In(0.0f));
   auto b_vec =
-      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, In(0));
+      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, In(0.0f));
 
   AlignedVector<Out, N_READS> out_vec_a;
   AlignedVector<Out, N_READS> out_vec_b;
@@ -206,9 +206,9 @@ __global__ void binary_two_g(
       b_strides.data(),
       ndim);
   auto a_vec =
-      load_vector<N_READS>(a + a_idx, index_x, shape_x, a_stride_x, In(0));
+      load_vector<N_READS>(a + a_idx, index_x, shape_x, a_stride_x, In(0.0f));
   auto b_vec =
-      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, In(0));
+      load_vector<N_READS>(b + b_idx, index_x, shape_x, b_stride_x, In(0.0f));
 
   AlignedVector<Out, N_READS> out_vec_a;
   AlignedVector<Out, N_READS> out_vec_b;

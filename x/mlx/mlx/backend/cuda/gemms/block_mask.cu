@@ -57,7 +57,7 @@ __global__ void block_mask_copy_kernel(
   }
 
   if constexpr (std::is_same_v<MaskT, bool>) {
-    dst[idx] = mask_val ? src[src_offset] : T(0);
+    dst[idx] = mask_val ? src[src_offset] : T(0.0f);
   } else {
     dst[idx] = src[src_offset] * T(mask_val);
   }

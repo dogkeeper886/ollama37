@@ -33,7 +33,7 @@ __global__ void copy_g_nd(
   auto idx =
       elem_to_loc_nd<NDIM>(index_rest * shape_x, shape.data(), strides.data());
   auto in_vec =
-      load_vector<N_READS>(in + idx, index_x, shape_x, stride_x, In(0));
+      load_vector<N_READS>(in + idx, index_x, shape_x, stride_x, In(0.0f));
   AlignedVector<Out, N_READS> out_vec;
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {
@@ -65,7 +65,7 @@ __global__ void copy_g(
   auto idx =
       elem_to_loc(index_rest * shape_x, shape.data(), strides.data(), ndim);
   auto in_vec =
-      load_vector<N_READS>(in + idx, index_x, shape_x, stride_x, In(0));
+      load_vector<N_READS>(in + idx, index_x, shape_x, stride_x, In(0.0f));
   AlignedVector<Out, N_READS> out_vec;
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {
@@ -94,7 +94,7 @@ copy_col_row(const In* in, Out* out, int64_t rows, int64_t cols) {
 #pragma unroll
   for (int i = 0; i < N_READS; ++i) {
     if ((tile_col + tidy + i) < cols) {
-      auto in_vec = load_vector<N_READS>(in_ptr, tidx, rows - tile_row, In(0));
+      auto in_vec = load_vector<N_READS>(in_ptr, tidx, rows - tile_row, In(0.0f));
 #pragma unroll
       for (int j = 0; j < N_READS; ++j) {
         tile[N_READS * tidx + j][tidy + i] = CastOp<In, Out>{}(in_vec[j]);

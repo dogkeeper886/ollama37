@@ -27,12 +27,16 @@ namespace mlx::core::cu {
 // (added in a later CCCL). For non-cluster grids it is the linear block index.
 // Other missing cg accessors are replaced inline: block_index()->blockIdx,
 // dim_threads()->blockDim, num_threads()->product(blockDim).
+// Guarded to device compilation: this header is also included by host .cpp (gcc),
+// where the blockIdx/gridDim device built-ins don't exist.
+#ifdef __CUDACC__
 __device__ __forceinline__ unsigned long long mlx_block_rank() {
   return static_cast<unsigned long long>(blockIdx.x) +
       static_cast<unsigned long long>(gridDim.x) *
       (static_cast<unsigned long long>(blockIdx.y) +
        static_cast<unsigned long long>(gridDim.y) * blockIdx.z);
 }
+#endif
 
 // To pass shape/strides to kernels via constant memory, their size must be
 // known at compile time.
