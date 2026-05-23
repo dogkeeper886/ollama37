@@ -12,20 +12,23 @@ namespace mlx::core::cu {
 // Binary ops for half types.
 ///////////////////////////////////////////////////////////////////////////////
 
-#define MLX_DEFINE_BINARY_OP(NAME, HALF_OP)                        \
+// K80 port: __hmax/__hmin are sm_80+ half intrinsics, absent on sm_37. Compute the
+// half/bf16 max/min via float (we only build sm_37).
+#define MLX_DEFINE_BINARY_OP(NAME, FLOAT_OP)                       \
   template <typename T>                                            \
   __forceinline__ __device__ auto NAME(T x, T y) {                 \
     if constexpr (cuda::std::is_same_v<T, __half>) {               \
-      return HALF_OP(x, y);                                        \
+      return __float2half(FLOAT_OP(__half2float(x), __half2float(y))); \
     } else if constexpr (cuda::std::is_same_v<T, __nv_bfloat16>) { \
-      return HALF_OP(x, y);                                        \
+      return __float2bfloat16(                                     \
+          FLOAT_OP(__bfloat162float(x), __bfloat162float(y)));     \
     } else {                                                       \
       return ::NAME(x, y);                                         \
     }                                                              \
   }
 
-MLX_DEFINE_BINARY_OP(max, __hmax)
-MLX_DEFINE_BINARY_OP(min, __hmin)
+MLX_DEFINE_BINARY_OP(max, ::fmaxf)
+MLX_DEFINE_BINARY_OP(min, ::fminf)
 
 #undef MLX_DEFINE_BINARY_OP
 

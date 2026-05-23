@@ -134,15 +134,22 @@ struct LogAddExp {
         return Log1p{}(Exp{}(min - max)) + max;
       }
     } else {
-      if (cuda::std::isnan(x) || cuda::std::isnan(y)) {
+      // K80 port: isnan/exp/log1p on half/bf16 are ambiguous (convert to both
+      // float and double). Detect NaN via float and compute the tail in an
+      // accumulator type (float for half/bf16/float, double for double).
+      if (cuda::std::isnan(static_cast<float>(x)) ||
+          cuda::std::isnan(static_cast<float>(y))) {
         return cuda::std::numeric_limits<T>::quiet_NaN();
       }
       T maxval = max(x, y);
       T minval = min(x, y);
+      using AccT = cuda::std::conditional_t<cuda::std::is_same_v<T, double>, double, float>;
       return (minval == -cuda::std::numeric_limits<T>::infinity() ||
               maxval == cuda::std::numeric_limits<T>::infinity())
           ? maxval
-          : T(maxval + cuda::std::log1p(cuda::std::exp(minval - maxval)));
+          : T(static_cast<AccT>(maxval) +
+              cuda::std::log1p(cuda::std::exp(
+                  static_cast<AccT>(minval) - static_cast<AccT>(maxval))));
     }
   };
 };
@@ -158,7 +165,7 @@ struct Maximum {
       }
       return x > y ? x : y;
     } else {
-      if (cuda::std::isnan(x)) {
+      if (cuda::std::isnan(static_cast<float>(x))) { // K80 port: half/bf16 isnan
         return x;
       }
       return x > y ? x : y;
@@ -177,7 +184,7 @@ struct Minimum {
       }
       return x < y ? x : y;
     } else {
-      if (cuda::std::isnan(x)) {
+      if (cuda::std::isnan(static_cast<float>(x))) { // K80 port: half/bf16 isnan
         return x;
       }
       return x < y ? x : y;
