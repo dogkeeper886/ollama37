@@ -34,17 +34,26 @@ struct uint_by_size<8> {
 
 template <typename T, typename Op>
 __device__ void atomic_reduce(T* x, T y) {
-  if constexpr (sizeof(T) == 1) {
-    using U = uint16_t;
-    U* x_int = (U*)((char*)x - ((size_t)x % 2));
-    int shift = ((char*)x - (char*)x_int) * 8;
-    int mask = 0xff << shift;
-    U old_val, new_val;
+  if constexpr (sizeof(T) < 4) {
+    // K80 port: sm_37 has no 8/16-bit atomicCAS; RMW via the containing 32-bit
+    // word (covers both 1-byte and 2-byte half/bf16 types).
+    auto uaddr = reinterpret_cast<uintptr_t>(x);
+    unsigned int* base = reinterpret_cast<unsigned int*>(uaddr & ~uintptr_t(3));
+    int shift = static_cast<int>(uaddr & 3u) * 8;
+    unsigned int width_mask = (sizeof(T) == 1) ? 0xffu : 0xffffu;
+    unsigned int mask = width_mask << shift;
+    unsigned int old_word = *base, assumed;
     do {
-      old_val = *x_int;
-      T result = Op{}(static_cast<T>((old_val >> shift) & 0xff), y);
-      new_val = (old_val & ~mask) | (result << shift);
-    } while (atomicCAS(x_int, old_val, new_val) != old_val);
+      assumed = old_word;
+      unsigned int cur_bits = (assumed >> shift) & width_mask;
+      T cur;
+      memcpy(&cur, &cur_bits, sizeof(T));
+      T result = Op{}(cur, y);
+      unsigned int res_bits = 0;
+      memcpy(&res_bits, &result, sizeof(T));
+      unsigned int new_word = (assumed & ~mask) | ((res_bits & width_mask) << shift);
+      old_word = atomicCAS(base, assumed, new_word);
+    } while (assumed != old_word);
   } else {
     using U = typename uint_by_size<sizeof(T)>::type;
     U* x_int = (U*)(x);

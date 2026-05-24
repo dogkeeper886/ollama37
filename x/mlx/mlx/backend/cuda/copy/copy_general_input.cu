@@ -77,8 +77,15 @@ __global__ void copy_g(
 template <typename In, typename Out, int N_READS>
 __global__ void
 copy_col_row(const In* in, Out* out, int64_t rows, int64_t cols) {
-  __shared__ Out
-      tile[N_READS * TILE_SIZE][N_READS * TILE_SIZE + 4 / sizeof(Out)];
+  // K80 port: a __shared__ array of a non-trivially-constructible Out (half/bf16/
+  // complex have non-trivial default ctors under CUDA 11.4) triggers "initializer
+  // not allowed for __shared__ variable". Use an uninitialized aligned byte buffer
+  // reinterpreted as the 2D tile so no element constructor runs.
+  constexpr int kTileRows = N_READS * TILE_SIZE;
+  constexpr int kTileCols = N_READS * TILE_SIZE + 4 / sizeof(Out);
+  __shared__ __align__(16) unsigned char tile_storage[kTileRows]
+                                                     [kTileCols * sizeof(Out)];
+  auto tile = reinterpret_cast<Out(*)[kTileCols]>(tile_storage);
 
   auto block = cg::this_thread_block();
   auto grid = cg::this_grid();

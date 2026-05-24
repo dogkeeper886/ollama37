@@ -49,7 +49,10 @@ __global__ void all_reduce(T* in, U* out, size_t block_step, size_t size) {
     }
   }
 
-  __shared__ U shared_accumulators[32];
+  // K80 port: __shared__ array of a non-trivially-constructible U (half/bf16/
+  // complex) triggers "initializer not allowed"; use an uninitialized byte buffer.
+  __shared__ __align__(16) unsigned char shared_accumulators_bytes[32 * sizeof(U)];
+  U* shared_accumulators = reinterpret_cast<U*>(shared_accumulators_bytes);
   block_reduce(block, warp, accs, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {

@@ -77,7 +77,8 @@ struct Min {
         return b;
       }
     } else if constexpr (!cuda::std::is_integral_v<T>) {
-      if (cuda::std::isnan(a) || cuda::std::isnan(b)) {
+      if (cuda::std::isnan(static_cast<float>(a)) ||
+          cuda::std::isnan(static_cast<float>(b))) { // K80 port: half/bf16 isnan
         return cuda::std::numeric_limits<float>::quiet_NaN();
       }
     }
@@ -101,7 +102,8 @@ struct Max {
         return b;
       }
     } else if constexpr (!cuda::std::is_integral_v<T>) {
-      if (cuda::std::isnan(a) || cuda::std::isnan(b)) {
+      if (cuda::std::isnan(static_cast<float>(a)) ||
+          cuda::std::isnan(static_cast<float>(b))) { // K80 port: half/bf16 isnan
         return cuda::std::numeric_limits<float>::quiet_NaN();
       }
     }
