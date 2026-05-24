@@ -16,4 +16,7 @@ struct scoped_range {
   explicit scoped_range(const std::string&) {}
 };
 
+inline void mark(const char*) {}
+inline void mark(const std::string&) {}
+
 } // namespace nvtx3

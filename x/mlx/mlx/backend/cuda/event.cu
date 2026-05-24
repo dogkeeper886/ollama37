@@ -311,8 +311,8 @@ bool AtomicEvent::is_signaled(uint32_t val) const {
 uint32_t AtomicEvent::value() const {
   nvtx3::scoped_range r("cu::AtomicEvent::value");
   if (coherent_) {
-    cuda::atomic_ref<uint32_t> ac(*ptr());
-    return ac.load();
+    // K80 port: volatile read instead of libcu++ cuda::atomic_ref (sm_60 gate).
+    return *static_cast<volatile uint32_t*>(ptr());
   } else {
     uint32_t val;
     CHECK_CUDA_ERROR(

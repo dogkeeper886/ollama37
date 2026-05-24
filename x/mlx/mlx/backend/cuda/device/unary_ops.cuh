@@ -16,6 +16,11 @@ struct Abs {
   __device__ T operator()(T x) {
     if constexpr (cuda::std::is_unsigned_v<T>) {
       return x;
+    } else if constexpr (
+        cuda::std::is_same_v<T, __half> ||
+        cuda::std::is_same_v<T, __nv_bfloat16>) {
+      // K80 port: abs(half/bf16) is ambiguous; compute in float.
+      return T(cuda::std::abs(static_cast<float>(x)));
     } else {
       return cuda::std::abs(x);
     }
@@ -253,8 +258,12 @@ struct Round {
 struct Sigmoid {
   template <typename T>
   __device__ T operator()(T x) {
-    T y = 1 / (1 + cuda::std::exp(cuda::std::abs(x)));
-    return (x < 0) ? y : 1 - y;
+    // K80 port: exp/abs and arithmetic on half/bf16 are ambiguous; compute in a
+    // float/double accumulator.
+    using AccT = cuda::std::conditional_t<cuda::std::is_same_v<T, double>, double, float>;
+    AccT ax = static_cast<AccT>(x);
+    AccT y = AccT(1) / (AccT(1) + cuda::std::exp(cuda::std::abs(ax)));
+    return (x < 0) ? T(y) : T(AccT(1) - y);
   }
 };
 

@@ -112,7 +112,7 @@ list(APPEND MLX_CUDA_KERNELS
     ${CUDA_SRC}/rms_norm.cu
     ${CUDA_SRC}/layer_norm.cu
     ${CUDA_SRC}/rope.cu
-    ${CUDA_SRC}/scan.cu
+    # scan.cu deferred: needs <cooperative_groups/scan.h>, absent in CUDA 11.4
     ${CUDA_SRC}/sort.cu
     ${CUDA_SRC}/softmax.cu
     ${CUDA_SRC}/logsumexp.cu

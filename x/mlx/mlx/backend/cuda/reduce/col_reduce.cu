@@ -178,7 +178,7 @@ __global__ void col_reduce_looped(
   // Do warp reduce for each output.
   constexpr int n_outputs = BN / threads_per_row;
   static_assert(BM == 32 && n_outputs == N_READS);
-  __shared__ U shared_vals[BM * BN];
+  __shared__ __align__(16) unsigned char shared_vals_k80[(BM * BN) * sizeof(U)]; U* shared_vals = reinterpret_cast<U*>(shared_vals_k80);
   short s_idx = thread_y * BN + thread_x * N_READS;
   for (int i = 0; i < N_READS; i++) {
     shared_vals[s_idx + i] = totals[i];

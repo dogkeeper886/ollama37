@@ -344,7 +344,7 @@ __global__ void block_sort_kernel(
   using IdxT = typename sort_kernel::IdxT;
 
   if constexpr (ARG_SORT) {
-    __shared__ ValT tgp_vals[sort_kernel::N_PER_BLOCK];
+    __shared__ __align__(16) unsigned char tgp_vals_k80[(sort_kernel::N_PER_BLOCK) * sizeof(ValT)]; ValT* tgp_vals = reinterpret_cast<ValT*>(tgp_vals_k80);
     __shared__ IdxT tgp_idxs[sort_kernel::N_PER_BLOCK];
     sort_kernel::block_sort(
         inp,
@@ -357,7 +357,7 @@ __global__ void block_sort_kernel(
         tgp_vals,
         tgp_idxs);
   } else {
-    __shared__ ValT tgp_vals[sort_kernel::N_PER_BLOCK];
+    __shared__ __align__(16) unsigned char tgp_vals_k80[(sort_kernel::N_PER_BLOCK) * sizeof(ValT)]; ValT* tgp_vals = reinterpret_cast<ValT*>(tgp_vals_k80);
     sort_kernel::block_sort(
         inp,
         out,
@@ -401,7 +401,7 @@ __global__ void block_sort_nc_kernel(
   out += out_block_idx;
 
   if constexpr (ARG_SORT) {
-    __shared__ ValT tgp_vals[sort_kernel::N_PER_BLOCK];
+    __shared__ __align__(16) unsigned char tgp_vals_k80[(sort_kernel::N_PER_BLOCK) * sizeof(ValT)]; ValT* tgp_vals = reinterpret_cast<ValT*>(tgp_vals_k80);
     __shared__ IdxT tgp_idxs[sort_kernel::N_PER_BLOCK];
     sort_kernel::block_sort(
         inp,
@@ -414,7 +414,7 @@ __global__ void block_sort_nc_kernel(
         tgp_vals,
         tgp_idxs);
   } else {
-    __shared__ ValT tgp_vals[sort_kernel::N_PER_BLOCK];
+    __shared__ __align__(16) unsigned char tgp_vals_k80[(sort_kernel::N_PER_BLOCK) * sizeof(ValT)]; ValT* tgp_vals = reinterpret_cast<ValT*>(tgp_vals_k80);
     sort_kernel::block_sort(
         inp,
         out,
@@ -532,7 +532,7 @@ __global__ void mb_block_sort_kernel(
   out_vals += blockIdx.y * size_sorted_axis;
   out_idxs += blockIdx.y * size_sorted_axis;
 
-  __shared__ ValT tgp_vals[sort_kernel::N_PER_BLOCK];
+  __shared__ __align__(16) unsigned char tgp_vals_k80[(sort_kernel::N_PER_BLOCK) * sizeof(ValT)]; ValT* tgp_vals = reinterpret_cast<ValT*>(tgp_vals_k80);
   __shared__ IdxT tgp_idxs[sort_kernel::N_PER_BLOCK];
 
   sort_kernel::block_sort(
@@ -664,7 +664,7 @@ __global__ void mb_block_merge_kernel(
     }
   }
 
-  __shared__ ValT tgp_vals[sort_kernel::N_PER_BLOCK];
+  __shared__ __align__(16) unsigned char tgp_vals_k80[(sort_kernel::N_PER_BLOCK) * sizeof(ValT)]; ValT* tgp_vals = reinterpret_cast<ValT*>(tgp_vals_k80);
   __shared__ IdxT tgp_idxs[sort_kernel::N_PER_BLOCK];
   __syncthreads();
 #pragma unroll

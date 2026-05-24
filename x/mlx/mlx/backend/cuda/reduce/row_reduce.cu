@@ -131,7 +131,7 @@ row_reduce_simple(const T* in, U* out, size_t n_rows, int size) {
     }
   }
 
-  __shared__ U shared_accumulators[32 * M];
+  __shared__ __align__(16) unsigned char shared_accumulators_k80[(32 * M) * sizeof(U)]; U* shared_accumulators = reinterpret_cast<U*>(shared_accumulators_k80);
   block_reduce(block, warp, accs.val, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {
@@ -219,7 +219,7 @@ __global__ void row_reduce_looped(
     }
   }
 
-  __shared__ U shared_accumulators[32];
+  __shared__ __align__(16) unsigned char shared_accumulators_k80[(32) * sizeof(U)]; U* shared_accumulators = reinterpret_cast<U*>(shared_accumulators_k80);
   block_reduce(block, warp, total, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {

@@ -117,7 +117,7 @@ __global__ void contiguous_scan(const T* in, U* out, int32_t axis_size) {
   in += mlx_block_rank() * axis_size;
   out += mlx_block_rank() * axis_size;
 
-  __shared__ U warp_sums[WARP_SIZE];
+  __shared__ __align__(16) unsigned char warp_sums_k80[(WARP_SIZE) * sizeof(U)]; U* warp_sums = reinterpret_cast<U*>(warp_sums_k80);
 
   Op op;
   U init = ReduceInit<Op, T>::value();
@@ -215,7 +215,7 @@ __global__ void strided_scan(
   constexpr int n_warps = BN / N_READS;
   constexpr int n_scans = BN / n_warps;
 
-  __shared__ U read_buffer[BM * BN_pad];
+  __shared__ __align__(16) unsigned char read_buffer_k80[(BM * BN_pad) * sizeof(U)]; U* read_buffer = reinterpret_cast<U*>(read_buffer_k80);
 
   Op op;
   U init = ReduceInit<Op, T>::value();
