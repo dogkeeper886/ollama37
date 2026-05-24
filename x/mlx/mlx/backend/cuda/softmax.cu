@@ -143,7 +143,11 @@ void Softmax::eval_gpu(const std::vector<array>& inputs, array& out) {
     using DataType = cuda_type_t<MLX_GET_TYPE(type_tag)>;
     constexpr int N_READS = 16 / sizeof(DataType);
     dispatch_block_dim(cuda::ceil_div(axis_size, N_READS), [&](auto block_dim) {
-      auto kernel = cu::softmax<DataType, DataType, block_dim(), N_READS>;
+      // K80 port: cg::reduce<half> hits an ambiguous conversion in CUDA 11.4's
+      // cooperative_groups. Accumulate half/bf16 softmax in float (also more
+      // accurate); float/double keep their own accumulator.
+      using AccT = std::conditional_t<(sizeof(DataType) < 4), float, DataType>;
+      auto kernel = cu::softmax<DataType, AccT, block_dim(), N_READS>;
       if (precise) {
         kernel = cu::softmax<DataType, float, block_dim(), N_READS>;
       }
