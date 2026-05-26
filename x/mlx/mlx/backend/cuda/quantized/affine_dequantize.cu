@@ -6,15 +6,23 @@
 // + host function are intentionally omitted — keeps us out of the half-arith
 // + bit-packing mess that blocked the full file on CUDA 11.4.
 //
-// Two K80-specific patches vs. upstream:
+// Three K80-specific patches vs. upstream:
 //
-//   1. `cg::this_grid().dim_blocks()` is a CUDA 11.6+ API; not in 11.4. Replaced
-//      with `gridDim.x * blockDim.x` which computes the identical value.
+//   1. `cg::this_grid().dim_blocks()` is a CUDA 11.6+ API; not in 11.4.
+//      Replaced with `gridDim.x * blockDim.x` (identical value).
 //
-//   2. `static_cast<T>(int_expr)` where T = __half / __nv_bfloat16 is ambiguous
-//      on CUDA 11.4: both `T(float)` and `T(double)` overloads match an int
-//      argument equally. Routed through a `to_t<T>(int)` helper that casts via
-//      float first, which both half types accept unambiguously.
+//   2. Arithmetic on `__half` / `__nv_bfloat16` is ambiguous on CUDA 11.4
+//      whenever mlx's `complex64` operator overloads are in scope, because
+//      both half types expose many `operator T() const` conversions
+//      (int / uint / float / double / bool / …) that match the complex
+//      operators equally with the built-in promotion. The kernel now does
+//      *all* arithmetic in `float`, with a single `static_cast<T>` of the
+//      final result. Avoids both half-half and half-int ambiguity in one
+//      shot.
+//
+//   3. Same `static_cast<T>(int_expr)` int→half ambiguity (multiple ctor
+//      overloads match int) is also gone for free since we never construct
+//      `T` from an int — every value goes through float first.
 //
 // All bits (2/3/4/5/6/8) and group sizes (32/64/128) compile; qwen3.6:35b-mlx
 // uses bits=4 group=64. The unused configurations stay in for upstream parity
@@ -32,12 +40,6 @@ namespace mlx::core {
 namespace cu {
 
 namespace cg = cooperative_groups;
-
-// K80 patch (2): unambiguous int → half/bfloat16 conversion via float.
-template <typename T>
-__device__ __forceinline__ T to_t(int x) {
-  return static_cast<T>(static_cast<float>(x));
-}
 
 template <typename T, int group_size, int bits>
 __global__ void affine_dequantize(
@@ -67,66 +69,57 @@ __global__ void affine_dequantize(
   }
 
   size_t gindex = oindex / group_size;
-  T scale = scales[gindex];
-  T bias = biases[gindex];
+  // K80 patch (2): hoist scale/bias to float once, do all arithmetic in float,
+  // cast back to T at the very end. Avoids any operator on T (half / bfloat16).
+  const float scale = static_cast<float>(scales[gindex]);
+  const float bias = static_cast<float>(biases[gindex]);
   out += oindex;
+
+  // Helper: pack one unsigned int sample → fp16/bf16 output via float.
+  auto write = [&](int slot, unsigned int d) {
+    out[slot] = static_cast<T>(scale * static_cast<float>(d) + bias);
+  };
 
   if constexpr (bits == 3) {
     w += offset * bytes_per_pack;
-    out[0] = to_t<T>(w[0] & 0x7) * scale + bias;
-    out[1] = to_t<T>((w[0] & 0x38) >> 3) * scale + bias;
-    out[2] = (to_t<T>((w[0] & 0xc0) >> 6) + to_t<T>((w[1] & 0x1) << 2)) *
-            scale +
-        bias;
-    out[3] = to_t<T>((w[1] & 0xe) >> 1) * scale + bias;
-    out[4] = to_t<T>((w[1] & 0x70) >> 4) * scale + bias;
-    out[5] = (to_t<T>((w[1] & 0x80) >> 7) + to_t<T>((w[2] & 0x3) << 1)) *
-            scale +
-        bias;
-    out[6] = to_t<T>((w[2] & 0x1c) >> 2) * scale + bias;
-    out[7] = to_t<T>((w[2] & 0xe0) >> 5) * scale + bias;
+    write(0, (w[0]) & 0x7);
+    write(1, (w[0] >> 3) & 0x7);
+    write(2, ((w[0] >> 6) & 0x3) | ((w[1] & 0x1) << 2));
+    write(3, (w[1] >> 1) & 0x7);
+    write(4, (w[1] >> 4) & 0x7);
+    write(5, ((w[1] >> 7) & 0x1) | ((w[2] & 0x3) << 1));
+    write(6, (w[2] >> 2) & 0x7);
+    write(7, (w[2] >> 5) & 0x7);
   } else if constexpr (bits == 5) {
     w += offset * bytes_per_pack;
-    out[0] = to_t<T>(w[0] & 0x1f) * scale + bias;
-    out[1] = (to_t<T>((w[0] & 0xe0) >> 5) + to_t<T>((w[1] & 0x3) << 3)) *
-            scale +
-        bias;
-    out[2] = to_t<T>((w[1] & 0x7c) >> 2) * scale + bias;
-    out[3] = (to_t<T>((w[1] & 0x80) >> 7) + to_t<T>((w[2] & 0xf) << 1)) *
-            scale +
-        bias;
-    out[4] = (to_t<T>((w[2] & 0xf0) >> 4) + to_t<T>((w[3] & 0x1) << 4)) *
-            scale +
-        bias;
-    out[5] = to_t<T>((w[3] & 0x3e) >> 1) * scale + bias;
-    out[6] = (to_t<T>((w[3] & 0xc0) >> 6) + to_t<T>((w[4] & 0x7) << 2)) *
-            scale +
-        bias;
-    out[7] = to_t<T>((w[4] & 0xf8) >> 3) * scale + bias;
+    write(0, (w[0]) & 0x1f);
+    write(1, ((w[0] >> 5) & 0x7) | ((w[1] & 0x3) << 3));
+    write(2, (w[1] >> 2) & 0x1f);
+    write(3, ((w[1] >> 7) & 0x1) | ((w[2] & 0xf) << 1));
+    write(4, ((w[2] >> 4) & 0xf) | ((w[3] & 0x1) << 4));
+    write(5, (w[3] >> 1) & 0x1f);
+    write(6, ((w[3] >> 6) & 0x3) | ((w[4] & 0x7) << 2));
+    write(7, (w[4] >> 3) & 0x1f);
   } else if constexpr (bits == 6) {
     w += offset * bytes_per_pack;
-    out[0] = to_t<T>(w[0] & 0x3f) * scale + bias;
-    out[1] = (to_t<T>((w[0] >> 6) & 0x03) + to_t<T>((w[1] & 0x0f) << 2)) *
-            scale +
-        bias;
-    out[2] = (to_t<T>((w[1] >> 4) & 0x0f) + to_t<T>((w[2] & 0x03) << 4)) *
-            scale +
-        bias;
-    out[3] = to_t<T>((w[2] >> 2) & 0x3f) * scale + bias;
+    write(0, (w[0]) & 0x3f);
+    write(1, ((w[0] >> 6) & 0x03) | ((w[1] & 0x0f) << 2));
+    write(2, ((w[1] >> 4) & 0x0f) | ((w[2] & 0x03) << 4));
+    write(3, (w[2] >> 2) & 0x3f);
   } else {
     // bits in {2, 4, 8}: one byte packs `pack_factor` weights uniformly.
-    uint32_t val = w[offset];
+    unsigned int val = w[offset];
 #pragma unroll
     for (int i = 0; i < pack_factor; i++) {
-      uint8_t d;
+      unsigned int d;
       if (bits == 2) {
         d = (val >> (bits * i)) & 0x03;
       } else if (bits == 4) {
         d = (val >> (bits * i)) & 0x0f;
-      } else if (bits == 8) {
+      } else { // bits == 8
         d = val;
       }
-      out[i] = scale * to_t<T>(d) + bias;
+      write(i, d);
     }
   }
 }
