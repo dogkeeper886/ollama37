@@ -12,6 +12,87 @@
 
 namespace mlx::core {
 
+namespace {
+
+// K80 fallback for QuantizedMatmul / GatherQMM: when no native qmm variant is
+// supported (always true on sm_37 — supports_qmm_sm90/sm80/naive all return
+// false in k80_runtime_stubs.cpp), dequantize the weights into a temporary
+// full-precision buffer and route through the existing dense cuBLAS Matmul.
+// Slower than fused qmm (extra buffer + memory bandwidth) but functional on
+// pre-sm_80 GPUs that lack the tensor cores qmm_sm80/sm90 require.
+void dequant_then_matmul_k80(
+    const array& x,
+    const array& wq,
+    const array& scales,
+    const std::optional<array>& biases,
+    bool transpose,
+    int bits,
+    int group_size,
+    QuantizationMode mode,
+    array& out,
+    cu::CommandEncoder& encoder,
+    Stream s) {
+  if (mode != QuantizationMode::Affine) {
+    throw std::runtime_error(
+        "[QuantizedMatmul] K80 fallback supports affine mode only; "
+        "fp/qx modes have no dequant impl yet.");
+  }
+  if (!biases) {
+    throw std::runtime_error(
+        "[QuantizedMatmul] K80 affine fallback requires biases.");
+  }
+
+  // Reconstruct full weight shape: wq's last dim is packed; expand by
+  // pack_factor (matches affine_dequantize.cu's grid math).
+  const int pack_factor = (bits == 3 || bits == 5) ? 8
+      : (bits == 6)                                ? 4
+                                                   : (8 / bits);
+  auto w_shape = wq.shape();
+  w_shape.back() *= pack_factor;
+
+  array w_full(w_shape, x.dtype(), nullptr, {});
+  w_full.set_data(cu::malloc_async(w_full.nbytes(), encoder));
+  encoder.add_temporary(w_full);
+
+  affine_dequantize(
+      wq, scales, *biases, w_full, group_size, bits, encoder, s);
+
+  // QuantizedMatmul's transpose=true convention: wq encodes a (N, K_packed)
+  // matrix, so w_full is (N, K) and we want `out = x @ w_full.T`. Build a
+  // strided transposed view (no copy) so Matmul's check_transpose detects
+  // col-major strides and sets the cuBLAS b_transposed flag.
+  array w_for_gemm = w_full;
+  if (transpose) {
+    const int rank = w_full.ndim();
+    Shape t_shape = w_full.shape();
+    Strides t_strides = w_full.strides();
+    std::swap(t_shape[rank - 1], t_shape[rank - 2]);
+    std::swap(t_strides[rank - 1], t_strides[rank - 2]);
+    array::Flags t_flags = w_full.flags();
+    if (rank == 2) {
+      // 2D row-contig becomes col-contig after axis swap.
+      std::swap(t_flags.row_contiguous, t_flags.col_contiguous);
+    } else {
+      // Higher-D: neither row nor col contiguous in general after a
+      // last-two-dims swap; conservative clear.
+      t_flags.row_contiguous = false;
+      t_flags.col_contiguous = false;
+    }
+    w_for_gemm = array(t_shape, w_full.dtype(), nullptr, {});
+    w_for_gemm.copy_shared_buffer(
+        w_full, t_strides, t_flags, w_full.data_size());
+  }
+
+  // Delegate to the existing dense Matmul GPU primitive. It allocates `out`
+  // itself (set_data inside its eval_gpu) and handles batched + transposed
+  // inputs via check_transpose on strides — same path Phase A wired.
+  Matmul mm(s);
+  std::vector<array> mm_inputs = {x, w_for_gemm};
+  mm.eval_gpu(mm_inputs, out);
+}
+
+} // namespace
+
 void QuantizedMatmul::eval_gpu(const std::vector<array>& inputs, array& out) {
   nvtx3::scoped_range r("QuantizedMatmul::eval_gpu");
   auto& s = stream();
@@ -125,20 +206,10 @@ void QuantizedMatmul::eval_gpu(const std::vector<array>& inputs, array& out) {
     return;
   }
 
-  throw std::runtime_error(
-      fmt::format(
-          "[quantized_matmul] No implementation for "
-          "problem shape: {}x{}x{}x{}, transpose: {}, "
-          "activation: {}, bits: {}, group size: {}, mode: \"{}\".",
-          M,
-          N,
-          K,
-          B,
-          transpose_,
-          dtype_to_string(x.dtype()),
-          bits_,
-          group_size_,
-          quantization_mode_to_string(mode_)));
+  // K80 fallback: no native qmm variant on sm_37. Dequant + cuBLAS GEMM.
+  dequant_then_matmul_k80(
+      x, w, scales, biases, transpose_, bits_, group_size_, mode_,
+      out, encoder, s);
 }
 
 void GatherQMM::eval_gpu(const std::vector<array>& inputs, array& out) {
