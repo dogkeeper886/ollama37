@@ -1,13 +1,21 @@
-// K80 runner — Phase B link-surface probe.
+// K80 runner — Phase B forward-surface probe.
 //
-// This isn't a runner. It's the smallest C++ exe that *names* the symbols a
-// qwen3.5 forward pass needs, so the linker enumerates what libmlx.a still
-// can't satisfy. We don't care if the kernels run; we care which references
-// the static archive can't resolve. Each undefined ref is a punch-list item
-// for Phase B (reroute to stub / cuBLAS / dequant) before the real runner
-// can link.
+// This isn't a runner. It exercises the on-path ops a qwen3.5 inference pass
+// actually uses (matmul, fast::rms_norm, fast::rope, softmax,
+// fast::scaled_dot_product_attention, conv1d) on tiny random tensors. Two
+// jobs: (1) the link surface — every op pulled into libmlx.a must resolve;
+// (2) the runtime surface — every op's GPU primitive must actually dispatch
+// without tripping a k80_runtime_stubs throw. A clean run means qwen3.5's
+// inference compute path is wired end-to-end on the K80.
 //
-// Build via x/mlxrunner/CMakeLists.txt; expect link failures the first time.
+// What's NOT here on purpose:
+//   - quantize() / quantized_matmul() — those are weight-conversion ops that
+//     dispatch to affine_quantize (currently a throw-stub). qwen3.5 loads
+//     pre-quantized weights and only needs affine_dequantize at inference
+//     time, which we'll exercise once task #13's dequant+cuBLAS reroute
+//     lands.
+//
+// Build via x/mlxrunner/CMakeLists.txt.
 
 #include "mlx/mlx.h"
 
@@ -48,14 +56,9 @@ int main() {
   array cv = conv1d(x1d, w1d, /*stride=*/1, /*padding=*/0,
                     /*dilation=*/1, /*groups=*/1);
 
-  // --- quantized matmul dispatch (qmm impls deferred -> linker tells us) ---
-  auto qpacks = quantize(w, /*group_size=*/64, /*bits=*/4);
-  array qm = quantized_matmul(a, qpacks[0], qpacks[1], qpacks[2],
-                              /*transpose=*/true, /*group_size=*/64,
-                              /*bits=*/4);
-
-  // Force evaluation so the backend dispatch -> kernel symbols get pulled in.
-  eval({c, n, sm, rq, o, cv, qm});
+  // Force evaluation so the backend dispatch -> kernel symbols get pulled in
+  // and the actual GPU kernels execute.
+  eval({c, n, sm, rq, o, cv});
 
   std::cout << "qwen_smoke: forward-surface link OK\n";
   return 0;
