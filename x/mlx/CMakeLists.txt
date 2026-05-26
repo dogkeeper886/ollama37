@@ -103,6 +103,9 @@ set(MLX_CUDA_HOST
     # CUDA 11.4); forward eval always uses the manual sdpa.cu vector kernel.
     # Backward (VJP) falls back to CPU.
     ${CUDA_SRC}/scaled_dot_product_attention.cpp
+    # Phase A: Convolution dispatch — cuDNN conv path stripped; forward eval
+    # always uses the GEMM-based gemm_conv (im2col + our cublas_gemm).
+    ${CUDA_SRC}/conv.cpp
 )
 
 # Device-side (.cu -> nvcc).
@@ -134,6 +137,9 @@ list(APPEND MLX_CUDA_KERNELS
     # the dequant impl is part of the Phase-B runtime reroute.
     # SDPA manual kernel (the cuDNN flash-attn path in sdpa.cpp stays deferred).
     ${CUDA_SRC}/scaled_dot_product_attention.cu
+    # GEMM-based conv (im2col + cuBLAS); handles conv1d via degenerate spatial dims.
+    ${CUDA_SRC}/conv/gemm_conv.cu
+    ${CUDA_SRC}/conv/gemm_grouped_conv.cu
 )
 
 target_sources(mlx PRIVATE ${MLX_CUDA_HOST} ${MLX_CUDA_KERNELS})
