@@ -50,6 +50,27 @@ add_library(mlx STATIC
     ${MLX_SRC}/backend/common/reduce.cpp
     ${MLX_SRC}/backend/common/slicing.cpp
     ${MLX_SRC}/backend/common/utils.cpp
+    # backend/gpu — device-agnostic GPU helpers (contiguous_copy_gpu,
+    # copy_gpu_inplace, the shared primitive::eval_gpu glue). Used by both
+    # the CUDA and Metal backends; needs to be linked for the CUDA backend
+    # objects (rms_norm/sdpa/conv/etc.) to resolve their copy helpers.
+    ${MLX_SRC}/backend/gpu/copy.cpp
+    ${MLX_SRC}/backend/gpu/slicing.cpp
+    ${MLX_SRC}/backend/gpu/primitives.cpp
+    # backend/no_cpu — upstream's GPU-only stub backend (designed for builds
+    # that omit OpenBLAS/LAPACK/FFT). Provides eval_cpu throw-stubs for every
+    # primitive, which emits the 116 primitive vtables the linker needs, plus
+    # cpu::{is_available, device_count, device_info} returning empty/false.
+    ${MLX_SRC}/backend/no_cpu/device_info.cpp
+    ${MLX_SRC}/backend/no_cpu/primitives.cpp
+    ${MLX_SRC}/backend/no_cpu/compiled.cpp
+    # backend/cpu — only the two files the no_cpu CMakeLists pulls in (these
+    # don't drag in any of the LAPACK/BLAS/FFT-heavy cpu/*.cpp files).
+    ${MLX_SRC}/backend/cpu/eval.cpp
+    ${MLX_SRC}/backend/cpu/encoder.cpp
+    # backend/metal — single-file stub for non-Apple builds; satisfies
+    # metal::is_available() / fast::metal_kernel() refs from ops.cpp.
+    ${MLX_SRC}/backend/metal/no_metal.cpp
 )
 
 target_include_directories(mlx PRIVATE
@@ -106,6 +127,12 @@ set(MLX_CUDA_HOST
     # Phase A: Convolution dispatch — cuDNN conv path stripped; forward eval
     # always uses the GEMM-based gemm_conv (im2col + our cublas_gemm).
     ${CUDA_SRC}/conv.cpp
+    # Phase B: runtime throw-stubs for off-path symbols (CUTLASS qmm/gemm,
+    # JIT runtime, distributed collectives, BlockMaskedMM, FFT/Hadamard/
+    # Scatter/Gather/Scan/SliceUpdate/QQMatmul/FP8, affine + fp quant/dequant)
+    # — mirrors no_cpu/primitives.cpp. Lets qwen_smoke (and the runner exe)
+    # link; runtime trip = port the real impl and drop the stub.
+    ${CUDA_SRC}/k80_runtime_stubs.cpp
 )
 
 # Device-side (.cu -> nvcc).
