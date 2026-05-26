@@ -63,18 +63,20 @@ int main() {
   // --- quantized matmul (K80 fallback: dequant + cuBLAS) ---
   // Hand-shaped pre-quantized inputs for a 4-bit / group_size=64 weight
   // matrix matching qwen-style quants. We bypass quantize() (which calls
-  // the still-stubbed affine_quantize); instead construct uint8 packed
-  // weights + fp32 scales/biases directly, exactly the way an MLX safetensors
-  // load would land them. Tiny shapes — only the dispatch surface matters.
-  const int N = 32;       // out features
+  // the still-stubbed affine_quantize); instead construct uint32 packed
+  // weights + fp32 scales/biases directly, exactly the way an MLX
+  // safetensors load would land them. The public API requires wq to be
+  // uint32 (32/bits weights packed per uint32 — 8 weights/uint32 for
+  // bits=4). Tiny shapes — only the dispatch surface matters.
+  const int Nq = 32;      // out features
   const int Kq = 64;      // in features (one quant group)
   const int qbits = 4;
   const int qgroup = 64;
   array x_q = random::uniform({1, /*M=*/4, Kq});
-  // wq packs 2 4-bit weights per uint8 -> (N, Kq/2) uint8.
-  array wq = zeros({N, Kq / 2}, uint8);
-  array scales = random::uniform({N, Kq / qgroup});
-  array biases = random::uniform({N, Kq / qgroup});
+  // wq packs 8 4-bit weights per uint32 -> (Nq, Kq/8) uint32.
+  array wq = zeros({Nq, Kq / 8}, uint32);
+  array scales = random::uniform({Nq, Kq / qgroup});
+  array biases = random::uniform({Nq, Kq / qgroup});
   array qm = quantized_matmul(x_q, wq, scales, biases,
                               /*transpose=*/true,
                               /*group_size=*/qgroup,

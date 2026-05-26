@@ -42,13 +42,26 @@ void dequant_then_matmul_k80(
         "[QuantizedMatmul] K80 affine fallback requires biases.");
   }
 
-  // Reconstruct full weight shape: wq's last dim is packed; expand by
-  // pack_factor (matches affine_dequantize.cu's grid math).
-  const int pack_factor = (bits == 3 || bits == 5) ? 8
-      : (bits == 6)                                ? 4
-                                                   : (8 / bits);
+  // Reconstruct the full-precision weight shape from wq. The public API
+  // stores wq as uint32, where each uint32 packs `32 / bits` weights for
+  // bits in {2,4,8} (see dequantize() in ops.cpp:4978 — `out_size =
+  // w.shape(-1) * 32 / bits`). The irregular bits (3/5/6) use a different
+  // packing that affine_dequantize.cu's bits==3/5/6 branches handle, but
+  // their wq → w-full shape formula doesn't reduce to a single multiplier;
+  // defer those until we have a model that needs them.
+  int weights_per_uint32;
+  switch (bits) {
+    case 2: weights_per_uint32 = 16; break;
+    case 4: weights_per_uint32 = 8; break;
+    case 8: weights_per_uint32 = 4; break;
+    default:
+      throw std::runtime_error(
+          std::string("[QuantizedMatmul] K80 dequant fallback only "
+                      "supports bits in {2,4,8} for now; got bits=") +
+          std::to_string(bits));
+  }
   auto w_shape = wq.shape();
-  w_shape.back() *= pack_factor;
+  w_shape.back() *= weights_per_uint32;
 
   array w_full(w_shape, x.dtype(), nullptr, {});
   w_full.set_data(cu::malloc_async(w_full.nbytes(), encoder));
