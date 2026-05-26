@@ -128,6 +128,8 @@ list(APPEND MLX_CUDA_KERNELS
     ${CUDA_SRC}/gemms/gemv.cu
     # affine_quantize.cu deferred: heavy half-arithmetic + cg::dim_blocks gap;
     # the dequant impl is part of the Phase-B runtime reroute.
+    # SDPA manual kernel (the cuDNN flash-attn path in sdpa.cpp stays deferred).
+    ${CUDA_SRC}/scaled_dot_product_attention.cu
 )
 
 target_sources(mlx PRIVATE ${MLX_CUDA_HOST} ${MLX_CUDA_KERNELS})
