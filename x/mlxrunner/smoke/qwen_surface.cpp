@@ -9,11 +9,15 @@
 // inference compute path is wired end-to-end on the K80.
 //
 // What's NOT here on purpose:
-//   - quantize() / quantized_matmul() — those are weight-conversion ops that
-//     dispatch to affine_quantize (currently a throw-stub). qwen3.5 loads
-//     pre-quantized weights and only needs affine_dequantize at inference
-//     time, which we'll exercise once task #13's dequant+cuBLAS reroute
-//     lands.
+//   - quantize() — the weight-conversion op. Dispatches to affine_quantize
+//     which is still a throw-stub; inference never calls it.
+//
+// What IS here as of the dequant+matmul wiring landing: quantized_matmul()
+// against hand-shaped pre-quantized inputs (uint8 packed + scales + biases),
+// exercising the K80 fallback chain
+//     QuantizedMatmul::eval_gpu -> dequant_then_matmul_k80
+//       -> affine_dequantize  (Phase C kernel)
+//       -> Matmul::eval_gpu   (Phase A cuBLAS path).
 //
 // Build via x/mlxrunner/CMakeLists.txt.
 
@@ -56,9 +60,31 @@ int main() {
   array cv = conv1d(x1d, w1d, /*stride=*/1, /*padding=*/0,
                     /*dilation=*/1, /*groups=*/1);
 
+  // --- quantized matmul (K80 fallback: dequant + cuBLAS) ---
+  // Hand-shaped pre-quantized inputs for a 4-bit / group_size=64 weight
+  // matrix matching qwen-style quants. We bypass quantize() (which calls
+  // the still-stubbed affine_quantize); instead construct uint32 packed
+  // weights + fp32 scales/biases directly, exactly the way an MLX
+  // safetensors load would land them. The public API requires wq to be
+  // uint32 (32/bits weights packed per uint32 — 8 weights/uint32 for
+  // bits=4). Tiny shapes — only the dispatch surface matters.
+  const int Nq = 32;      // out features
+  const int Kq = 64;      // in features (one quant group)
+  const int qbits = 4;
+  const int qgroup = 64;
+  array x_q = random::uniform({1, /*M=*/4, Kq});
+  // wq packs 8 4-bit weights per uint32 -> (Nq, Kq/8) uint32.
+  array wq = zeros({Nq, Kq / 8}, uint32);
+  array scales = random::uniform({Nq, Kq / qgroup});
+  array biases = random::uniform({Nq, Kq / qgroup});
+  array qm = quantized_matmul(x_q, wq, scales, biases,
+                              /*transpose=*/true,
+                              /*group_size=*/qgroup,
+                              /*bits=*/qbits);
+
   // Force evaluation so the backend dispatch -> kernel symbols get pulled in
   // and the actual GPU kernels execute.
-  eval({c, n, sm, rq, o, cv});
+  eval({c, n, sm, rq, o, cv, qm});
 
   std::cout << "qwen_smoke: forward-surface link OK\n";
   return 0;
