@@ -99,6 +99,10 @@ set(MLX_CUDA_HOST
     # and stay excluded; the qmm_* calls are undefined refs in libmlx.a, to be
     # rerouted to dequant+cuBLAS at the runner exe link).
     ${CUDA_SRC}/quantized/quantized.cpp
+    # Phase A: SDPA dispatch — cuDNN flash-attn path stripped (no fe::graph on
+    # CUDA 11.4); forward eval always uses the manual sdpa.cu vector kernel.
+    # Backward (VJP) falls back to CPU.
+    ${CUDA_SRC}/scaled_dot_product_attention.cpp
 )
 
 # Device-side (.cu -> nvcc).
