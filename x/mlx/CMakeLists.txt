@@ -95,6 +95,10 @@ set(MLX_CUDA_HOST
     # impls stay excluded; off-path calls are undefined refs (resolved at exe link).
     ${CUDA_SRC}/matmul.cpp
     ${CUDA_SRC}/gemms/cublas_gemm.cpp
+    # Phase A: quantized matmul dispatch (qmm_* impls in quantized/qmm/ are CUTLASS
+    # and stay excluded; the qmm_* calls are undefined refs in libmlx.a, to be
+    # rerouted to dequant+cuBLAS at the runner exe link).
+    ${CUDA_SRC}/quantized/quantized.cpp
 )
 
 # Device-side (.cu -> nvcc).
@@ -122,6 +126,8 @@ list(APPEND MLX_CUDA_KERNELS
     ${CUDA_SRC}/logsumexp.cu
     ${CUDA_SRC}/random.cu
     ${CUDA_SRC}/gemms/gemv.cu
+    # affine_quantize.cu deferred: heavy half-arithmetic + cg::dim_blocks gap;
+    # the dequant impl is part of the Phase-B runtime reroute.
 )
 
 target_sources(mlx PRIVATE ${MLX_CUDA_HOST} ${MLX_CUDA_KERNELS})
