@@ -7,6 +7,10 @@
 #include "mlx/backend/cuda/gemms/gather_gemm.h"
 #include "mlx/backend/cuda/gemms/gemv.h"
 #include "mlx/backend/cuda/gemms/grouped_gemm.h"
+// K80 port: these gemm headers only declare functions (no CUTLASS includes); the
+// CUTLASS .cu impls (block_mask/gather_gemm/grouped_gemm_unaligned) are excluded
+// from the build. The off-path/MoE-general calls become undefined symbols here —
+// fine in a static lib; resolved (cuBLAS reroute / stubs) at the runner exe link.
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/primitives.h"
 

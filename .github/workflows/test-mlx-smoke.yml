@@ -1,0 +1,185 @@
+name: MLX Smoke Link
+
+# Phase B link-surface probe for the MLX-on-K80 port (#188). Builds libmlx.a +
+# qwen_smoke in the builder image, then runs qwen_smoke in the production
+# runtime image with K80 GPUs exposed. The split surfaces real ld/runtime gaps
+# (missing CUDA toolkit libs, libstdc++ delta) that would otherwise stay hidden
+# behind the builder image's full toolchain.
+#
+# Follows test-workflow-pattern (#158): test logic lives in
+# cicd/scripts/test-mlx-smoke.sh; this YAML orchestrates container lifecycle
+# (stop production ollama37 → run script → restart production → upload).
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_build:
+        description: "Skip the rebuild step (reuse /tmp/test-mlx-smoke-build/qwen_smoke)"
+        required: false
+        default: false
+        type: boolean
+      build_image:
+        description: "Builder image (full toolchain)"
+        required: false
+        default: "ollama37-builder:latest"
+        type: string
+      runtime_image:
+        description: "Runtime image (production target)"
+        required: false
+        default: "ollama37:latest"
+        type: string
+
+jobs:
+  mlx-smoke:
+    name: Build + run qwen_smoke
+    runs-on: self-hosted
+    environment: cicd-1
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stop production ollama37
+        run: |
+          docker stop ollama37 || true
+          # Defensive: clear any stale smoke-test containers from prior failed runs.
+          docker rm -f ollama37-mlx-smoke 2>/dev/null || true
+
+          # Poll until VRAM drops below 1 GiB on GPU 0 (where qwen_smoke runs)
+          # or 30s timeout. Matches the test-fa-k80 stop pattern.
+          for i in $(seq 1 30); do
+            USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1 | tr -d ' ')
+            if [ "$USED" -lt 1024 ]; then
+              echo "VRAM released after ${i}s: ${USED} MiB"
+              break
+            fi
+            sleep 1
+          done
+          nvidia-smi --query-gpu=memory.used --format=csv,noheader | head -3
+
+      - name: Run mlx smoke
+        id: smoke
+        env:
+          BUILD_IMAGE: ${{ inputs.build_image || 'ollama37-builder:latest' }}
+          RUNTIME_IMAGE: ${{ inputs.runtime_image || 'ollama37:latest' }}
+          SKIP_BUILD_FLAG: ${{ inputs.skip_build && '--skip-build' || '' }}
+        run: |
+          ARGS=(
+            --build-image "$BUILD_IMAGE"
+            --runtime-image "$RUNTIME_IMAGE"
+            --build-dir /tmp/test-mlx-smoke-build
+            --results-json /tmp/test-mlx-smoke-results.json
+          )
+          if [ -n "$SKIP_BUILD_FLAG" ]; then
+            ARGS+=("$SKIP_BUILD_FLAG")
+          fi
+
+          bash cicd/scripts/test-mlx-smoke.sh "${ARGS[@]}"
+
+      - name: Generate summary
+        if: always()
+        run: |
+          if [ ! -f /tmp/test-mlx-smoke-results.json ]; then
+            echo "No results JSON to summarize" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          SHA=$(jq -r '.git_sha' /tmp/test-mlx-smoke-results.json)
+          GPU_COUNT=$(jq -r '.gpu.device_count' /tmp/test-mlx-smoke-results.json)
+          BUILD_STATUS=$(jq -r '.build.status' /tmp/test-mlx-smoke-results.json)
+          BUILD_DUR=$(jq -r '.build.duration_sec' /tmp/test-mlx-smoke-results.json)
+          LIBMLX_SIZE=$(jq -r '.build.libmlx_size_bytes' /tmp/test-mlx-smoke-results.json)
+          LIBMLX_OBJS=$(jq -r '.build.libmlx_object_count' /tmp/test-mlx-smoke-results.json)
+          EXE_SIZE=$(jq -r '.build.exe_size_bytes' /tmp/test-mlx-smoke-results.json)
+          RUN_STATUS=$(jq -r '.run.status' /tmp/test-mlx-smoke-results.json)
+          RUN_EXIT=$(jq -r '.run.exit_code' /tmp/test-mlx-smoke-results.json)
+          RUN_DUR=$(jq -r '.run.duration_sec' /tmp/test-mlx-smoke-results.json)
+          FINAL_EXIT=$(jq -r '.final_exit' /tmp/test-mlx-smoke-results.json)
+          LDD_MISSING=$(jq -r '.run.ldd_missing' /tmp/test-mlx-smoke-results.json)
+
+          {
+            echo "## MLX Smoke Link"
+            echo ""
+            echo "**Commit:** \`${SHA}\` · **GPUs visible:** ${GPU_COUNT} · **Final exit:** \`${FINAL_EXIT}\`"
+            echo ""
+            echo "| Phase   | Status         | Duration | Detail |"
+            echo "|---------|----------------|----------|--------|"
+            echo "| build   | ${BUILD_STATUS} | ${BUILD_DUR}s | libmlx.a ${LIBMLX_SIZE}B · ${LIBMLX_OBJS} objs · qwen_smoke ${EXE_SIZE}B |"
+            echo "| run     | ${RUN_STATUS} | ${RUN_DUR}s | exit=${RUN_EXIT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$RUN_STATUS" != "success" ] && [ -n "$LDD_MISSING" ]; then
+            {
+              echo ""
+              echo "### Missing libs (ldd)"
+              echo ""
+              echo '```'
+              echo "$LDD_MISSING"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$BUILD_STATUS" = "failed" ]; then
+            {
+              echo ""
+              echo "### Build log tail"
+              echo ""
+              echo '```'
+              jq -r '.build.log_tail' /tmp/test-mlx-smoke-results.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$RUN_STATUS" = "failed" ]; then
+            {
+              echo ""
+              echo "### Run stdout (tail)"
+              echo ""
+              echo '```'
+              jq -r '.run.stdout' /tmp/test-mlx-smoke-results.json
+              echo '```'
+              echo ""
+              echo "### Run stderr (tail)"
+              echo ""
+              echo '```'
+              jq -r '.run.stderr' /tmp/test-mlx-smoke-results.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Restart production ollama37
+        if: always()
+        run: |
+          docker rm -f ollama37-mlx-smoke 2>/dev/null || true
+
+          if docker ps -a --filter "name=^ollama37$" --format '{{.Names}}' | grep -q ollama37; then
+            docker start ollama37 || true
+          else
+            cd docker && docker compose up -d || true
+          fi
+
+      - name: Verify production ollama37 recovered
+        if: always()
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+              echo "production ollama37 healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::production ollama37 did not recover within 60s"
+          docker logs ollama37 2>&1 | tail -50 || true
+          exit 1
+
+      - name: Upload mlx smoke results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlx-smoke-${{ github.run_id }}
+          path: |
+            /tmp/test-mlx-smoke-results.json
+            /tmp/test-mlx-smoke-build/build.log
+            /tmp/test-mlx-smoke-build/run.stdout
+            /tmp/test-mlx-smoke-build/run.stderr

@@ -74,7 +74,9 @@ __global__ void naive_grouped_unfold_transpose_nd(
     }
     *out = in[in_offset];
   } else {
-    *out = T{0};
+    // K80 (CUDA 11.4): __nv_bfloat16 has no (int) ctor; brace-init from 0
+    // is ambiguous between the (float)/(double) overloads. Use 0.0f.
+    *out = T(0.0f);
   }
 }
 
