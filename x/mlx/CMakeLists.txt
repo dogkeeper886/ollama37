@@ -91,6 +91,10 @@ set(MLX_CUDA_HOST
     ${CUDA_SRC}/slicing.cpp
     ${CUDA_SRC}/utils.cpp
     ${CUDA_SRC}/worker.cpp
+    # Phase A: dense GEMM via cuBLAS (matmul + cublas_gemm). The CUTLASS gemm
+    # impls stay excluded; off-path calls are undefined refs (resolved at exe link).
+    ${CUDA_SRC}/matmul.cpp
+    ${CUDA_SRC}/gemms/cublas_gemm.cpp
 )
 
 # Device-side (.cu -> nvcc).
@@ -117,6 +121,7 @@ list(APPEND MLX_CUDA_KERNELS
     ${CUDA_SRC}/softmax.cu
     ${CUDA_SRC}/logsumexp.cu
     ${CUDA_SRC}/random.cu
+    ${CUDA_SRC}/gemms/gemv.cu
 )
 
 target_sources(mlx PRIVATE ${MLX_CUDA_HOST} ${MLX_CUDA_KERNELS})
