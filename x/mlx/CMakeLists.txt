@@ -160,8 +160,13 @@ list(APPEND MLX_CUDA_KERNELS
     ${CUDA_SRC}/logsumexp.cu
     ${CUDA_SRC}/random.cu
     ${CUDA_SRC}/gemms/gemv.cu
-    # affine_quantize.cu deferred: heavy half-arithmetic + cg::dim_blocks gap;
-    # the dequant impl is part of the Phase-B runtime reroute.
+    # affine_dequantize: K80-only port of the dequant side of upstream's
+    # affine_quantize.cu (the quantize side stays excluded — inference never
+    # quantizes weights; conversion is offline). Two K80 patches: gridDim.x
+    # in place of cg::this_grid().dim_blocks() (CUDA 11.6+), and unambiguous
+    # int → half/bfloat16 via a `to_t<T>(int)` float-cast helper. First
+    # real (non-throw) symbol from k80_runtime_stubs.cpp.
+    ${CUDA_SRC}/quantized/affine_dequantize.cu
     # SDPA manual kernel (the cuDNN flash-attn path in sdpa.cpp stays deferred).
     ${CUDA_SRC}/scaled_dot_product_attention.cu
     # GEMM-based conv (im2col + cuBLAS); handles conv1d via degenerate spatial dims.

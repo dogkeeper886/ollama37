@@ -189,16 +189,12 @@ void gather_qmv(
   k80_unimpl("gather_qmv");
 }
 
-// affine + fp quant/dequant (declared in quantized/quantized.h)
+// affine_quantize stays a stub — inference never quantizes weights. The
+// affine_dequantize impl is now real, in quantized/affine_dequantize.cu.
 void affine_quantize(
     const array&, array&, array&, array&,
     int, int, cu::CommandEncoder&, const Stream&) {
   k80_unimpl("affine_quantize");
-}
-void affine_dequantize(
-    const array&, const array&, const array&, array&,
-    int, int, cu::CommandEncoder&, const Stream&) {
-  k80_unimpl("affine_dequantize");
 }
 void fp_quantize(
     const array&, array&, array&,
