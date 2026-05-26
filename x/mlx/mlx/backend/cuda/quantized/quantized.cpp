@@ -70,8 +70,11 @@ void dequant_then_matmul_k80(
     std::swap(t_strides[rank - 1], t_strides[rank - 2]);
     array::Flags t_flags = w_full.flags();
     if (rank == 2) {
-      // 2D row-contig becomes col-contig after axis swap.
-      std::swap(t_flags.row_contiguous, t_flags.col_contiguous);
+      // 2D row-contig becomes col-contig after axis swap. std::swap can't
+      // bind to bitfield members (no lvalue ref to bool), so swap manually.
+      const bool was_row = t_flags.row_contiguous;
+      t_flags.row_contiguous = t_flags.col_contiguous;
+      t_flags.col_contiguous = was_row;
     } else {
       // Higher-D: neither row nor col contiguous in general after a
       // last-two-dims swap; conservative clear.
