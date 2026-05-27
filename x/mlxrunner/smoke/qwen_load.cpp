@@ -208,6 +208,22 @@ int main(int argc, char** argv) {
             << cv_out_f32.data<float>()[1] << " "
             << cv_out_f32.data<float>()[2] << "\n";
 
-  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm + qproj + conv1d OK\n";
+  // --- silu probe: next op after conv1d on DeltaNet q/k/v gates ---
+  // DeltaNet applies silu (a.k.a. swish: x * sigmoid(x)) to the conv1d
+  // output before splitting into q/k/v streams. Exercises the elementwise
+  // unary kernels in libmlx.a (sigmoid + multiply, both wired since Phase A).
+  // Ground truth: silu(-0.061722) = -0.02991, silu(-0.045959) = -0.02245,
+  // silu(0.067902) = 0.03510.
+  array silu_out = sigmoid(cv_out) * cv_out;  // silu = sigmoid(x) * x
+  array silu_out_f32 = astype(silu_out, float32);
+  array silu_abs_mean = mean(abs(silu_out_f32), /*keepdims=*/false);
+  eval({silu_out_f32, silu_abs_mean});
+  std::cout << "qwen_load: silu(conv1d) abs_mean=" << silu_abs_mean.item<float>() << "\n";
+  std::cout << "qwen_load: silu out [0,0,0..2] = "
+            << silu_out_f32.data<float>()[0] << " "
+            << silu_out_f32.data<float>()[1] << " "
+            << silu_out_f32.data<float>()[2] << "\n";
+
+  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm + qproj + conv1d + silu OK\n";
   return 0;
 }
