@@ -148,8 +148,12 @@ void Gather::eval_gpu(const std::vector<array>& inputs, array& out) {
         "[K80 Gather] embed row_size exceeds int32; this build assumes "
         "rows fit in int32 elements.");
   }
-  const int32_t src_rows = src.shape(0);
-  const int64_t n_total = static_cast<int64_t>(out.size());
+  // Plain (non-const) lvalues — CommandEncoder::add_kernel_node_ex does
+  // `static_cast<void*>(&p)` on each forwarded param, which fails to convert
+  // `const T*` to `void*`. Const args therefore have to be unwrapped here.
+  int32_t src_rows = src.shape(0);
+  int64_t n_total = static_cast<int64_t>(out.size());
+  int32_t row_size_i32 = static_cast<int32_t>(row_size);
 
   // Make sure src + indices are row-contiguous so the linear src_offset math
   // matches the kernel. set_input_array does the bookkeeping; if the caller
@@ -175,7 +179,7 @@ void Gather::eval_gpu(const std::vector<array>& inputs, array& out) {
           gpu_ptr<T>(src),
           gpu_ptr<IdxT>(indices),
           gpu_ptr<T>(out),
-          static_cast<int32_t>(row_size),
+          row_size_i32,
           src_rows,
           n_total);
     });
