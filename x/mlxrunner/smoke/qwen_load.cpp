@@ -90,21 +90,40 @@ int main(int argc, char** argv) {
 
   // --- Gather (embed-lookup) probe ---
   // Look up a specific row of embed_tokens.scales via `take(scales, [42], axis=0)`.
-  // Compares against scales[42, 0] which we expect from numpy to be a small
-  // bf16 value (~1e-3). Validates Gather::eval_gpu on real safetensors data.
+  // Validates Gather::eval_gpu on real safetensors data.
   array token_id = array({42}, {1}, int32);
-  array embed_row = take(scales, token_id, /*axis=*/0);  // shape [1, 32]
-  array embed_row_f32 = astype(embed_row, float32);
-  array embed_row_mean = mean(embed_row_f32, /*keepdims=*/false);
-  eval({embed_row_f32, embed_row_mean});
+  array scales_row = take(scales, token_id, /*axis=*/0);  // shape [1, 32]
+  array scales_row_f32 = astype(scales_row, float32);
+  array scales_row_mean = mean(scales_row_f32, /*keepdims=*/false);
+  eval({scales_row_f32, scales_row_mean});
   std::cout << "qwen_load: take(scales, [42], 0) shape=["
-            << embed_row.shape(0) << "," << embed_row.shape(1) << "]"
-            << " mean=" << embed_row_mean.item<float>() << "\n";
-  // Spot-check first element (read by dereferencing on host — astype already
-  // gave us fp32 so this is correct).
+            << scales_row.shape(0) << "," << scales_row.shape(1) << "]"
+            << " mean=" << scales_row_mean.item<float>() << "\n";
   std::cout << "qwen_load: take(scales, [42], 0)[0,0] = "
-            << embed_row_f32.data<float>()[0] << "\n";
+            << scales_row_f32.data<float>()[0] << "\n";
 
-  std::cout << "qwen_load: load + reduce + take OK\n";
+  // --- Dequantize (real packed weights) probe ---
+  // Gather row 42 from weight + biases too, then dequantize. Exercises
+  // affine_dequantize (PR #196) + fast::Quantize::eval_gpu on REAL q4
+  // packed weights — not the hand-shaped uint32 zeros qwen_smoke uses.
+  // For bits=4 group=64: wq [1, 256] uint32 -> w [1, 2048] bf16.
+  array biases_row = take(biases, token_id, /*axis=*/0);  // [1, 32]
+  array wq_row = take(wq, token_id, /*axis=*/0);          // [1, 256] uint32
+  array w_full_row =
+      dequantize(wq_row, scales_row, biases_row,
+                 /*group_size=*/64, /*bits=*/4, /*mode=*/"affine");
+  array w_full_row_f32 = astype(w_full_row, float32);
+  array w_full_row_mean = mean(w_full_row_f32, /*keepdims=*/false);
+  eval({w_full_row_f32, w_full_row_mean});
+  std::cout << "qwen_load: dequantize(embed row 42) shape=["
+            << w_full_row.shape(0) << "," << w_full_row.shape(1) << "]"
+            << " mean=" << w_full_row_mean.item<float>() << "\n";
+  std::cout << "qwen_load: dequant row 42 first 5: ";
+  for (int i = 0; i < 5; i++) {
+    std::cout << w_full_row_f32.data<float>()[i] << " ";
+  }
+  std::cout << "\n";
+
+  std::cout << "qwen_load: load + reduce + take + dequant OK\n";
   return 0;
 }
