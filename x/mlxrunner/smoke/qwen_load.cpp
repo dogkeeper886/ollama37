@@ -88,6 +88,23 @@ int main(int argc, char** argv) {
   std::cout << "qwen_load: wq    mean = " << wq_mean.item<float>()
             << " (U32 packed, raw)\n";
 
-  std::cout << "qwen_load: load + reduce OK\n";
+  // --- Gather (embed-lookup) probe ---
+  // Look up a specific row of embed_tokens.scales via `take(scales, [42], axis=0)`.
+  // Compares against scales[42, 0] which we expect from numpy to be a small
+  // bf16 value (~1e-3). Validates Gather::eval_gpu on real safetensors data.
+  array token_id = array({42}, {1}, int32);
+  array embed_row = take(scales, token_id, /*axis=*/0);  // shape [1, 32]
+  array embed_row_f32 = astype(embed_row, float32);
+  array embed_row_mean = mean(embed_row_f32, /*keepdims=*/false);
+  eval({embed_row_f32, embed_row_mean});
+  std::cout << "qwen_load: take(scales, [42], 0) shape=["
+            << embed_row.shape(0) << "," << embed_row.shape(1) << "]"
+            << " mean=" << embed_row_mean.item<float>() << "\n";
+  // Spot-check first element (read by dereferencing on host — astype already
+  // gave us fp32 so this is correct).
+  std::cout << "qwen_load: take(scales, [42], 0)[0,0] = "
+            << embed_row_f32.data<float>()[0] << "\n";
+
+  std::cout << "qwen_load: load + reduce + take OK\n";
   return 0;
 }

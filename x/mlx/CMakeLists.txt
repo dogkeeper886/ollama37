@@ -182,6 +182,10 @@ list(APPEND MLX_CUDA_KERNELS
     # GEMM-based conv (im2col + cuBLAS); handles conv1d via degenerate spatial dims.
     ${CUDA_SRC}/conv/gemm_conv.cu
     ${CUDA_SRC}/conv/gemm_grouped_conv.cu
+    # K80 Gather::eval_gpu — focused embed-lookup impl (upstream's indexing.cpp
+    # is JIT-based and the K80 build defers the JIT subsystem). Other Gather
+    # shapes throw clearly. Drops the Gather throw-stub from k80_runtime_stubs.cpp.
+    ${CUDA_SRC}/indexing_k80.cu
 )
 
 target_sources(mlx PRIVATE ${MLX_CUDA_HOST} ${MLX_CUDA_KERNELS})
