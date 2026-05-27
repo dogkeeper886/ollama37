@@ -27,6 +27,7 @@
 //   /build/qwen_load /models/qwen3.6-35b-a3b-4bit/model-00001-of-00004.safetensors
 
 #include "mlx/mlx.h"
+#include "mlx/dtype_utils.h"  // dtype_to_string (not pulled in by mlx.h)
 
 #include <cstdlib>
 #include <iostream>
