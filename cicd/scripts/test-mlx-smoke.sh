@@ -346,7 +346,14 @@ if [ -x "$BUILD_DIR/k80_p2p_probe" ]; then
     P2P_STATUS="running"
     P2P_START=$(date +%s)
     set +e
-    docker run --rm --gpus all \
+    # Match production ollama37 container exactly: --runtime=nvidia,
+    # NVIDIA_VISIBLE_DEVICES=all, NVIDIA_DRIVER_CAPABILITIES=compute,utility.
+    # Avoids the --gpus shortcut ambiguity and ensures the bandwidth numbers
+    # are valid for the actual deployment environment.
+    docker run --rm \
+        --runtime=nvidia \
+        -e NVIDIA_VISIBLE_DEVICES=all \
+        -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
         -v "$BUILD_DIR:/build:ro" \
         --entrypoint bash \
         "$RUNTIME_IMAGE" \
