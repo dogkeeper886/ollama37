@@ -71,11 +71,20 @@ add_library(mlx STATIC
     # backend/metal — single-file stub for non-Apple builds; satisfies
     # metal::is_available() / fast::metal_kernel() refs from ops.cpp.
     ${MLX_SRC}/backend/metal/no_metal.cpp
+    # io — safetensors loader (real impl, not no_safetensors stub) so
+    # qwen_load and the future runner can read MLX-format shards. load.cpp
+    # provides the FileReader/ParallelFileReader Reader impls that
+    # safetensors.cpp's path-overload constructs. gguf.cpp stays excluded
+    # — needs the antirez/gguf-tools external dep, and GGUF is on the
+    # GGML/llama.cpp path, not the MLX-on-K80 path.
+    ${MLX_SRC}/io/load.cpp
+    ${MLX_SRC}/io/safetensors.cpp
 )
 
 target_include_directories(mlx PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}                       # "mlx/..." -> vendored tree
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fmt/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/include    # nlohmann/json.hpp (header-only)
 )
 
 # fmt header-only (vendored); FMT_UNICODE=0 mirrors MLX (Unicode fmt fails in .cu).
