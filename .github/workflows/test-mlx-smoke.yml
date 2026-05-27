@@ -28,6 +28,11 @@ on:
         required: false
         default: "ollama37:latest"
         type: string
+      model_dir:
+        description: "Path to qwen3.6-35b-a3b-4bit shards on the runner host (bind-mounted into runtime container for qwen_load). Empty = skip qwen_load."
+        required: false
+        default: "/home/jack/models/qwen3.6-35b-a3b-4bit"
+        type: string
 
 jobs:
   mlx-smoke:
@@ -63,6 +68,7 @@ jobs:
         env:
           BUILD_IMAGE: ${{ inputs.build_image || 'ollama37-builder:latest' }}
           RUNTIME_IMAGE: ${{ inputs.runtime_image || 'ollama37:latest' }}
+          MODEL_DIR: ${{ inputs.model_dir || '/home/jack/models/qwen3.6-35b-a3b-4bit' }}
           SKIP_BUILD_FLAG: ${{ inputs.skip_build && '--skip-build' || '' }}
         run: |
           ARGS=(
@@ -70,6 +76,7 @@ jobs:
             --runtime-image "$RUNTIME_IMAGE"
             --build-dir /tmp/test-mlx-smoke-build
             --results-json /tmp/test-mlx-smoke-results.json
+            --model-dir "$MODEL_DIR"
           )
           if [ -n "$SKIP_BUILD_FLAG" ]; then
             ARGS+=("$SKIP_BUILD_FLAG")
@@ -95,6 +102,10 @@ jobs:
           RUN_STATUS=$(jq -r '.run.status' /tmp/test-mlx-smoke-results.json)
           RUN_EXIT=$(jq -r '.run.exit_code' /tmp/test-mlx-smoke-results.json)
           RUN_DUR=$(jq -r '.run.duration_sec' /tmp/test-mlx-smoke-results.json)
+          LOAD_STATUS=$(jq -r '.load.status' /tmp/test-mlx-smoke-results.json)
+          LOAD_EXIT=$(jq -r '.load.exit_code' /tmp/test-mlx-smoke-results.json)
+          LOAD_DUR=$(jq -r '.load.duration_sec' /tmp/test-mlx-smoke-results.json)
+          LOAD_SHARD=$(jq -r '.load.shard' /tmp/test-mlx-smoke-results.json)
           FINAL_EXIT=$(jq -r '.final_exit' /tmp/test-mlx-smoke-results.json)
           LDD_MISSING=$(jq -r '.run.ldd_missing' /tmp/test-mlx-smoke-results.json)
 
@@ -106,7 +117,8 @@ jobs:
             echo "| Phase   | Status         | Duration | Detail |"
             echo "|---------|----------------|----------|--------|"
             echo "| build   | ${BUILD_STATUS} | ${BUILD_DUR}s | libmlx.a ${LIBMLX_SIZE}B · ${LIBMLX_OBJS} objs · qwen_smoke ${EXE_SIZE}B |"
-            echo "| run     | ${RUN_STATUS} | ${RUN_DUR}s | exit=${RUN_EXIT} |"
+            echo "| run     | ${RUN_STATUS} | ${RUN_DUR}s | exit=${RUN_EXIT} (forward-surface) |"
+            echo "| load    | ${LOAD_STATUS} | ${LOAD_DUR}s | exit=${LOAD_EXIT} (shard=${LOAD_SHARD}) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$RUN_STATUS" != "success" ] && [ -n "$LDD_MISSING" ]; then
@@ -148,6 +160,25 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+          if [ "$LOAD_STATUS" = "failed" ] || [ "$LOAD_STATUS" = "success" ]; then
+            {
+              echo ""
+              echo "### qwen_load (load-surface probe)"
+              echo ""
+              echo '```'
+              jq -r '.load.stdout' /tmp/test-mlx-smoke-results.json
+              echo '```'
+              if [ "$LOAD_STATUS" = "failed" ]; then
+                echo ""
+                echo "### qwen_load stderr (tail)"
+                echo ""
+                echo '```'
+                jq -r '.load.stderr' /tmp/test-mlx-smoke-results.json
+                echo '```'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Restart production ollama37
         if: always()
         run: |
@@ -183,3 +214,5 @@ jobs:
             /tmp/test-mlx-smoke-build/build.log
             /tmp/test-mlx-smoke-build/run.stdout
             /tmp/test-mlx-smoke-build/run.stderr
+            /tmp/test-mlx-smoke-build/load.stdout
+            /tmp/test-mlx-smoke-build/load.stderr
