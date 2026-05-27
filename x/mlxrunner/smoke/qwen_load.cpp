@@ -151,6 +151,41 @@ int main(int argc, char** argv) {
   }
   std::cout << "\n";
 
-  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm OK\n";
+  // --- quantized_matmul probe: real layer-0 DeltaNet in_proj_qkv ---
+  // The next inference step for token 42 in layer 0 (a DeltaNet layer) is
+  // projecting the rms-normed embed to the qkv stream. The weight is real
+  // q4 packed: in_proj_qkv.weight U32 [8192, 256], dequant -> bf16
+  // [8192, 2048]. matmul shape: (1, 2048) @ (2048, 8192) -> (1, 8192).
+  //
+  // Exercises the K80 dequant+cuBLAS fallback from PR #197 on REAL packed
+  // weights for the first time (qwen_smoke uses hand-shaped zeros).
+  auto get = [&](const std::string& k) -> const array& {
+    auto it = tensors.find(k);
+    if (it == tensors.end()) {
+      std::cerr << "qwen_load: missing tensor '" << k << "'\n";
+      std::exit(5);
+    }
+    return it->second;
+  };
+  const std::string qkv_pre = "language_model.model.layers.0.linear_attn.in_proj_qkv";
+  const array& qkv_w = get(qkv_pre + ".weight");      // U32 [8192, 256]
+  const array& qkv_s = get(qkv_pre + ".scales");      // BF16 [8192, 32]
+  const array& qkv_b = get(qkv_pre + ".biases");      // BF16 [8192, 32]
+  array qkv_proj = quantized_matmul(
+      normed, qkv_w, qkv_s, qkv_b,
+      /*transpose=*/true,
+      /*group_size=*/64,
+      /*bits=*/4,
+      /*mode=*/"affine");
+  array qkv_proj_f32 = astype(qkv_proj, float32);
+  array qkv_proj_abs_mean = mean(abs(qkv_proj_f32), /*keepdims=*/false);
+  eval({qkv_proj_f32, qkv_proj_abs_mean});
+  std::cout << "qwen_load: in_proj_qkv(rms_normed) shape=["
+            << qkv_proj.shape(0) << "," << qkv_proj.shape(1) << "]"
+            << " abs_mean=" << qkv_proj_abs_mean.item<float>() << "\n";
+  std::cout << "qwen_load: in_proj_qkv [0,0]=" << qkv_proj_f32.data<float>()[0]
+            << " [0,1]=" << qkv_proj_f32.data<float>()[1] << "\n";
+
+  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm + qproj OK\n";
   return 0;
 }
