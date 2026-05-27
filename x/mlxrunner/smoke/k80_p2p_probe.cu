@@ -1,48 +1,39 @@
-// K80 multi-die bandwidth probe — Phase D spike (#187), v2.
+// K80 multi-die bandwidth probe — Phase D spike (#187), v3.
 //
-// v1 measured cross-die bandwidth at ~0.4 GB/s and concluded "P2P is broken,
-// multi-die sharding is bandwidth-limited." That was wrong on its face —
-// ollama on K80 already runs multi-GPU models (qwen3.6:35b validated in #182)
-// at usable throughput, so the relevant cross-die path can't be that slow.
+// v2.1 reported per-die PCIe at 0.4 GB/s. That turned out to be a
+// measurement artifact: the K80s were sitting in P8 (deep idle) when the
+// probe ran. In P8:
+//   - memory clock 324 MHz (vs boost 2505 MHz — 8x lower bandwidth)
+//   - PCIe link Gen1 (vs max Gen3 — 4x lower)
+//   - persistence_mode=Disabled (cold driver, slow upshift)
+// Combined ~32x below spec. PCIe Gen3 spec ~14 GB/s / 32 = ~0.44 GB/s.
+// Matches exactly what we measured.
 //
-// Two bugs in v1:
-//   (a) Used cudaMemcpyPeer (synchronous, default stream, pageable
-//       intermediate). That's the slowest possible cross-device copy path.
-//       The ggml/llama.cpp multi-GPU path uses pinned host memory +
-//       cudaMemcpyAsync, which is what we should measure for any realistic
-//       deployment.
-//   (b) Reported "P2P unavailable" as a deal-breaker without distinguishing
-//       hardware-P2P (cudaMemcpyPeer over PCIe directly, fastest) from
-//       library-P2P (CUDA staging via host RAM, the always-available
-//       fallback). Even when hardware P2P is unavailable, the
-//       pinned-staged fallback can hit ~6-10 GB/s on modern PCIe.
+// v3 wakes the GPUs up before measuring:
 //
-// v2 measures all three regimes side-by-side so we can plan against the
-// actual achievable cross-die bandwidth in this environment:
+//   (a) [outside the probe, in test-mlx-smoke.sh] persistence mode +
+//       application clocks lock are set on the host before docker run,
+//       so the driver stays loaded across container invocations and the
+//       GPU is pinned to boost clocks for the test window.
 //
-//   [hw-p2p]    cudaMemcpyPeer with peer-access enabled (only if
-//               cudaDeviceCanAccessPeer reports 1)
-//   [pinned]    src GPU -> pinned host RAM -> dst GPU, cudaMemcpyAsync on
-//               per-die streams (what ggml does)
-//   [naive]     cudaMemcpyPeer without enabling peer (== synchronous
-//               pageable host staging); same as v1, kept as the floor
+//   (b) [inside the probe] a compute warm-up phase launches a sustained
+//       arithmetic kernel on each die for ~2 seconds, which forces the
+//       SM cluster to P0 and pulls the PCIe link up to Gen3 alongside.
 //
-// Also: this run reports nvidia_peermem availability, the runtime + device
-// flags it was invoked under (env), and per-die nvidia-smi topology so the
-// CI artifact captures the full environment.
-//
-// Build via x/mlxrunner/CMakeLists.txt as a third exe target.
-// Run via cicd/scripts/test-mlx-smoke.sh; the script runs it in the
-// production runtime image (ollama37:latest) with --runtime=nvidia +
-// NVIDIA_VISIBLE_DEVICES=all + NVIDIA_DRIVER_CAPABILITIES=compute,utility
-// so the environment matches production ollama exactly.
+//   (c) [inside the probe] the P-state / clocks / PCIe link gen are
+//       printed at three points (start, after warm-up, after measurement)
+//       via nvmlDeviceGet* — so a future surprise like "stuck in P8 even
+//       after warm-up" surfaces in the CI artifact instead of as
+//       under-spec bandwidth.
 
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
+#include <thread>
 #include <vector>
 
 #include <cuda_runtime.h>
+#include <nvml.h>
 
 #define CHECK_CUDA(call)                                                  \
   do {                                                                    \
@@ -54,16 +45,56 @@
     }                                                                     \
   } while (0)
 
+#define CHECK_NVML(call)                                                  \
+  do {                                                                    \
+    nvmlReturn_t r = (call);                                              \
+    if (r != NVML_SUCCESS) {                                              \
+      std::fprintf(stderr, "NVML error %s:%d: %s\n", __FILE__, __LINE__,  \
+                   nvmlErrorString(r));                                   \
+    }                                                                     \
+  } while (0)
+
+// Compute-bound warm-up: each thread does a big arithmetic loop. Sustained
+// launches put the SM cluster into P0 (and the driver typically upshifts
+// PCIe alongside, though we'll verify via nvml).
+__global__ void warmup_compute(float* out, int iters) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  float v = 0.001f * static_cast<float>(i & 1023);
+  for (int k = 0; k < iters; k++) {
+    v = v * 1.0001f + 0.0001f;
+  }
+  out[i] = v;
+}
+
 __global__ void scale_add_kernel(const float* in, float* out, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < n) {
-    out[i] = in[i] * 2.0f + 1.0f;
+  if (i < n) out[i] = in[i] * 2.0f + 1.0f;
+}
+
+// Print the current P-state / clocks / PCIe link gen for every GPU via NVML.
+static void dump_gpu_state(const char* tag, int num_devices) {
+  std::printf("--- gpu state [%s] ---\n", tag);
+  for (int d = 0; d < num_devices; d++) {
+    nvmlDevice_t h;
+    if (nvmlDeviceGetHandleByIndex(d, &h) != NVML_SUCCESS) continue;
+
+    nvmlPstates_t ps;
+    unsigned int sm_clock = 0, mem_clock = 0;
+    unsigned int link_gen = 0, link_width = 0;
+    nvmlUtilization_t util{};
+
+    nvmlDeviceGetPerformanceState(h, &ps);
+    nvmlDeviceGetClockInfo(h, NVML_CLOCK_SM, &sm_clock);
+    nvmlDeviceGetClockInfo(h, NVML_CLOCK_MEM, &mem_clock);
+    nvmlDeviceGetCurrPcieLinkGeneration(h, &link_gen);
+    nvmlDeviceGetCurrPcieLinkWidth(h, &link_width);
+    nvmlDeviceGetUtilizationRates(h, &util);
+
+    std::printf("  d%d: P%-2d  sm=%4u MHz  mem=%4u MHz  PCIe Gen%u x%u  util=%u%%\n",
+                d, int(ps), sm_clock, mem_clock, link_gen, link_width, util.gpu);
   }
 }
 
-// Measure GB/s for `iter` runs of cudaMemcpyAsync(dst_dev <- src_dev) via
-// pinned host RAM. Each src->dst copy is two cudaMemcpyAsync: src GPU ->
-// pinned host, then pinned host -> dst GPU. Uses per-device streams.
 static double bench_pinned_staged(
     int src, int dst, void* src_dev, void* dst_dev, void* host_pinned,
     size_t bytes, int iter) {
@@ -73,7 +104,7 @@ static double bench_pinned_staged(
   CHECK_CUDA(cudaSetDevice(dst));
   CHECK_CUDA(cudaStreamCreate(&dst_stream));
 
-  // warm-up
+  // warm-up transfer
   CHECK_CUDA(cudaSetDevice(src));
   CHECK_CUDA(cudaMemcpyAsync(host_pinned, src_dev, bytes,
                              cudaMemcpyDeviceToHost, src_stream));
@@ -105,11 +136,8 @@ static double bench_pinned_staged(
 static double bench_peer_naive(
     int src, int dst, void* src_dev, void* dst_dev,
     size_t bytes, int iter) {
-  // cudaMemcpyPeer without enabling peer access — the synchronous fallback.
-  // Measures the worst-case "if you don't think about it" path that v1
-  // accidentally used.
   CHECK_CUDA(cudaSetDevice(src));
-  CHECK_CUDA(cudaMemcpyPeer(dst_dev, dst, src_dev, src, bytes));  // warm
+  CHECK_CUDA(cudaMemcpyPeer(dst_dev, dst, src_dev, src, bytes));
   CHECK_CUDA(cudaDeviceSynchronize());
 
   auto t0 = std::chrono::high_resolution_clock::now();
@@ -125,8 +153,6 @@ static double bench_peer_naive(
 static double bench_hw_p2p(
     int src, int dst, void* src_dev, void* dst_dev,
     size_t bytes, int iter) {
-  // Only safe to call when cudaDeviceCanAccessPeer(src, dst) returned 1
-  // AND cudaDeviceEnablePeerAccess succeeded.
   CHECK_CUDA(cudaSetDevice(src));
   CHECK_CUDA(cudaMemcpyPeer(dst_dev, dst, src_dev, src, bytes));
   CHECK_CUDA(cudaDeviceSynchronize());
@@ -149,17 +175,13 @@ int main() {
     const char* v = std::getenv(var);
     std::printf("  %s = %s\n", var, v ? v : "(unset)");
   }
-  // nvidia_peermem kernel module (controls GPUDirect / hardware P2P enablement)
   FILE* fp = std::fopen("/sys/module/nvidia_peermem/version", "r");
-  if (fp) {
-    char buf[64] = {};
-    std::fread(buf, 1, sizeof(buf) - 1, fp);
-    std::fclose(fp);
-    std::printf("  nvidia_peermem: LOADED (version %s)", buf);
-  } else {
-    std::printf("  nvidia_peermem: NOT LOADED  <- typically required for hw P2P\n");
-  }
+  if (fp) { std::printf("  nvidia_peermem: LOADED\n"); std::fclose(fp); }
+  else { std::printf("  nvidia_peermem: NOT LOADED\n"); }
   std::printf("\n");
+
+  // --- NVML init (for clock/P-state readout) ---
+  CHECK_NVML(nvmlInit_v2());
 
   int num_devices = 0;
   CHECK_CUDA(cudaGetDeviceCount(&num_devices));
@@ -177,11 +199,40 @@ int main() {
   if (num_devices < 2) {
     std::printf("k80_p2p: only %d device(s); single-die mode\nk80_p2p: probe OK\n",
                 num_devices);
-    return 0;
+    nvmlShutdown(); return 0;
   }
 
+  // --- (0) state BEFORE we do anything ---
+  dump_gpu_state("at start, cold", num_devices);
+  std::printf("\n");
+
+  // --- (1) per-die compute warm-up to pull each GPU out of P8 ---
+  // Allocate a small dummy output per die; launch a long arithmetic kernel
+  // that the driver can't optimize out. Run for ~2 s per die — long enough
+  // that the SM cluster transitions to P0 and the PCIe link upshifts.
+  std::printf("=== warm-up (2s/die of sustained compute to wake from P8) ===\n");
+  constexpr int kWarmThreads = 65536;
+  constexpr int kWarmIters   = 200000;     // tune for ~2 s on K80 sm_37
+  std::vector<float*> warm_out(num_devices, nullptr);
+  for (int d = 0; d < num_devices; d++) {
+    CHECK_CUDA(cudaSetDevice(d));
+    CHECK_CUDA(cudaMalloc(&warm_out[d], kWarmThreads * sizeof(float)));
+    auto t0 = std::chrono::high_resolution_clock::now();
+    // Launch repeatedly until ~2 s elapsed — single launch may be too short.
+    while (std::chrono::duration<double>(
+               std::chrono::high_resolution_clock::now() - t0)
+               .count() < 2.0) {
+      warmup_compute<<<kWarmThreads / 256, 256>>>(warm_out[d], kWarmIters);
+    }
+    CHECK_CUDA(cudaDeviceSynchronize());
+    std::printf("  d%d: warm-up done\n", d);
+  }
+  std::printf("\n");
+  dump_gpu_state("after warm-up", num_devices);
+  std::printf("\n");
+
   // --- (2) cudaDeviceCanAccessPeer matrix ---
-  std::printf("=== cudaDeviceCanAccessPeer matrix (1 = hw P2P advertised) ===\n      ");
+  std::printf("=== cudaDeviceCanAccessPeer matrix ===\n      ");
   for (int j = 0; j < num_devices; j++) std::printf(" d%d", j);
   std::printf("\n");
   std::vector<std::vector<int>> peer_ok(num_devices, std::vector<int>(num_devices, 0));
@@ -201,8 +252,8 @@ int main() {
   std::printf("  hw-P2P pairs: %d of %d\n\n", peer_pairs,
               num_devices * (num_devices - 1));
 
-  // --- allocate per-die buffers + one pinned host staging buffer ---
-  constexpr size_t kBytes = 256u * 1024 * 1024;  // 256 MiB
+  // --- allocate buffers ---
+  constexpr size_t kBytes = 256u * 1024 * 1024;
   std::vector<float*> bufs(num_devices, nullptr);
   for (int d = 0; d < num_devices; d++) {
     CHECK_CUDA(cudaSetDevice(d));
@@ -211,21 +262,17 @@ int main() {
   void* pinned_host = nullptr;
   CHECK_CUDA(cudaMallocHost(&pinned_host, kBytes));
 
-  // --- per-die host<->device pinned baseline (PCIe ceiling) ---
+  // --- per-die pinned baseline ---
   std::printf("=== per-die pinned host<->device baseline (%zu MiB) ===\n",
               kBytes / 1024 / 1024);
-  std::printf("  Establishes the PCIe ceiling each die sees. Cross-die staged\n");
-  std::printf("  bandwidth is bounded by min(d2h, h2d) on the same path.\n");
   for (int d = 0; d < num_devices; d++) {
     CHECK_CUDA(cudaSetDevice(d));
     cudaStream_t s;
     CHECK_CUDA(cudaStreamCreate(&s));
-
     // warm
     CHECK_CUDA(cudaMemcpyAsync(bufs[d], pinned_host, kBytes,
                                cudaMemcpyHostToDevice, s));
     CHECK_CUDA(cudaStreamSynchronize(s));
-
     auto t0 = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < 4; i++) {
       CHECK_CUDA(cudaMemcpyAsync(bufs[d], pinned_host, kBytes,
@@ -233,9 +280,8 @@ int main() {
     }
     CHECK_CUDA(cudaStreamSynchronize(s));
     auto t1 = std::chrono::high_resolution_clock::now();
-    double sec_h2d = std::chrono::duration<double>(t1 - t0).count();
-    double bw_h2d = (kBytes * 4.0) / sec_h2d / 1e9;
-
+    double bw_h2d = (kBytes * 4.0) /
+        std::chrono::duration<double>(t1 - t0).count() / 1e9;
     auto t2 = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < 4; i++) {
       CHECK_CUDA(cudaMemcpyAsync(pinned_host, bufs[d], kBytes,
@@ -243,10 +289,9 @@ int main() {
     }
     CHECK_CUDA(cudaStreamSynchronize(s));
     auto t3 = std::chrono::high_resolution_clock::now();
-    double sec_d2h = std::chrono::duration<double>(t3 - t2).count();
-    double bw_d2h = (kBytes * 4.0) / sec_d2h / 1e9;
-
-    std::printf("  d%d:  H2D %5.2f GB/s   D2H %5.2f GB/s\n", d, bw_h2d, bw_d2h);
+    double bw_d2h = (kBytes * 4.0) /
+        std::chrono::duration<double>(t3 - t2).count() / 1e9;
+    std::printf("  d%d:  H2D %6.2f GB/s   D2H %6.2f GB/s\n", d, bw_h2d, bw_d2h);
     cudaStreamDestroy(s);
   }
   std::printf("\n");
@@ -269,56 +314,46 @@ int main() {
   }
   std::printf("\n");
 
-  // --- bandwidth measurements (the actual deliverable) ---
+  // --- cross-die bandwidth ---
   std::printf("=== cross-die bandwidth (%zu MiB) ===\n", kBytes / 1024 / 1024);
-  std::printf("  [hw-p2p]   = cudaMemcpyPeer with peer access enabled\n");
-  std::printf("  [pinned]   = cudaMemcpyAsync via pinned host RAM (what ggml does)\n");
-  std::printf("  [naive]    = cudaMemcpyPeer without peer access (pageable host staging)\n\n");
-
   constexpr int kIter = 4;
   for (int src = 0; src < num_devices; src++) {
     for (int dst = 0; dst < num_devices; dst++) {
       if (src == dst) continue;
-
       double bw_hw = 0.0, bw_pinned, bw_naive;
-
-      // hw P2P — only if advertised
       if (peer_ok[src][dst]) {
         CHECK_CUDA(cudaSetDevice(src));
         cudaError_t e = cudaDeviceEnablePeerAccess(dst, 0);
-        if (e != cudaSuccess && e != cudaErrorPeerAccessAlreadyEnabled) {
-          std::fprintf(stderr, "  d%d->d%d enable FAILED: %s\n",
-                       src, dst, cudaGetErrorString(e));
-        } else {
+        if (e == cudaSuccess || e == cudaErrorPeerAccessAlreadyEnabled) {
           bw_hw = bench_hw_p2p(src, dst, bufs[src], bufs[dst], kBytes, kIter);
-          // disable so the "naive" run below truly measures the staged path
           cudaDeviceDisablePeerAccess(dst);
         }
       }
-
-      // pinned host staging (ggml's path)
       bw_pinned = bench_pinned_staged(src, dst, bufs[src], bufs[dst],
                                       pinned_host, kBytes, kIter);
-
-      // naive (v1's accidental path)
       bw_naive = bench_peer_naive(src, dst, bufs[src], bufs[dst], kBytes, kIter);
-
       if (peer_ok[src][dst]) {
-        std::printf("  d%d -> d%d:  hw-p2p %5.2f GB/s   pinned %5.2f GB/s   naive %5.2f GB/s\n",
+        std::printf("  d%d -> d%d:  hw-p2p %6.2f GB/s   pinned %6.2f GB/s   naive %6.2f GB/s\n",
                     src, dst, bw_hw, bw_pinned, bw_naive);
       } else {
-        std::printf("  d%d -> d%d:  hw-p2p   N/A         pinned %5.2f GB/s   naive %5.2f GB/s\n",
+        std::printf("  d%d -> d%d:  hw-p2p   N/A          pinned %6.2f GB/s   naive %6.2f GB/s\n",
                     src, dst, bw_pinned, bw_naive);
       }
     }
   }
+  std::printf("\n");
 
-  // --- cleanup ---
+  // --- final state (verifies we stayed in P0 throughout the bw test) ---
+  dump_gpu_state("after measurement", num_devices);
+
+  // cleanup
   cudaFreeHost(pinned_host);
   for (int d = 0; d < num_devices; d++) {
     cudaSetDevice(d);
     cudaFree(bufs[d]);
+    cudaFree(warm_out[d]);
   }
+  nvmlShutdown();
 
   std::printf("\nk80_p2p: probe OK\n");
   return 0;
