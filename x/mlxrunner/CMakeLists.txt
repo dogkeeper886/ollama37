@@ -24,6 +24,19 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../mlx mlx_build)
 
 find_package(CUDAToolkit REQUIRED)
 
+# Phase D.2 step 1 (#189): C ABI shim so Go cgo can drive libmlx.a.
+# Static archive linked into the Go binary at cgo-build time.
+add_library(mlx_cabi STATIC cabi/mlx_cabi.cc)
+target_include_directories(mlx_cabi PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/cabi
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mlx
+)
+target_link_libraries(mlx_cabi PUBLIC mlx)
+set_target_properties(mlx_cabi PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_STANDARD 17
+)
+
 add_executable(qwen_smoke smoke/qwen_surface.cpp)
 add_executable(qwen_load smoke/qwen_load.cpp)
 # Phase D spike: pure-CUDA P2P / multi-die probe. No MLX dependency — answers

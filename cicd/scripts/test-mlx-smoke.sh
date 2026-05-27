@@ -91,6 +91,15 @@ P2P_DURATION=0
 P2P_STDOUT=""
 P2P_STDERR=""
 
+# qwen_load_go (Phase D.2 step 1) — Go cgo binary that drives libmlx.a via
+# the C ABI shim. Mirrors qwen_load's first line ("loaded N tensors") to
+# prove the cgo plumbing works end-to-end.
+CGO_STATUS="skipped"
+CGO_EXIT_CODE=-1
+CGO_DURATION=0
+CGO_STDOUT=""
+CGO_STDERR=""
+
 GPU_DEVICE_COUNT=0
 GPU_NAMES=""
 
@@ -130,6 +139,11 @@ write_results() {
         --argjson p2p_duration "$P2P_DURATION" \
         --arg p2p_stdout "$P2P_STDOUT" \
         --arg p2p_stderr "$P2P_STDERR" \
+        --arg cgo_status "$CGO_STATUS" \
+        --argjson cgo_exit "$CGO_EXIT_CODE" \
+        --argjson cgo_duration "$CGO_DURATION" \
+        --arg cgo_stdout "$CGO_STDOUT" \
+        --arg cgo_stderr "$CGO_STDERR" \
         --argjson gpu_count "$GPU_DEVICE_COUNT" \
         --arg gpu_names "$GPU_NAMES" \
         --argjson final_exit "$FINAL_EXIT" \
@@ -172,6 +186,13 @@ write_results() {
             "duration_sec": $p2p_duration,
             "stdout": $p2p_stdout,
             "stderr": $p2p_stderr
+          },
+          "cgo": {
+            "status": $cgo_status,
+            "exit_code": $cgo_exit,
+            "duration_sec": $cgo_duration,
+            "stdout": $cgo_stdout,
+            "stderr": $cgo_stderr
           },
           "gpu": {
             "device_count": $gpu_count,
@@ -222,6 +243,19 @@ else
             set -euo pipefail
             cmake -S /src/x/mlxrunner -B /build -DCMAKE_BUILD_TYPE=Release
             cmake --build /build -j"$(nproc)"
+            # Phase D.2 step 1 (#189): Go cgo binary that drives libmlx.a
+            # via the C ABI shim. Skip cleanly if anything errors (most
+            # commonly: libmlx_cabi.a archive missing -> means cmake didn'\''t
+            # finish; reported by the cmake build above).
+            if [ -f /build/libmlx_cabi.a ] && [ -f /build/mlx_build/libmlx.a ]; then
+              export CGO_LDFLAGS="-L/build -L/build/mlx_build -L/usr/local/cuda-11.4/lib64"
+              export GOCACHE=/tmp/gocache
+              mkdir -p "$GOCACHE"
+              (cd /src/x/mlxrunner/go && go build -o /build/qwen_load_go ./cmd/qwen_load_go) \
+                  || echo "::warning::Go cgo build of qwen_load_go failed; see build.log"
+            else
+              echo "qwen_load_go: skipped Go build (mlx_cabi or mlx archive missing)"
+            fi
         ' > "$BUILD_DIR/build.log" 2>&1
     BUILD_RC=$?
     set -e
@@ -333,6 +367,42 @@ else
     fi
     if [ ! -x "$BUILD_DIR/qwen_load" ]; then
         echo "qwen_load: skipped (exe not built)"
+    fi
+fi
+
+# ------------------------------------------------------- qwen_load_go ----
+# Phase D.2 step 1 (#189) — Go cgo plumbing probe. Runs only if the Go
+# binary built AND MODEL_DIR resolves to a shard. Mirrors qwen_load's
+# behavior via cgo; informational (failure doesn't override FINAL_EXIT
+# since the cgo runner is still in its earliest stage).
+if [ -x "$BUILD_DIR/qwen_load_go" ] && [ -f "$MODEL_DIR/$LOAD_SHARD_FILE" ]; then
+    CGO_STATUS="running"
+    CGO_START=$(date +%s)
+    set +e
+    docker run --rm --gpus all \
+        -v "$BUILD_DIR:/build:ro" \
+        -v "$MODEL_DIR:/models:ro" \
+        -e CUDA_VISIBLE_DEVICES=0 \
+        --entrypoint bash \
+        "$RUNTIME_IMAGE" \
+        -c "/build/qwen_load_go /models/$LOAD_SHARD_FILE" \
+        > "$BUILD_DIR/cgo.stdout" 2> "$BUILD_DIR/cgo.stderr"
+    CGO_RC=$?
+    set -e
+    CGO_DURATION=$(( $(date +%s) - CGO_START ))
+    CGO_STDOUT=$(tail -c 4000 "$BUILD_DIR/cgo.stdout" || true)
+    CGO_STDERR=$(tail -c 4000 "$BUILD_DIR/cgo.stderr" || true)
+    CGO_EXIT_CODE=$CGO_RC
+    if [ $CGO_RC -eq 0 ] && echo "$CGO_STDOUT" | grep -q "qwen_load_go: cgo OK"; then
+        CGO_STATUS="success"
+        echo "cgo OK: qwen_load_go completed in ${CGO_DURATION}s"
+    else
+        CGO_STATUS="failed"
+        echo "::warning::qwen_load_go failed (rc=$CGO_RC) — informational at this stage"
+    fi
+else
+    if [ ! -x "$BUILD_DIR/qwen_load_go" ]; then
+        echo "qwen_load_go: skipped (Go cgo exe not built)"
     fi
 fi
 

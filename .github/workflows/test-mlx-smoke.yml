@@ -109,6 +109,9 @@ jobs:
           P2P_STATUS=$(jq -r '.p2p.status' /tmp/test-mlx-smoke-results.json)
           P2P_EXIT=$(jq -r '.p2p.exit_code' /tmp/test-mlx-smoke-results.json)
           P2P_DUR=$(jq -r '.p2p.duration_sec' /tmp/test-mlx-smoke-results.json)
+          CGO_STATUS=$(jq -r '.cgo.status' /tmp/test-mlx-smoke-results.json)
+          CGO_EXIT=$(jq -r '.cgo.exit_code' /tmp/test-mlx-smoke-results.json)
+          CGO_DUR=$(jq -r '.cgo.duration_sec' /tmp/test-mlx-smoke-results.json)
           FINAL_EXIT=$(jq -r '.final_exit' /tmp/test-mlx-smoke-results.json)
           LDD_MISSING=$(jq -r '.run.ldd_missing' /tmp/test-mlx-smoke-results.json)
 
@@ -123,6 +126,7 @@ jobs:
             echo "| run     | ${RUN_STATUS} | ${RUN_DUR}s | exit=${RUN_EXIT} (forward-surface) |"
             echo "| load    | ${LOAD_STATUS} | ${LOAD_DUR}s | exit=${LOAD_EXIT} (shard=${LOAD_SHARD}) |"
             echo "| p2p     | ${P2P_STATUS} | ${P2P_DUR}s | exit=${P2P_EXIT} (multi-die spike, informational) |"
+            echo "| cgo     | ${CGO_STATUS} | ${CGO_DUR}s | exit=${CGO_EXIT} (Go cgo plumbing probe, informational) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$RUN_STATUS" != "success" ] && [ -n "$LDD_MISSING" ]; then
@@ -202,6 +206,25 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+          if [ "$CGO_STATUS" = "failed" ] || [ "$CGO_STATUS" = "success" ]; then
+            {
+              echo ""
+              echo "### qwen_load_go (Go cgo plumbing probe)"
+              echo ""
+              echo '```'
+              jq -r '.cgo.stdout' /tmp/test-mlx-smoke-results.json
+              echo '```'
+              if [ "$CGO_STATUS" = "failed" ]; then
+                echo ""
+                echo "### qwen_load_go stderr (tail)"
+                echo ""
+                echo '```'
+                jq -r '.cgo.stderr' /tmp/test-mlx-smoke-results.json
+                echo '```'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Restart production ollama37
         if: always()
         run: |
@@ -241,3 +264,5 @@ jobs:
             /tmp/test-mlx-smoke-build/load.stderr
             /tmp/test-mlx-smoke-build/p2p.stdout
             /tmp/test-mlx-smoke-build/p2p.stderr
+            /tmp/test-mlx-smoke-build/cgo.stdout
+            /tmp/test-mlx-smoke-build/cgo.stderr
