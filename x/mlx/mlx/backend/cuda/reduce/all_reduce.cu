@@ -18,15 +18,25 @@ __global__ void all_reduce(T* in, U* out, size_t block_step, size_t size) {
   // TODO: Process multiple "rows" in each thread
   constexpr int M = 1;
 
+  // K80 port: when U is half/bf16 (sizeof < 4), accumulating sums in U
+  // loses precision catastrophically — BF16 has only 8 mantissa bits, so
+  // a running sum over many small values saturates long before the end
+  // (mean(248320×32 BF16 scales) returned 1.98e-41 vs. true 1.14e-05
+  // before this fix). Accumulate in float for half/bf16; cast back to U
+  // on the output write. Integral U was already promoted to int32 by
+  // ReduceResult<Sum>, so the only case where sizeof(U)<4 is half/bf16.
+  // Matches the softmax fp32-accumulator pattern (commit 36859c6c).
+  using AccT = cuda::std::conditional_t<(sizeof(U) < 4), float, U>;
+
   auto grid = cg::this_grid();
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WARP_SIZE>(block);
 
-  const U init = cu::ReduceInit<ReduceOp, T>::value();
+  const AccT init = cast_to<AccT>(cu::ReduceInit<ReduceOp, T>::value());
   ReduceOp op;
 
   T vals[N];
-  U accs[M];
+  AccT accs[M];
   accs[0] = init;
 
   size_t start = mlx_block_rank() * block_step;
@@ -37,7 +47,7 @@ __global__ void all_reduce(T* in, U* out, size_t block_step, size_t size) {
   for (; i + block.size() * N <= check; i += block.size() * N) {
     cub::LoadDirectBlockedVectorized<T, N>(block.thread_rank(), in + i, vals);
     for (int j = 0; j < N; j++) {
-      accs[0] = op(accs[0], cast_to<U>(vals[j]));
+      accs[0] = op(accs[0], cast_to<AccT>(vals[j]));
     }
   }
 
@@ -45,18 +55,21 @@ __global__ void all_reduce(T* in, U* out, size_t block_step, size_t size) {
     cub::LoadDirectBlocked(
         block.thread_rank(), in + i, vals, check - i, cast_to<T>(init));
     for (int i = 0; i < N; i++) {
-      accs[0] = op(accs[0], cast_to<U>(vals[i]));
+      accs[0] = op(accs[0], cast_to<AccT>(vals[i]));
     }
   }
 
-  // K80 port: __shared__ array of a non-trivially-constructible U (half/bf16/
-  // complex) triggers "initializer not allowed"; use an uninitialized byte buffer.
-  __shared__ __align__(16) unsigned char shared_accumulators_bytes[32 * sizeof(U)];
-  U* shared_accumulators = reinterpret_cast<U*>(shared_accumulators_bytes);
+  // K80 port: __shared__ array of a non-trivially-constructible AccT
+  // (complex; half/bf16 also need byte-buffer treatment from the earlier
+  // K80 patch) triggers "initializer not allowed"; use an uninitialized
+  // byte buffer. AccT is float for our half/bf16 case here, but keep the
+  // pattern uniform so it works for U=complex too.
+  __shared__ __align__(16) unsigned char shared_accumulators_bytes[32 * sizeof(AccT)];
+  AccT* shared_accumulators = reinterpret_cast<AccT*>(shared_accumulators_bytes);
   block_reduce(block, warp, accs, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {
-    out[mlx_block_rank()] = accs[0];
+    out[mlx_block_rank()] = cast_to<U>(accs[0]);
   }
 }
 
