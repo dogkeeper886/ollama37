@@ -251,7 +251,9 @@ else
               export CGO_LDFLAGS="-L/build -L/build/mlx_build -L/usr/local/cuda-11.4/lib64"
               export GOCACHE=/tmp/gocache
               mkdir -p "$GOCACHE"
-              (cd /src/x/mlxrunner/go && go build -o /build/qwen_load_go ./cmd/qwen_load_go) \
+              # -buildvcs=false: source is bind-mounted read-only so git
+              # stamping fails; we don't need it anyway.
+              (cd /src/x/mlxrunner/go && go build -buildvcs=false -o /build/qwen_load_go ./cmd/qwen_load_go) \
                   || echo "::warning::Go cgo build of qwen_load_go failed; see build.log"
             else
               echo "qwen_load_go: skipped Go build (mlx_cabi or mlx archive missing)"
