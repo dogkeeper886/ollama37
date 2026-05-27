@@ -58,9 +58,11 @@ target_link_libraries(qwen_load PRIVATE
     CUDA::cuda_driver
     CUDA::cublas
 )
-# k80_p2p_probe links ONLY against cudart — pure CUDA, no MLX. Smallest
-# possible binary so the hardware-capability answer isn't confounded with
-# any MLX abstraction.
+# k80_p2p_probe links cudart + nvml. NVML lets the probe query P-state /
+# clock / link-gen during the run so we can verify the GPU is actually
+# at boost clocks during the bandwidth measurement (v2.1 missed this and
+# measured 0.4 GB/s while the GPU was in P8 deep-idle).
 target_link_libraries(k80_p2p_probe PRIVATE
     CUDA::cudart
+    CUDA::nvml
 )

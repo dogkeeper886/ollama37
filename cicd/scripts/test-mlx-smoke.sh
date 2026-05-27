@@ -345,6 +345,22 @@ fi
 if [ -x "$BUILD_DIR/k80_p2p_probe" ]; then
     P2P_STATUS="running"
     P2P_START=$(date +%s)
+
+    # v3 fix for the v2.1 P8-idle artifact: wake the GPUs out of P8 before
+    # the bandwidth measurement runs. Two levers, both host-level (survive
+    # the docker-run boundary since they're driver state):
+    #   (a) persistence mode keeps the driver loaded -> faster upshift +
+    #       no cold-start penalty.
+    #   (b) application clocks lock pins the SM / mem clocks at boost
+    #       so the GPU stays in P0 even if the workload has gaps.
+    # Both may fail silently without root; warm-up in the probe itself
+    # catches the case where they didn't take effect.
+    set +e
+    nvidia-smi -pm 1 > /dev/null 2>&1
+    # K80 boost: mem 2505 / graphics 875.  -ac wants "mem,graphics".
+    nvidia-smi -ac 2505,875 > /dev/null 2>&1
+    set -e
+
     set +e
     # Match production ollama37 container exactly: --runtime=nvidia,
     # NVIDIA_VISIBLE_DEVICES=all, NVIDIA_DRIVER_CAPABILITIES=compute,utility.
@@ -360,6 +376,11 @@ if [ -x "$BUILD_DIR/k80_p2p_probe" ]; then
         -c "/build/k80_p2p_probe" \
         > "$BUILD_DIR/p2p.stdout" 2> "$BUILD_DIR/p2p.stderr"
     P2P_RC=$?
+
+    # Restore default clock state so the host isn't left with locked clocks
+    # after the test. Persistence mode is harmless to leave on; the clock
+    # lock should be released so other workloads can downclock when idle.
+    nvidia-smi -rac > /dev/null 2>&1 || true
     set -e
     P2P_DURATION=$(( $(date +%s) - P2P_START ))
     P2P_STDOUT=$(tail -c 4000 "$BUILD_DIR/p2p.stdout" || true)
