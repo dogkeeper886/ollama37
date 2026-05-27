@@ -82,6 +82,15 @@ LOAD_STDERR=""
 LOAD_MODEL_DIR=""
 LOAD_SHARD=""
 
+# k80_p2p_probe (Phase D spike) — pure-CUDA multi-die probe. Different from
+# qwen_smoke/qwen_load: NO CUDA_VISIBLE_DEVICES restriction so it sees all
+# K80 dies, and NO model dir mount.
+P2P_STATUS="skipped"
+P2P_EXIT_CODE=-1
+P2P_DURATION=0
+P2P_STDOUT=""
+P2P_STDERR=""
+
 GPU_DEVICE_COUNT=0
 GPU_NAMES=""
 
@@ -116,6 +125,11 @@ write_results() {
         --arg load_stderr "$LOAD_STDERR" \
         --arg load_model_dir "$LOAD_MODEL_DIR" \
         --arg load_shard "$LOAD_SHARD" \
+        --arg p2p_status "$P2P_STATUS" \
+        --argjson p2p_exit "$P2P_EXIT_CODE" \
+        --argjson p2p_duration "$P2P_DURATION" \
+        --arg p2p_stdout "$P2P_STDOUT" \
+        --arg p2p_stderr "$P2P_STDERR" \
         --argjson gpu_count "$GPU_DEVICE_COUNT" \
         --arg gpu_names "$GPU_NAMES" \
         --argjson final_exit "$FINAL_EXIT" \
@@ -151,6 +165,13 @@ write_results() {
             "stderr": $load_stderr,
             "model_dir": $load_model_dir,
             "shard": $load_shard
+          },
+          "p2p": {
+            "status": $p2p_status,
+            "exit_code": $p2p_exit,
+            "duration_sec": $p2p_duration,
+            "stdout": $p2p_stdout,
+            "stderr": $p2p_stderr
           },
           "gpu": {
             "device_count": $gpu_count,
@@ -313,6 +334,46 @@ else
     if [ ! -x "$BUILD_DIR/qwen_load" ]; then
         echo "qwen_load: skipped (exe not built)"
     fi
+fi
+
+# --------------------------------------------------------- k80_p2p_probe ----
+# Phase D spike. NO CUDA_VISIBLE_DEVICES restriction (probe needs to see all
+# K80 dies). NO model dir mount (pure CUDA, no MLX dep). Failure does NOT
+# override existing exit codes — this is informational; we surface the
+# capability data and let the human decide whether multi-die sharding
+# is viable.
+if [ -x "$BUILD_DIR/k80_p2p_probe" ]; then
+    P2P_STATUS="running"
+    P2P_START=$(date +%s)
+    set +e
+    # Match production ollama37 container exactly: --runtime=nvidia,
+    # NVIDIA_VISIBLE_DEVICES=all, NVIDIA_DRIVER_CAPABILITIES=compute,utility.
+    # Avoids the --gpus shortcut ambiguity and ensures the bandwidth numbers
+    # are valid for the actual deployment environment.
+    docker run --rm \
+        --runtime=nvidia \
+        -e NVIDIA_VISIBLE_DEVICES=all \
+        -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+        -v "$BUILD_DIR:/build:ro" \
+        --entrypoint bash \
+        "$RUNTIME_IMAGE" \
+        -c "/build/k80_p2p_probe" \
+        > "$BUILD_DIR/p2p.stdout" 2> "$BUILD_DIR/p2p.stderr"
+    P2P_RC=$?
+    set -e
+    P2P_DURATION=$(( $(date +%s) - P2P_START ))
+    P2P_STDOUT=$(tail -c 4000 "$BUILD_DIR/p2p.stdout" || true)
+    P2P_STDERR=$(tail -c 4000 "$BUILD_DIR/p2p.stderr" || true)
+    P2P_EXIT_CODE=$P2P_RC
+    if [ $P2P_RC -eq 0 ] && echo "$P2P_STDOUT" | grep -q "k80_p2p: probe OK"; then
+        P2P_STATUS="success"
+        echo "p2p OK: k80_p2p_probe completed in ${P2P_DURATION}s"
+    else
+        P2P_STATUS="failed"
+        echo "::warning::k80_p2p_probe failed (rc=$P2P_RC) — informational only, not overriding FINAL_EXIT"
+    fi
+else
+    echo "k80_p2p_probe: skipped (exe not built)"
 fi
 
 exit $FINAL_EXIT
