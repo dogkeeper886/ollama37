@@ -87,11 +87,16 @@ row_reduce_simple(const T* in, U* out, size_t n_rows, int size) {
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WARP_SIZE>(block);
 
-  const U init = cu::ReduceInit<ReduceOp, T>::value();
+  // K80 port: float accumulator for half/bf16 (BF16 8-bit mantissa
+  // saturates summing many small values). Matches the fix in
+  // all_reduce.cu and the softmax fp32-accumulator pattern.
+  using AccT = cuda::std::conditional_t<(sizeof(U) < 4), float, U>;
+
+  const AccT init = cast_to<AccT>(cu::ReduceInit<ReduceOp, T>::value());
   ReduceOp op;
 
   AlignedVector<T, N> vals[M];
-  AlignedVector<U, M> accs;
+  AlignedVector<AccT, M> accs;
   for (int i = 0; i < M; i++) {
     accs[i] = init;
   }
@@ -109,7 +114,7 @@ row_reduce_simple(const T* in, U* out, size_t n_rows, int size) {
     }
     for (int k = 0; k < M; k++) {
       for (int j = 0; j < N; j++) {
-        accs[k] = op(accs[k], cast_to<U>(vals[k][j]));
+        accs[k] = op(accs[k], cast_to<AccT>(vals[k][j]));
       }
     }
 
@@ -126,21 +131,26 @@ row_reduce_simple(const T* in, U* out, size_t n_rows, int size) {
     }
     for (int k = 0; k < M; k++) {
       for (int j = 0; j < N; j++) {
-        accs[k] = op(accs[k], cast_to<U>(vals[k][j]));
+        accs[k] = op(accs[k], cast_to<AccT>(vals[k][j]));
       }
     }
   }
 
-  __shared__ __align__(16) unsigned char shared_accumulators_k80[(32 * M) * sizeof(U)]; U* shared_accumulators = reinterpret_cast<U*>(shared_accumulators_k80);
+  __shared__ __align__(16) unsigned char shared_accumulators_k80[(32 * M) * sizeof(AccT)]; AccT* shared_accumulators = reinterpret_cast<AccT*>(shared_accumulators_k80);
   block_reduce(block, warp, accs.val, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {
+    // K80: cast accumulators (AccT) back to U before storing to out (U*).
+    AlignedVector<U, M> accs_u;
+    for (int i = 0; i < M; i++) {
+      accs_u[i] = cast_to<U>(accs[i]);
+    }
     if (mlx_block_rank() * M + M <= n_rows) {
-      store_vector(out, 0, accs);
+      store_vector(out, 0, accs_u);
     } else {
       short offset = mlx_block_rank() * M + M - n_rows;
       for (int i = offset; i < M; i++) {
-        out[i] = accs[i];
+        out[i] = accs_u[i];
       }
     }
   }
@@ -155,12 +165,15 @@ __global__ void row_reduce_looped(
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WARP_SIZE>(block);
 
+  // K80 port: float accumulator for half/bf16. See row_reduce_simple note.
+  using AccT = cuda::std::conditional_t<(sizeof(U) < 4), float, U>;
+
   size_t out_idx = mlx_block_rank();
 
   Op op;
 
-  U total[1];
-  U init = ReduceInit<Op, T>::value();
+  AccT total[1];
+  AccT init = cast_to<AccT>(ReduceInit<Op, T>::value());
   total[0] = init;
   LoopedElemToLoc<NDIM, (NDIM > 2)> loop(args.reduce_ndim);
   const size_t full_blocks = args.row_size / (block.size() * N_READS);
@@ -183,7 +196,7 @@ __global__ void row_reduce_looped(
       for (size_t r = 0; r < full_blocks; r++) {
         auto vals = load_vector<N_READS>(inlocal, 0);
         for (int i = 0; i < N_READS; i++) {
-          total[0] = op(total[0], cast_to<U>(vals[i]));
+          total[0] = op(total[0], cast_to<AccT>(vals[i]));
         }
         inlocal += block.size() * N_READS;
       }
@@ -194,7 +207,7 @@ __global__ void row_reduce_looped(
           vals[i] = mask[i] ? inlocal[i] : cast_to<T>(init);
         }
         for (int i = 0; i < N_READS; i++) {
-          total[0] = op(total[0], cast_to<U>(vals[i]));
+          total[0] = op(total[0], cast_to<AccT>(vals[i]));
         }
       }
 
@@ -210,7 +223,7 @@ __global__ void row_reduce_looped(
       for (size_t r = 0; r < full_blocks; r++) {
         auto vals = load_vector<N_READS>(inlocal, 0);
         for (int i = 0; i < N_READS; i++) {
-          total[0] = op(total[0], cast_to<U>(vals[i]));
+          total[0] = op(total[0], cast_to<AccT>(vals[i]));
         }
         inlocal += block.size() * N_READS;
       }
@@ -219,11 +232,11 @@ __global__ void row_reduce_looped(
     }
   }
 
-  __shared__ __align__(16) unsigned char shared_accumulators_k80[(32) * sizeof(U)]; U* shared_accumulators = reinterpret_cast<U*>(shared_accumulators_k80);
+  __shared__ __align__(16) unsigned char shared_accumulators_k80[(32) * sizeof(AccT)]; AccT* shared_accumulators = reinterpret_cast<AccT*>(shared_accumulators_k80);
   block_reduce(block, warp, total, shared_accumulators, op, init);
 
   if (block.thread_rank() == 0) {
-    out[out_idx] = total[0];
+    out[out_idx] = cast_to<U>(total[0]);
   }
 }
 
