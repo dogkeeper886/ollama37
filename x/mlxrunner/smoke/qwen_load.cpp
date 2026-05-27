@@ -124,6 +124,33 @@ int main(int argc, char** argv) {
   }
   std::cout << "\n";
 
-  std::cout << "qwen_load: load + reduce + take + dequant OK\n";
+  // --- RMSNorm probe ---
+  // Apply layer-0 input_layernorm to the dequant embed row. Exercises:
+  //   - fast::rms_norm dispatch (in libmlx.a from Phase A)
+  //   - the row-reduce path that PR #200 patched (sum-of-squares is a
+  //     row reduce on the last dim with float accumulator AccT pattern).
+  // The bf16 norm-gain weight + bf16 input both stress the precision
+  // path that was the original BF16-mean bug.
+  const std::string ln_key =
+      "language_model.model.layers.0.input_layernorm.weight";
+  if (tensors.find(ln_key) == tensors.end()) {
+    std::cerr << "qwen_load: missing tensor '" << ln_key << "'\n";
+    return 4;
+  }
+  const array& norm_gain = tensors.at(ln_key);  // bf16 [2048]
+  array normed = fast::rms_norm(w_full_row, norm_gain, /*eps=*/1e-6f);
+  array normed_f32 = astype(normed, float32);
+  array normed_abs_mean = mean(abs(normed_f32), /*keepdims=*/false);
+  eval({normed_f32, normed_abs_mean});
+  std::cout << "qwen_load: rms_norm(dequant row 42) shape=["
+            << normed.shape(0) << "," << normed.shape(1) << "]"
+            << " abs_mean=" << normed_abs_mean.item<float>() << "\n";
+  std::cout << "qwen_load: rms_norm first 5: ";
+  for (int i = 0; i < 5; i++) {
+    std::cout << normed_f32.data<float>()[i] << " ";
+  }
+  std::cout << "\n";
+
+  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm OK\n";
   return 0;
 }
