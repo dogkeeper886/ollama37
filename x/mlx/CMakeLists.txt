@@ -84,7 +84,8 @@ add_library(mlx STATIC
 target_include_directories(mlx PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}                       # "mlx/..." -> vendored tree
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fmt/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/include    # nlohmann/json.hpp (header-only)
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/include    # <nlohmann/json.hpp>
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json/include/nlohmann  # <json.hpp> (safetensors.cpp's form)
 )
 
 # fmt header-only (vendored); FMT_UNICODE=0 mirrors MLX (Unicode fmt fails in .cu).
