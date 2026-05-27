@@ -32,6 +32,10 @@ RUNTIME_IMAGE="${RUNTIME_IMAGE:-ollama37:latest}"
 BUILD_DIR="${BUILD_DIR:-/tmp/test-mlx-smoke-build}"
 RESULTS_JSON="${RESULTS_JSON:-/tmp/test-mlx-smoke-results.json}"
 SRC_DIR="${SRC_DIR:-$(git rev-parse --show-toplevel)}"
+# MODEL_DIR: optional; if set + exists + qwen_load exe present, run the
+# load-side smoke against shard 1. Default points where the qwen3.6:35b-mlx
+# weights were pulled (~19 GB; pulled offline per #187 office-hour rule).
+MODEL_DIR="${MODEL_DIR:-/home/jack/models/qwen3.6-35b-a3b-4bit}"
 SKIP_BUILD=false
 
 while [[ $# -gt 0 ]]; do
@@ -40,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --runtime-image) RUNTIME_IMAGE="$2"; shift 2 ;;
         --build-dir) BUILD_DIR="$2"; shift 2 ;;
         --results-json) RESULTS_JSON="$2"; shift 2 ;;
+        --model-dir) MODEL_DIR="$2"; shift 2 ;;
         --skip-build) SKIP_BUILD=true; shift ;;
         -h|--help)
             sed -n '2,30p' "$0" | sed 's/^# \?//'
@@ -68,6 +73,15 @@ RUN_STDERR=""
 LDD_OUTPUT=""
 LDD_MISSING=""
 
+# qwen_load (Phase C load-surface probe) — runs only if MODEL_DIR resolves.
+LOAD_STATUS="skipped"
+LOAD_EXIT_CODE=-1
+LOAD_DURATION=0
+LOAD_STDOUT=""
+LOAD_STDERR=""
+LOAD_MODEL_DIR=""
+LOAD_SHARD=""
+
 GPU_DEVICE_COUNT=0
 GPU_NAMES=""
 
@@ -95,6 +109,13 @@ write_results() {
         --arg run_stderr "$RUN_STDERR" \
         --arg ldd "$LDD_OUTPUT" \
         --arg ldd_missing "$LDD_MISSING" \
+        --arg load_status "$LOAD_STATUS" \
+        --argjson load_exit "$LOAD_EXIT_CODE" \
+        --argjson load_duration "$LOAD_DURATION" \
+        --arg load_stdout "$LOAD_STDOUT" \
+        --arg load_stderr "$LOAD_STDERR" \
+        --arg load_model_dir "$LOAD_MODEL_DIR" \
+        --arg load_shard "$LOAD_SHARD" \
         --argjson gpu_count "$GPU_DEVICE_COUNT" \
         --arg gpu_names "$GPU_NAMES" \
         --argjson final_exit "$FINAL_EXIT" \
@@ -121,6 +142,15 @@ write_results() {
             "stderr": $run_stderr,
             "ldd_output": $ldd,
             "ldd_missing": $ldd_missing
+          },
+          "load": {
+            "status": $load_status,
+            "exit_code": $load_exit,
+            "duration_sec": $load_duration,
+            "stdout": $load_stdout,
+            "stderr": $load_stderr,
+            "model_dir": $load_model_dir,
+            "shard": $load_shard
           },
           "gpu": {
             "device_count": $gpu_count,
@@ -236,6 +266,51 @@ else
         echo "::error::missing libs (ldd): $LDD_MISSING"
     fi
     FINAL_EXIT=2
+fi
+
+# -------------------------------------------------------------- qwen_load ----
+# Phase C load-surface probe. Runs only if (a) qwen_load exe was built, and
+# (b) MODEL_DIR resolves to a directory containing shard 1 of qwen3.6-35b-mlx.
+# Failure here doesn't override an existing FINAL_EXIT=2 from the run step,
+# but it does turn a green smoke into a load-failed exit-2.
+LOAD_SHARD_FILE="model-00001-of-00004.safetensors"
+if [ -x "$BUILD_DIR/qwen_load" ] && [ -f "$MODEL_DIR/$LOAD_SHARD_FILE" ]; then
+    LOAD_MODEL_DIR="$MODEL_DIR"
+    LOAD_SHARD="$LOAD_SHARD_FILE"
+    LOAD_STATUS="running"
+    LOAD_START=$(date +%s)
+    set +e
+    docker run --rm --gpus all \
+        -v "$BUILD_DIR:/build:ro" \
+        -v "$MODEL_DIR:/models:ro" \
+        -e CUDA_VISIBLE_DEVICES=0 \
+        --entrypoint bash \
+        "$RUNTIME_IMAGE" \
+        -c "/build/qwen_load /models/$LOAD_SHARD_FILE" \
+        > "$BUILD_DIR/load.stdout" 2> "$BUILD_DIR/load.stderr"
+    LOAD_RC=$?
+    set -e
+    LOAD_DURATION=$(( $(date +%s) - LOAD_START ))
+    LOAD_STDOUT=$(tail -c 4000 "$BUILD_DIR/load.stdout" || true)
+    LOAD_STDERR=$(tail -c 4000 "$BUILD_DIR/load.stderr" || true)
+    LOAD_EXIT_CODE=$LOAD_RC
+    if [ $LOAD_RC -eq 0 ] && echo "$LOAD_STDOUT" | grep -q "qwen_load: load + reduce OK"; then
+        LOAD_STATUS="success"
+        echo "load OK: qwen_load completed in ${LOAD_DURATION}s"
+    else
+        LOAD_STATUS="failed"
+        echo "::error::qwen_load failed (rc=$LOAD_RC, duration=${LOAD_DURATION}s)"
+        if [ "$FINAL_EXIT" -eq 0 ]; then
+            FINAL_EXIT=2
+        fi
+    fi
+else
+    if [ ! -f "$MODEL_DIR/$LOAD_SHARD_FILE" ]; then
+        echo "qwen_load: skipped (no $MODEL_DIR/$LOAD_SHARD_FILE)"
+    fi
+    if [ ! -x "$BUILD_DIR/qwen_load" ]; then
+        echo "qwen_load: skipped (exe not built)"
+    fi
 fi
 
 exit $FINAL_EXIT

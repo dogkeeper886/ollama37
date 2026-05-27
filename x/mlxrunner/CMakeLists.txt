@@ -25,8 +25,12 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../mlx mlx_build)
 find_package(CUDAToolkit REQUIRED)
 
 add_executable(qwen_smoke smoke/qwen_surface.cpp)
+add_executable(qwen_load smoke/qwen_load.cpp)
 
 target_include_directories(qwen_smoke PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mlx
+)
+target_include_directories(qwen_load PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../mlx
 )
 
@@ -34,6 +38,12 @@ target_include_directories(qwen_smoke PRIVATE
 # resolve the runtime + driver-API (cuLaunchKernel/cuGraphAddKernelNode) +
 # GEMM symbols libmlx.a refers to.
 target_link_libraries(qwen_smoke PRIVATE
+    mlx
+    CUDA::cudart
+    CUDA::cuda_driver
+    CUDA::cublas
+)
+target_link_libraries(qwen_load PRIVATE
     mlx
     CUDA::cudart
     CUDA::cuda_driver
