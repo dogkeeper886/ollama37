@@ -118,11 +118,14 @@ __global__ void col_reduce_looped(
   in += elem_to_loc(tile_y, args.shape.data(), args.strides.data(), args.ndim) +
       tile_x * BN;
 
+  // K80 port: float accumulator for half/bf16. See all_reduce.cu / row_reduce.cu.
+  using AccT = cuda::std::conditional_t<(sizeof(U) < 4), float, U>;
+
   // Initialize the running totals
   Op op;
-  U totals[N_READS];
+  AccT totals[N_READS];
   for (int i = 0; i < N_READS; i++) {
-    totals[i] = ReduceInit<Op, T>::value();
+    totals[i] = cast_to<AccT>(ReduceInit<Op, T>::value());
   }
 
   size_t total = args.non_col_reductions * args.reduction_size;
@@ -145,7 +148,7 @@ __global__ void col_reduce_looped(
         T vals[N_READS];
         cub::LoadDirectBlockedVectorized(thread_x, in + loop.location(), vals);
         for (int i = 0; i < N_READS; i++) {
-          totals[i] = op(totals[i], cast_to<U>(vals[i]));
+          totals[i] = op(totals[i], cast_to<AccT>(vals[i]));
         }
         loop.next(BM, args.reduce_shape.data(), args.reduce_strides.data());
       }
@@ -154,7 +157,7 @@ __global__ void col_reduce_looped(
         T vals[N_READS];
         cub::LoadDirectBlocked(thread_x, in + loop.location(), vals);
         for (int i = 0; i < N_READS; i++) {
-          totals[i] = op(totals[i], cast_to<U>(vals[i]));
+          totals[i] = op(totals[i], cast_to<AccT>(vals[i]));
         }
         loop.next(BM, args.reduce_shape.data(), args.reduce_strides.data());
       }
@@ -169,7 +172,7 @@ __global__ void col_reduce_looped(
           args.reduction_stride - tile_x * BN,
           cast_to<T>(ReduceInit<Op, T>::value()));
       for (int i = 0; i < N_READS; i++) {
-        totals[i] = op(totals[i], cast_to<U>(vals[i]));
+        totals[i] = op(totals[i], cast_to<AccT>(vals[i]));
       }
       loop.next(BM, args.reduce_shape.data(), args.reduce_strides.data());
     }
@@ -178,7 +181,7 @@ __global__ void col_reduce_looped(
   // Do warp reduce for each output.
   constexpr int n_outputs = BN / threads_per_row;
   static_assert(BM == 32 && n_outputs == N_READS);
-  __shared__ __align__(16) unsigned char shared_vals_k80[(BM * BN) * sizeof(U)]; U* shared_vals = reinterpret_cast<U*>(shared_vals_k80);
+  __shared__ __align__(16) unsigned char shared_vals_k80[(BM * BN) * sizeof(AccT)]; AccT* shared_vals = reinterpret_cast<AccT*>(shared_vals_k80);
   short s_idx = thread_y * BN + thread_x * N_READS;
   for (int i = 0; i < N_READS; i++) {
     shared_vals[s_idx + i] = totals[i];
@@ -189,15 +192,20 @@ __global__ void col_reduce_looped(
     totals[i] = cg::reduce(warp, shared_vals[s_idx + i], op);
   }
 
-  // Write result.
+  // Write result. K80: cast AccT accumulators back to U for the U*-typed
+  // output buffer before cub::StoreDirectBlocked.
   if (warp.thread_rank() == 0) {
     if (BLOCKS > 1) {
       out += tile_out * out_size * args.reduction_stride;
     }
+    U totals_u[N_READS];
+    for (int i = 0; i < N_READS; i++) {
+      totals_u[i] = cast_to<U>(totals[i]);
+    }
     cub::StoreDirectBlocked(
         warp.meta_group_rank(),
         out + tile_y * args.reduction_stride + tile_x * BN,
-        totals,
+        totals_u,
         args.reduction_stride - tile_x * BN);
   }
 }
@@ -225,22 +233,30 @@ __global__ void col_reduce_small(
   in += offset;
   out += idx;
 
-  AlignedVector<U, N_READS> accumulator;
+  // K80 port: float accumulator for half/bf16. See all_reduce.cu.
+  using AccT = cuda::std::conditional_t<(sizeof(U) < 4), float, U>;
+
+  AlignedVector<AccT, N_READS> accumulator;
   for (int i = 0; i < N_READS; i++) {
-    accumulator[i] = ReduceInit<Op, T>::value();
+    accumulator[i] = cast_to<AccT>(ReduceInit<Op, T>::value());
   }
 
   for (int i = 0; i < args.reduction_size; i++) {
     auto values = load_vector<N_READS>(in, 0);
 
     for (int j = 0; j < N_READS; j++) {
-      accumulator[j] = op(accumulator[j], cast_to<U>(values[j]));
+      accumulator[j] = op(accumulator[j], cast_to<AccT>(values[j]));
     }
 
     in += args.reduction_stride;
   }
 
-  store_vector(out, 0, accumulator);
+  // K80: cast AccT accumulators back to U for the U*-typed output buffer.
+  AlignedVector<U, N_READS> accumulator_u;
+  for (int i = 0; i < N_READS; i++) {
+    accumulator_u[i] = cast_to<U>(accumulator[i]);
+  }
+  store_vector(out, 0, accumulator_u);
 }
 
 } // namespace cu
