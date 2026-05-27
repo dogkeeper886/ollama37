@@ -106,6 +106,9 @@ jobs:
           LOAD_EXIT=$(jq -r '.load.exit_code' /tmp/test-mlx-smoke-results.json)
           LOAD_DUR=$(jq -r '.load.duration_sec' /tmp/test-mlx-smoke-results.json)
           LOAD_SHARD=$(jq -r '.load.shard' /tmp/test-mlx-smoke-results.json)
+          P2P_STATUS=$(jq -r '.p2p.status' /tmp/test-mlx-smoke-results.json)
+          P2P_EXIT=$(jq -r '.p2p.exit_code' /tmp/test-mlx-smoke-results.json)
+          P2P_DUR=$(jq -r '.p2p.duration_sec' /tmp/test-mlx-smoke-results.json)
           FINAL_EXIT=$(jq -r '.final_exit' /tmp/test-mlx-smoke-results.json)
           LDD_MISSING=$(jq -r '.run.ldd_missing' /tmp/test-mlx-smoke-results.json)
 
@@ -119,6 +122,7 @@ jobs:
             echo "| build   | ${BUILD_STATUS} | ${BUILD_DUR}s | libmlx.a ${LIBMLX_SIZE}B · ${LIBMLX_OBJS} objs · qwen_smoke ${EXE_SIZE}B |"
             echo "| run     | ${RUN_STATUS} | ${RUN_DUR}s | exit=${RUN_EXIT} (forward-surface) |"
             echo "| load    | ${LOAD_STATUS} | ${LOAD_DUR}s | exit=${LOAD_EXIT} (shard=${LOAD_SHARD}) |"
+            echo "| p2p     | ${P2P_STATUS} | ${P2P_DUR}s | exit=${P2P_EXIT} (multi-die spike, informational) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$RUN_STATUS" != "success" ] && [ -n "$LDD_MISSING" ]; then
@@ -179,6 +183,25 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+          if [ "$P2P_STATUS" = "failed" ] || [ "$P2P_STATUS" = "success" ]; then
+            {
+              echo ""
+              echo "### k80_p2p_probe (multi-die spike, informational)"
+              echo ""
+              echo '```'
+              jq -r '.p2p.stdout' /tmp/test-mlx-smoke-results.json
+              echo '```'
+              if [ "$P2P_STATUS" = "failed" ]; then
+                echo ""
+                echo "### k80_p2p_probe stderr (tail)"
+                echo ""
+                echo '```'
+                jq -r '.p2p.stderr' /tmp/test-mlx-smoke-results.json
+                echo '```'
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Restart production ollama37
         if: always()
         run: |
@@ -216,3 +239,5 @@ jobs:
             /tmp/test-mlx-smoke-build/run.stderr
             /tmp/test-mlx-smoke-build/load.stdout
             /tmp/test-mlx-smoke-build/load.stderr
+            /tmp/test-mlx-smoke-build/p2p.stdout
+            /tmp/test-mlx-smoke-build/p2p.stderr

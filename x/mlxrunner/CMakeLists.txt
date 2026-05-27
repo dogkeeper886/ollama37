@@ -26,6 +26,15 @@ find_package(CUDAToolkit REQUIRED)
 
 add_executable(qwen_smoke smoke/qwen_surface.cpp)
 add_executable(qwen_load smoke/qwen_load.cpp)
+# Phase D spike: pure-CUDA P2P / multi-die probe. No MLX dependency — answers
+# "is multi-die K80 sharding viable?" at the hardware level before more runner
+# investment (#187 review).
+add_executable(k80_p2p_probe smoke/k80_p2p_probe.cu)
+set_target_properties(k80_p2p_probe PROPERTIES
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    CUDA_ARCHITECTURES 37
+)
 
 target_include_directories(qwen_smoke PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../mlx
@@ -48,4 +57,10 @@ target_link_libraries(qwen_load PRIVATE
     CUDA::cudart
     CUDA::cuda_driver
     CUDA::cublas
+)
+# k80_p2p_probe links ONLY against cudart — pure CUDA, no MLX. Smallest
+# possible binary so the hardware-capability answer isn't confounded with
+# any MLX abstraction.
+target_link_libraries(k80_p2p_probe PRIVATE
+    CUDA::cudart
 )
