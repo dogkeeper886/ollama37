@@ -186,6 +186,28 @@ int main(int argc, char** argv) {
   std::cout << "qwen_load: in_proj_qkv [0,0]=" << qkv_proj_f32.data<float>()[0]
             << " [0,1]=" << qkv_proj_f32.data<float>()[1] << "\n";
 
-  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm + qproj OK\n";
+  // --- conv1d probe: real layer-0 DeltaNet conv1d ---
+  // Depthwise conv1d (groups = C_out = 8192) with kw=4 over the q/k/v stream.
+  // For an all-ones input [1, 4, 8192] with padding=0, output is [1, 1, 8192]
+  // where out[0, 0, c] = sum_k weight[c, k, 0] (kernel sum per channel).
+  // Exercises Phase A's gemm_conv path (PR #194 / commit 39abb387) on REAL
+  // BF16 conv weights for the first time.
+  const array& cv_w = get("language_model.model.layers.0.linear_attn.conv1d.weight");
+  array cv_input = ones({1, 4, 8192}, bfloat16);
+  array cv_out = conv1d(cv_input, cv_w,
+                        /*stride=*/1, /*padding=*/0,
+                        /*dilation=*/1, /*groups=*/8192);
+  array cv_out_f32 = astype(cv_out, float32);
+  array cv_abs_mean = mean(abs(cv_out_f32), /*keepdims=*/false);
+  eval({cv_out_f32, cv_abs_mean});
+  std::cout << "qwen_load: conv1d(ones, layer_0.conv1d.w) shape=["
+            << cv_out.shape(0) << "," << cv_out.shape(1) << "," << cv_out.shape(2) << "]"
+            << " abs_mean=" << cv_abs_mean.item<float>() << "\n";
+  std::cout << "qwen_load: conv1d out [0,0,0..2] = "
+            << cv_out_f32.data<float>()[0] << " "
+            << cv_out_f32.data<float>()[1] << " "
+            << cv_out_f32.data<float>()[2] << "\n";
+
+  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm + qproj + conv1d OK\n";
   return 0;
 }
