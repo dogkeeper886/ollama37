@@ -211,6 +211,46 @@ int main() {
   void* pinned_host = nullptr;
   CHECK_CUDA(cudaMallocHost(&pinned_host, kBytes));
 
+  // --- per-die host<->device pinned baseline (PCIe ceiling) ---
+  std::printf("=== per-die pinned host<->device baseline (%zu MiB) ===\n",
+              kBytes / 1024 / 1024);
+  std::printf("  Establishes the PCIe ceiling each die sees. Cross-die staged\n");
+  std::printf("  bandwidth is bounded by min(d2h, h2d) on the same path.\n");
+  for (int d = 0; d < num_devices; d++) {
+    CHECK_CUDA(cudaSetDevice(d));
+    cudaStream_t s;
+    CHECK_CUDA(cudaStreamCreate(&s));
+
+    // warm
+    CHECK_CUDA(cudaMemcpyAsync(bufs[d], pinned_host, kBytes,
+                               cudaMemcpyHostToDevice, s));
+    CHECK_CUDA(cudaStreamSynchronize(s));
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 4; i++) {
+      CHECK_CUDA(cudaMemcpyAsync(bufs[d], pinned_host, kBytes,
+                                 cudaMemcpyHostToDevice, s));
+    }
+    CHECK_CUDA(cudaStreamSynchronize(s));
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double sec_h2d = std::chrono::duration<double>(t1 - t0).count();
+    double bw_h2d = (kBytes * 4.0) / sec_h2d / 1e9;
+
+    auto t2 = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 4; i++) {
+      CHECK_CUDA(cudaMemcpyAsync(pinned_host, bufs[d], kBytes,
+                                 cudaMemcpyDeviceToHost, s));
+    }
+    CHECK_CUDA(cudaStreamSynchronize(s));
+    auto t3 = std::chrono::high_resolution_clock::now();
+    double sec_d2h = std::chrono::duration<double>(t3 - t2).count();
+    double bw_d2h = (kBytes * 4.0) / sec_d2h / 1e9;
+
+    std::printf("  d%d:  H2D %5.2f GB/s   D2H %5.2f GB/s\n", d, bw_h2d, bw_d2h);
+    cudaStreamDestroy(s);
+  }
+  std::printf("\n");
+
   // --- per-die compute sanity ---
   std::printf("=== per-die compute check ===\n");
   const int N = 1024 * 1024;
