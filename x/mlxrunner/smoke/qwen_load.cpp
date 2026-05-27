@@ -224,6 +224,37 @@ int main(int argc, char** argv) {
             << silu_out_f32.data<float>()[1] << " "
             << silu_out_f32.data<float>()[2] << "\n";
 
-  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm + qproj + conv1d + silu OK\n";
+  // --- DeltaNet state-space setup: exp(A_log) + softplus(dt_bias) ---
+  // Two elementwise ops that prepare the recurrence coefficients:
+  //   A = -exp(A_log)            -- the SSM transition coefficient
+  //   delta = softplus(dt_proj_out + dt_bias) -- per-step time delta
+  // For probe purposes we just exercise the kernels on the real model
+  // tensors (A_log, dt_bias) to validate exp + softplus on BF16.
+  // Both are wired in libmlx.a since Phase A.
+  const array& a_log = get("language_model.model.layers.0.linear_attn.A_log");
+  const array& dt_bias = get("language_model.model.layers.0.linear_attn.dt_bias");
+
+  array neg_exp_A = negative(exp(a_log));
+  array sp_dtbias = softplus(dt_bias);
+  array neg_exp_A_f32 = astype(neg_exp_A, float32);
+  array sp_dtbias_f32 = astype(sp_dtbias, float32);
+  array neg_exp_A_abs_mean = mean(abs(neg_exp_A_f32), /*keepdims=*/false);
+  array sp_dtbias_mean = mean(sp_dtbias_f32, /*keepdims=*/false);
+  eval({neg_exp_A_f32, sp_dtbias_f32, neg_exp_A_abs_mean, sp_dtbias_mean});
+
+  std::cout << "qwen_load: -exp(A_log) shape=[" << neg_exp_A.shape(0) << "]"
+            << " abs_mean=" << neg_exp_A_abs_mean.item<float>() << "\n";
+  std::cout << "qwen_load: -exp(A_log) first 3 = "
+            << neg_exp_A_f32.data<float>()[0] << " "
+            << neg_exp_A_f32.data<float>()[1] << " "
+            << neg_exp_A_f32.data<float>()[2] << "\n";
+  std::cout << "qwen_load: softplus(dt_bias) shape=[" << sp_dtbias.shape(0) << "]"
+            << " mean=" << sp_dtbias_mean.item<float>() << "\n";
+  std::cout << "qwen_load: softplus(dt_bias) first 3 = "
+            << sp_dtbias_f32.data<float>()[0] << " "
+            << sp_dtbias_f32.data<float>()[1] << " "
+            << sp_dtbias_f32.data<float>()[2] << "\n";
+
+  std::cout << "qwen_load: load + reduce + take + dequant + rms_norm + qproj + conv1d + silu + ssm_setup OK\n";
   return 0;
 }
