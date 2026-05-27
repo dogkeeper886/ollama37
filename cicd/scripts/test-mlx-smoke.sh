@@ -294,7 +294,9 @@ if [ -x "$BUILD_DIR/qwen_load" ] && [ -f "$MODEL_DIR/$LOAD_SHARD_FILE" ]; then
     LOAD_STDOUT=$(tail -c 4000 "$BUILD_DIR/load.stdout" || true)
     LOAD_STDERR=$(tail -c 4000 "$BUILD_DIR/load.stderr" || true)
     LOAD_EXIT_CODE=$LOAD_RC
-    if [ $LOAD_RC -eq 0 ] && echo "$LOAD_STDOUT" | grep -q "qwen_load: load + reduce OK"; then
+    # Match both old ("load + reduce OK") and new ("load + reduce + take OK")
+    # success strings so the script keeps working as qwen_load gains more probes.
+    if [ $LOAD_RC -eq 0 ] && echo "$LOAD_STDOUT" | grep -qE "qwen_load: load \+ reduce.* OK"; then
         LOAD_STATUS="success"
         echo "load OK: qwen_load completed in ${LOAD_DURATION}s"
     else

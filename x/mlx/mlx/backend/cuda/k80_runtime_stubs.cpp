@@ -48,7 +48,8 @@ namespace {
   }
 
 K80_UNARY_EVAL_GPU(FFT)
-K80_UNARY_EVAL_GPU(Gather)
+// Gather::eval_gpu is implemented in indexing_k80.cu (embed-lookup case only;
+// other shapes throw from there with a more specific message).
 K80_UNARY_EVAL_GPU(GatherAxis)
 K80_UNARY_EVAL_GPU(Hadamard)
 K80_UNARY_EVAL_GPU(MaskedScatter)
