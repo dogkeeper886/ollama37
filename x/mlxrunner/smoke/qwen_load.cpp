@@ -71,8 +71,14 @@ int main(int argc, char** argv) {
   //   - scales/biases are BF16 floats; mean is meaningful.
   //   - wq is U32 packed (8 weights per uint32 at bits=4); mean as float
   //     just tells us it isn't all zeros.
-  array scales_mean = mean(scales, /*keepdims=*/false);
-  array biases_mean = mean(biases, /*keepdims=*/false);
+  //
+  // NOTE: array::item<float>() does `*data<float>()` — a raw pointer
+  // dereference, NOT a dtype conversion. Reading a BF16 buffer as float*
+  // yields ~1e-41 denormal garbage (bf16 bits in the low 2 bytes, high
+  // 2 bytes whatever's next). astype(..., float32) first so item reads
+  // an actual fp32 scalar.
+  array scales_mean = astype(mean(scales, /*keepdims=*/false), float32);
+  array biases_mean = astype(mean(biases, /*keepdims=*/false), float32);
   array wq_as_f32 = astype(wq, float32);
   array wq_mean = mean(wq_as_f32, /*keepdims=*/false);
   eval({scales_mean, biases_mean, wq_mean});
