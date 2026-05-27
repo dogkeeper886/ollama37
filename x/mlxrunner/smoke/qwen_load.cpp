@@ -235,7 +235,10 @@ int main(int argc, char** argv) {
   const array& dt_bias = get("language_model.model.layers.0.linear_attn.dt_bias");
 
   array neg_exp_A = negative(exp(a_log));
-  array sp_dtbias = softplus(dt_bias);
+  // MLX doesn't expose softplus at ops.h; compose log1p(exp(x)) which is
+  // numerically OK for our dt_bias range (-4 to +10). Real DeltaNet uses
+  // a clamped variant for large inputs; we don't need it for this probe.
+  array sp_dtbias = log1p(exp(dt_bias));
   array neg_exp_A_f32 = astype(neg_exp_A, float32);
   array sp_dtbias_f32 = astype(sp_dtbias, float32);
   array neg_exp_A_abs_mean = mean(abs(neg_exp_A_f32), /*keepdims=*/false);
