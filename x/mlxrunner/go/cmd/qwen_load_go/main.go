@@ -26,6 +26,7 @@ package main
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../../cabi
 #cgo LDFLAGS: -lmlx_cabi -lmlx -lcublas -lcublasLt -lcudart -lcuda -lstdc++ -lpthread -ldl -lm -lrt
+#include <stdlib.h>
 #include "mlx_cabi.h"
 */
 import "C"
