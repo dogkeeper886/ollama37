@@ -124,6 +124,23 @@ mlx_array_t mlx_array_quantized_matmul(
     mlx_array_t x, mlx_array_t wq, mlx_array_t scales, mlx_array_t biases,
     int transpose, int group_size, int bits, const char* mode);
 
+// conv1d(input, weight, stride, padding, dilation, groups). Input shape
+// (B, L, C_in); weight shape (C_out, kw, C_in/groups). Returns NULL on
+// shape mismatch / exception.
+mlx_array_t mlx_array_conv1d(
+    mlx_array_t input, mlx_array_t weight,
+    int stride, int padding, int dilation, int groups);
+
+// Elementwise sigmoid + multiply (compose for silu = sigmoid(x) * x).
+mlx_array_t mlx_array_sigmoid(mlx_array_t arr);
+mlx_array_t mlx_array_multiply(mlx_array_t a, mlx_array_t b);
+
+// Construct an all-ones array. `dtype_name` accepts "float32" or "bfloat16"
+// (the dtypes we exercise on the inference path); other names return NULL
+// with a stderr message.
+mlx_array_t mlx_array_ones(const long long* dims, int ndim,
+                           const char* dtype_name);
+
 #ifdef __cplusplus
 }
 #endif

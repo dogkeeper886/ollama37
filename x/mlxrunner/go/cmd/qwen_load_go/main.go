@@ -229,6 +229,57 @@ func main() {
 	fmt.Printf("qwen_load_go: in_proj_qkv(rms_normed) shape=%v\n", qkvDims)
 	first5OfArray(qkvProj, "in_proj_qkv")
 
+	// --- conv1d probe (mirrors qwen_load.cpp PR #205) ---
+	// Depthwise conv1d (groups=8192, kw=4) on a synthetic all-ones input.
+	// For ones input + padding=0 the output is just the per-channel kernel
+	// sum. Ground truth from PR #205: [-0.0617676, -0.0458984, 0.0678711].
+	convW := getTensor(st, "language_model.model.layers.0.linear_attn.conv1d.weight")
+	defer C.mlx_array_release(convW)
+
+	convDims := []int64{1, 4, 8192}
+	dtypeBF16 := C.CString("bfloat16")
+	convIn := C.mlx_array_ones(
+		(*C.longlong)(unsafe.Pointer(&convDims[0])),
+		C.int(len(convDims)), dtypeBF16)
+	C.free(unsafe.Pointer(dtypeBF16))
+	if convIn == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: ones() failed")
+		os.Exit(23)
+	}
+	defer C.mlx_array_release(convIn)
+
+	convOut := C.mlx_array_conv1d(convIn, convW,
+		C.int(1),    // stride
+		C.int(0),    // padding
+		C.int(1),    // dilation
+		C.int(8192)) // groups (depthwise)
+	if convOut == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: conv1d failed")
+		os.Exit(24)
+	}
+	defer C.mlx_array_release(convOut)
+	fmt.Printf("qwen_load_go: conv1d(ones, layer_0.conv1d.w) shape=%v\n",
+		dimsOf(convOut))
+	first5OfArray(convOut, "conv1d")
+
+	// --- silu probe (mirrors qwen_load.cpp PR #208) ---
+	// silu(x) = sigmoid(x) * x. Composed from two ops since MLX exposes
+	// silu only via the higher-level fast namespace, not ops.h.
+	sigOut := C.mlx_array_sigmoid(convOut)
+	if sigOut == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: sigmoid failed")
+		os.Exit(25)
+	}
+	defer C.mlx_array_release(sigOut)
+
+	siluOut := C.mlx_array_multiply(sigOut, convOut)
+	if siluOut == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: multiply (silu) failed")
+		os.Exit(26)
+	}
+	defer C.mlx_array_release(siluOut)
+	first5OfArray(siluOut, "silu(conv1d)")
+
 	fmt.Println("qwen_load_go: cgo OK")
 }
 
