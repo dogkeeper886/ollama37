@@ -61,5 +61,42 @@ func main() {
 
 	count := int(C.mlx_safetensors_count(st))
 	fmt.Printf("qwen_load_go: loaded %d tensors\n", count)
+
+	// Mirror qwen_load.cpp's "embed_tokens.weight ..." and ".scales ..." lines.
+	// Validates: name lookup, dtype string accessor, ndim/dim accessors,
+	// ownership pattern (get + release per array).
+	for _, name := range []string{
+		"language_model.model.embed_tokens.weight",
+		"language_model.model.embed_tokens.scales",
+	} {
+		cname := C.CString(name)
+		arr := C.mlx_safetensors_get(st, cname)
+		C.free(unsafe.Pointer(cname))
+		if arr == nil {
+			fmt.Fprintf(os.Stderr, "qwen_load_go: missing tensor '%s'\n", name)
+			os.Exit(5)
+		}
+
+		dtype := C.GoString(C.mlx_array_dtype_name(arr))
+		ndim := int(C.mlx_array_ndim(arr))
+		dims := make([]int64, ndim)
+		for i := 0; i < ndim; i++ {
+			dims[i] = int64(C.mlx_array_dim(arr, C.int(i)))
+		}
+		fmt.Printf("qwen_load_go: %s  dtype=%s shape=%v\n",
+			shortName(name), dtype, dims)
+
+		C.mlx_array_release(arr)
+	}
+
 	fmt.Println("qwen_load_go: cgo OK")
+}
+
+// Strip the long "language_model.model." prefix for log readability.
+func shortName(s string) string {
+	const prefix = "language_model.model."
+	if len(s) > len(prefix) && s[:len(prefix)] == prefix {
+		return s[len(prefix):]
+	}
+	return s
 }
