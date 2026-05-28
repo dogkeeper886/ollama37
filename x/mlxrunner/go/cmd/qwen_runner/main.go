@@ -58,6 +58,33 @@ func main() {
 		}
 		defer st.Release()
 		fmt.Printf("qwen_runner: shard %s loaded, %d tensors\n", shardPath, st.Count())
+
+		// Spot-check a couple of known tensors. embed_tokens lives in
+		// shard 1; the values mirror qwen_load_go's first lines so a
+		// regression in the Go wrapper would surface here.
+		probe := []string{
+			"language_model.model.embed_tokens.weight",
+			"language_model.model.embed_tokens.scales",
+		}
+		for _, name := range probe {
+			a := st.Get(name)
+			if a == nil {
+				fmt.Printf("qwen_runner: %s NOT FOUND (skipping)\n", name)
+				continue
+			}
+			fmt.Printf("qwen_runner: %s  dtype=%s shape=%v size=%d\n",
+				name, a.DType(), a.Shape(), a.Size())
+			a.Release()
+		}
+
+		// Negative-case probe: missing tensor returns nil.
+		missing := "language_model.NOT_A_REAL_TENSOR"
+		if a := st.Get(missing); a == nil {
+			fmt.Printf("qwen_runner: %s correctly returned nil\n", missing)
+		} else {
+			fmt.Printf("qwen_runner: %s unexpectedly found, dtype=%s\n", missing, a.DType())
+			a.Release()
+		}
 	}
 
 	fmt.Println("qwen_runner: OK")
