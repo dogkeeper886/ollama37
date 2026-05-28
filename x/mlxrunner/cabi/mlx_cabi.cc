@@ -274,3 +274,69 @@ mlx_array_t mlx_array_quantized_matmul(
     return nullptr;
   }
 }
+
+mlx_array_t mlx_array_conv1d(
+    mlx_array_t input, mlx_array_t weight,
+    int stride, int padding, int dilation, int groups) {
+  if (!input || !weight) return nullptr;
+  try {
+    return new (std::nothrow) mlx_array_s{mlx::core::conv1d(
+        input->data, weight->data, stride, padding, dilation, groups)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_conv1d: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+mlx_array_t mlx_array_sigmoid(mlx_array_t arr) {
+  if (!arr) return nullptr;
+  try {
+    return new (std::nothrow) mlx_array_s{mlx::core::sigmoid(arr->data)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_sigmoid: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+mlx_array_t mlx_array_multiply(mlx_array_t a, mlx_array_t b) {
+  if (!a || !b) return nullptr;
+  try {
+    return new (std::nothrow) mlx_array_s{
+        mlx::core::multiply(a->data, b->data)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_multiply: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+mlx_array_t mlx_array_ones(const long long* dims, int ndim,
+                           const char* dtype_name) {
+  if (ndim < 0 || (ndim > 0 && !dims) || !dtype_name) return nullptr;
+  mlx::core::Dtype dt = mlx::core::float32;
+  std::string n = dtype_name;
+  if (n == "float32") dt = mlx::core::float32;
+  else if (n == "bfloat16") dt = mlx::core::bfloat16;
+  else {
+    std::fprintf(stderr,
+        "mlx_cabi: mlx_array_ones: unsupported dtype '%s' "
+        "(only float32 and bfloat16 currently)\n", dtype_name);
+    return nullptr;
+  }
+  try {
+    mlx::core::Shape shape;
+    shape.reserve(ndim);
+    for (int i = 0; i < ndim; i++) shape.push_back(static_cast<int>(dims[i]));
+    return new (std::nothrow) mlx_array_s{mlx::core::ones(shape, dt)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_ones: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
