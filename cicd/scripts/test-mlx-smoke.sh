@@ -250,9 +250,15 @@ else
             if [ -f /build/libmlx_cabi.a ] && [ -f /build/mlx_build/libmlx.a ]; then
               export CGO_LDFLAGS="-L/build -L/build/mlx_build -L/usr/local/cuda-11.4/lib64"
               export GOCACHE=/tmp/gocache
+              # GOFLAGS env applies before any go subcommand, including
+              # module-load-time VCS discovery (cmdline -buildvcs=false alone
+              # isn'\''t enough — first CI run still hit "error obtaining VCS
+              # status" despite the flag). Belt-and-suspenders: also tell git
+              # the bind-mounted source is safe to read (the .git dir is
+              # owned by the host user, root inside the container).
+              export GOFLAGS="-buildvcs=false"
               mkdir -p "$GOCACHE"
-              # -buildvcs=false: source is bind-mounted read-only so git
-              # stamping fails; we don't need it anyway.
+              git config --global --add safe.directory /src || true
               (cd /src/x/mlxrunner/go && go build -buildvcs=false -o /build/qwen_load_go ./cmd/qwen_load_go) \
                   || echo "::warning::Go cgo build of qwen_load_go failed; see build.log"
             else
