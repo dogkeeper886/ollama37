@@ -1,9 +1,10 @@
 // qwen_runner — entry point for the Go-side Qwen3.6-35B-A3B-4bit runner
 // on K80 (Phase D.3, #189).
 //
-// Phase D.3 step 1: prints the model config so the package layout +
-// JSON parsing are validated independently of the cgo / MLX surface.
-// Subsequent steps will add weight loading and forward-pass dispatch.
+// Phase D.3 step 1: print the model config (independent of cgo).
+// Phase D.3 step 2: optionally load a safetensors shard via the mlx
+// Go wrapper and report tensor count. Subsequent steps add the
+// multi-shard merge, layer dispatch, and forward pass.
 package main
 
 import (
@@ -11,15 +12,17 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dogkeeper886/ollama37/x/mlxrunner/mlx"
 	qwen "github.com/dogkeeper886/ollama37/x/mlxrunner/models/qwen3_6_a3b"
 )
 
 func main() {
-	var modelPath string
+	var modelPath, shardPath string
 	flag.StringVar(&modelPath, "model", "", "Path to model directory (containing config.json)")
+	flag.StringVar(&shardPath, "shard", "", "Optional .safetensors shard to load + probe via cgo")
 	flag.Parse()
 	if modelPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: qwen_runner -model PATH")
+		fmt.Fprintln(os.Stderr, "usage: qwen_runner -model PATH [-shard SHARD.safetensors]")
 		os.Exit(2)
 	}
 
@@ -42,5 +45,20 @@ func main() {
 	fmt.Printf("qwen_runner: text.num_experts_per_tok = %d\n", cfg.TextConfig.NumExpertsPerTok)
 	fmt.Printf("qwen_runner: quant = bits=%d group_size=%d mode=%s\n",
 		cfg.Quantization.Bits, cfg.Quantization.GroupSize, cfg.Quantization.Mode)
+
+	if shardPath != "" {
+		if err := mlx.Init(); err != nil {
+			fmt.Fprintf(os.Stderr, "qwen_runner: %v\n", err)
+			os.Exit(3)
+		}
+		st, err := mlx.LoadSafetensors(shardPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "qwen_runner: %v\n", err)
+			os.Exit(4)
+		}
+		defer st.Release()
+		fmt.Printf("qwen_runner: shard %s loaded, %d tensors\n", shardPath, st.Count())
+	}
+
 	fmt.Println("qwen_runner: OK")
 }
