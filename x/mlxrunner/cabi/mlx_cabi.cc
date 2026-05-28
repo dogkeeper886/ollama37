@@ -2,11 +2,16 @@
 
 #include "mlx_cabi.h"
 
+#include "mlx/allocator.h"
 #include "mlx/mlx.h"
 #include "mlx/dtype_utils.h"  // dtype_to_string
 
+#include <cstring>
 #include <new>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 // Opaque struct definition; only visible inside this TU. The Go side
 // only ever holds the pointer.
@@ -89,4 +94,67 @@ long long mlx_array_dim(mlx_array_t arr, int axis) {
   if (!arr) return -1;
   if (axis < 0 || axis >= static_cast<int>(arr->data.ndim())) return -1;
   return static_cast<long long>(arr->data.shape(axis));
+}
+
+long long mlx_array_size(mlx_array_t arr) {
+  if (!arr) return -1;
+  return static_cast<long long>(arr->data.size());
+}
+
+mlx_array_t mlx_array_from_int32_1d(const int* data, int count) {
+  if (count < 0 || (count > 0 && !data)) return nullptr;
+  try {
+    mlx::core::array a(mlx::core::Shape{count}, mlx::core::int32, nullptr, {});
+    a.set_data(mlx::core::allocator::malloc(a.nbytes()));
+    if (count > 0) {
+      std::memcpy(a.data<int32_t>(), data, a.nbytes());
+    }
+    return new (std::nothrow) mlx_array_s{std::move(a)};
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+// ----- ops -----
+
+mlx_array_t mlx_array_take(mlx_array_t arr, mlx_array_t indices, int axis) {
+  if (!arr || !indices) return nullptr;
+  try {
+    return new (std::nothrow) mlx_array_s{
+        mlx::core::take(arr->data, indices->data, axis)};
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+mlx_array_t mlx_array_dequantize(
+    mlx_array_t wq, mlx_array_t scales, mlx_array_t biases,
+    int group_size, int bits, const char* mode) {
+  if (!wq || !scales) return nullptr;
+  try {
+    std::optional<mlx::core::array> bs;
+    if (biases) bs = biases->data;
+    std::string m = mode ? mode : "affine";
+    auto out = mlx::core::dequantize(
+        wq->data, scales->data, bs, group_size, bits, m);
+    return new (std::nothrow) mlx_array_s{std::move(out)};
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+int mlx_eval(mlx_array_t* arrs, int count) {
+  if (count < 0 || (count > 0 && !arrs)) return -1;
+  try {
+    std::vector<mlx::core::array> to_eval;
+    to_eval.reserve(count);
+    for (int i = 0; i < count; i++) {
+      if (!arrs[i]) return -2;
+      to_eval.push_back(arrs[i]->data);
+    }
+    mlx::core::eval(std::move(to_eval));
+    return 0;
+  } catch (...) {
+    return -3;
+  }
 }

@@ -71,6 +71,30 @@ int mlx_array_ndim(mlx_array_t arr);
 // axis.
 long long mlx_array_dim(mlx_array_t arr, int axis);
 
+// Total number of elements (product of dims). Returns -1 on NULL.
+long long mlx_array_size(mlx_array_t arr);
+
+// Construct a 1-D int32 array from Go-owned data; data is copied into a
+// new mlx::core::array. Returns NULL on alloc failure.
+mlx_array_t mlx_array_from_int32_1d(const int* data, int count);
+
+// ----- ops -----
+
+// take(arr, indices, axis) — gather rows along `axis`. Returns NULL on
+// error (incompatible shapes, etc.). Caller owns the result.
+mlx_array_t mlx_array_take(mlx_array_t arr, mlx_array_t indices, int axis);
+
+// dequantize(wq, scales, biases, group_size, bits, mode="affine") — un-
+// quantize a packed weight matrix. `biases` may be NULL for non-affine
+// modes; pass mode = "affine" or "fp".
+mlx_array_t mlx_array_dequantize(
+    mlx_array_t wq, mlx_array_t scales, mlx_array_t biases,
+    int group_size, int bits, const char* mode);
+
+// Force evaluation of the given arrays (in-place). Returns 0 on success,
+// negative on exception.
+int mlx_eval(mlx_array_t* arrs, int count);
+
 #ifdef __cplusplus
 }
 #endif

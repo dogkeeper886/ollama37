@@ -89,7 +89,78 @@ func main() {
 		C.mlx_array_release(arr)
 	}
 
+	// --- take + dequantize chain on embed row 42 ---
+	// Mirror qwen_load.cpp's take(scales, [42], 0) + dequantize lines.
+	// Gets the packed weight row + scales/biases row, runs dequant on GPU,
+	// reports the resulting shape (full bf16 [1, 2048] for a q4 group=64
+	// embed row).
+	wqArr := getTensor(st, "language_model.model.embed_tokens.weight")
+	scalesArr := getTensor(st, "language_model.model.embed_tokens.scales")
+	biasesArr := getTensor(st, "language_model.model.embed_tokens.biases")
+	defer C.mlx_array_release(wqArr)
+	defer C.mlx_array_release(scalesArr)
+	defer C.mlx_array_release(biasesArr)
+
+	tokenID := []int32{42}
+	idx := C.mlx_array_from_int32_1d(
+		(*C.int)(unsafe.Pointer(&tokenID[0])),
+		C.int(len(tokenID)),
+	)
+	if idx == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: failed to build index array")
+		os.Exit(6)
+	}
+	defer C.mlx_array_release(idx)
+
+	wqRow := C.mlx_array_take(wqArr, idx, 0)
+	scRow := C.mlx_array_take(scalesArr, idx, 0)
+	bsRow := C.mlx_array_take(biasesArr, idx, 0)
+	defer C.mlx_array_release(wqRow)
+	defer C.mlx_array_release(scRow)
+	defer C.mlx_array_release(bsRow)
+	if wqRow == nil || scRow == nil || bsRow == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: take failed")
+		os.Exit(7)
+	}
+
+	modeC := C.CString("affine")
+	full := C.mlx_array_dequantize(wqRow, scRow, bsRow,
+		C.int(64), C.int(4), modeC)
+	C.free(unsafe.Pointer(modeC))
+	if full == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: dequantize failed")
+		os.Exit(8)
+	}
+	defer C.mlx_array_release(full)
+
+	// Force eval — without this all the ops above are lazy and never run.
+	toEval := []C.mlx_array_t{full}
+	if rc := C.mlx_eval(&toEval[0], C.int(len(toEval))); rc != 0 {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: eval failed: rc=%d\n", int(rc))
+		os.Exit(9)
+	}
+
+	fullNdim := int(C.mlx_array_ndim(full))
+	fullDims := make([]int64, fullNdim)
+	for i := 0; i < fullNdim; i++ {
+		fullDims[i] = int64(C.mlx_array_dim(full, C.int(i)))
+	}
+	fmt.Printf("qwen_load_go: dequantize(embed row 42)  dtype=%s shape=%v size=%d\n",
+		C.GoString(C.mlx_array_dtype_name(full)), fullDims,
+		int64(C.mlx_array_size(full)))
+
 	fmt.Println("qwen_load_go: cgo OK")
+}
+
+func getTensor(st C.mlx_safetensors_t, name string) C.mlx_array_t {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	arr := C.mlx_safetensors_get(st, cname)
+	if arr == nil {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: missing tensor '%s'\n", name)
+		os.Exit(5)
+	}
+	return arr
 }
 
 // Strip the long "language_model.model." prefix for log readability.
