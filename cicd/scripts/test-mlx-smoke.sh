@@ -286,19 +286,20 @@ else
               git config --global --add safe.directory /src || true
               (cd /src/x/mlxrunner/go && go build -buildvcs=false -o /build/qwen_load_go ./cmd/qwen_load_go) \
                   || echo "::warning::Go cgo build of qwen_load_go failed; see build.log"
+              # Phase D.3 step 2 (#189): qwen_runner imports the mlx Go
+              # package, so its build is now also gated on libmlx_cabi
+              # and libmlx.a (same conditional as qwen_load_go).
+              (cd /src/x/mlxrunner/go && go build -buildvcs=false -o /build/qwen_runner ./cmd/qwen_runner) \
+                  || echo "::warning::Go build of qwen_runner failed; see build.log"
             else
               echo "qwen_load_go: skipped Go build (mlx_cabi or mlx archive missing)"
+              echo "qwen_runner: skipped Go build (mlx_cabi or mlx archive missing)"
             fi
-            # Phase D.3 step 1 (#189): pure-Go qwen_runner exe. No cgo, so
-            # build is fast and independent of the libmlx_cabi/libmlx.a
-            # state above. The GOFLAGS / GOCACHE / safe.directory setup
-            # earlier in the script covers this build too.
+            # Pure-Go package tests still always run (don't need libmlx).
             export GOCACHE="${GOCACHE:-/tmp/gocache}"
             export GOFLAGS="${GOFLAGS:--buildvcs=false}"
             mkdir -p "$GOCACHE"
             git config --global --add safe.directory /src || true
-            (cd /src/x/mlxrunner/go && go build -buildvcs=false -o /build/qwen_runner ./cmd/qwen_runner) \
-                || echo "::warning::Go build of qwen_runner failed; see build.log"
             (cd /src/x/mlxrunner/go && go test -buildvcs=false ./models/qwen3_6_a3b/...) \
                 || echo "::warning::Go tests for qwen3_6_a3b package failed; see build.log"
         ' > "$BUILD_DIR/build.log" 2>&1
@@ -452,20 +453,23 @@ else
 fi
 
 # ------------------------------------------------------- qwen_runner -----
-# Phase D.3 step 1 (#189) — pure-Go config parser. No cgo, no GPU, no
-# safetensors I/O. Runs only if the exe built and the model dir has a
-# config.json. Failure DOES override FINAL_EXIT (load-bearing for D.3,
-# unlike the cgo block which was still in earliest plumbing stage).
-if [ -x "$BUILD_DIR/qwen_runner" ] && [ -f "$MODEL_DIR/config.json" ]; then
+# Phase D.3 step 1 (#189) — config parser; pure Go.
+# Phase D.3 step 2 (#189) — also loads shard 1 via the mlx Go wrapper
+# (now cgo + GPU required). Runs only if the exe built and the model
+# dir has both config.json and shard 1. Failure DOES override
+# FINAL_EXIT (load-bearing for D.3, unlike the still-experimental cgo
+# block).
+if [ -x "$BUILD_DIR/qwen_runner" ] && [ -f "$MODEL_DIR/config.json" ] && [ -f "$MODEL_DIR/$LOAD_SHARD_FILE" ]; then
     RUNNER_STATUS="running"
     RUNNER_START=$(date +%s)
     set +e
-    docker run --rm \
+    docker run --rm --gpus all \
         -v "$BUILD_DIR:/build:ro" \
         -v "$MODEL_DIR:/models:ro" \
+        -e CUDA_VISIBLE_DEVICES=0 \
         --entrypoint bash \
         "$RUNTIME_IMAGE" \
-        -c "/build/qwen_runner -model /models" \
+        -c "/build/qwen_runner -model /models -shard /models/$LOAD_SHARD_FILE" \
         > "$BUILD_DIR/runner.stdout" 2> "$BUILD_DIR/runner.stderr"
     RUNNER_RC=$?
     set -e
@@ -489,6 +493,9 @@ else
     fi
     if [ ! -f "$MODEL_DIR/config.json" ]; then
         echo "qwen_runner: skipped (no $MODEL_DIR/config.json)"
+    fi
+    if [ ! -f "$MODEL_DIR/$LOAD_SHARD_FILE" ]; then
+        echo "qwen_runner: skipped (no $MODEL_DIR/$LOAD_SHARD_FILE)"
     fi
 fi
 
