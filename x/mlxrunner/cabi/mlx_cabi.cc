@@ -119,12 +119,20 @@ long long mlx_array_size(mlx_array_t arr) {
 mlx_array_t mlx_array_from_int32_1d(const int* data, int count) {
   if (count < 0 || (count > 0 && !data)) return nullptr;
   try {
-    mlx::core::array a(mlx::core::Shape{count}, mlx::core::int32, nullptr, {});
-    a.set_data(mlx::core::allocator::malloc(a.nbytes()));
+    // Allocate via MLX's allocator + memcpy + array(Buffer, Shape, Dtype)
+    // produces a "leaf-with-data" array. The (Shape, Dtype, nullptr, {})
+    // + set_data combo leaves the array in a state MLX's eval walker
+    // rejects ("Attempting to eval an array without a primitive").
+    const size_t nbytes = static_cast<size_t>(count) * sizeof(int32_t);
+    auto buf = mlx::core::allocator::malloc(nbytes);
     if (count > 0) {
-      std::memcpy(a.data<int32_t>(), data, a.nbytes());
+      std::memcpy(buf.raw_ptr(), data, nbytes);
     }
+    mlx::core::array a(buf, mlx::core::Shape{count}, mlx::core::int32);
     return new (std::nothrow) mlx_array_s{std::move(a)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_from_int32_1d: %s\n", e.what());
+    return nullptr;
   } catch (...) {
     return nullptr;
   }
