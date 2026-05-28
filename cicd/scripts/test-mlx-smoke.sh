@@ -100,6 +100,15 @@ CGO_DURATION=0
 CGO_STDOUT=""
 CGO_STDERR=""
 
+# qwen_runner (Phase D.3 step 1) — pure-Go exe; parses config.json and
+# prints the language-model config block. No cgo, no MLX, no GPU. This
+# is the entry point that future steps build the model assembly on.
+RUNNER_STATUS="skipped"
+RUNNER_EXIT_CODE=-1
+RUNNER_DURATION=0
+RUNNER_STDOUT=""
+RUNNER_STDERR=""
+
 GPU_DEVICE_COUNT=0
 GPU_NAMES=""
 
@@ -144,6 +153,11 @@ write_results() {
         --argjson cgo_duration "$CGO_DURATION" \
         --arg cgo_stdout "$CGO_STDOUT" \
         --arg cgo_stderr "$CGO_STDERR" \
+        --arg runner_status "$RUNNER_STATUS" \
+        --argjson runner_exit "$RUNNER_EXIT_CODE" \
+        --argjson runner_duration "$RUNNER_DURATION" \
+        --arg runner_stdout "$RUNNER_STDOUT" \
+        --arg runner_stderr "$RUNNER_STDERR" \
         --argjson gpu_count "$GPU_DEVICE_COUNT" \
         --arg gpu_names "$GPU_NAMES" \
         --argjson final_exit "$FINAL_EXIT" \
@@ -193,6 +207,13 @@ write_results() {
             "duration_sec": $cgo_duration,
             "stdout": $cgo_stdout,
             "stderr": $cgo_stderr
+          },
+          "runner": {
+            "status": $runner_status,
+            "exit_code": $runner_exit,
+            "duration_sec": $runner_duration,
+            "stdout": $runner_stdout,
+            "stderr": $runner_stderr
           },
           "gpu": {
             "device_count": $gpu_count,
@@ -268,6 +289,18 @@ else
             else
               echo "qwen_load_go: skipped Go build (mlx_cabi or mlx archive missing)"
             fi
+            # Phase D.3 step 1 (#189): pure-Go qwen_runner exe. No cgo, so
+            # build is fast and independent of the libmlx_cabi/libmlx.a
+            # state above. The GOFLAGS / GOCACHE / safe.directory setup
+            # earlier in the script covers this build too.
+            export GOCACHE="${GOCACHE:-/tmp/gocache}"
+            export GOFLAGS="${GOFLAGS:--buildvcs=false}"
+            mkdir -p "$GOCACHE"
+            git config --global --add safe.directory /src || true
+            (cd /src/x/mlxrunner/go && go build -buildvcs=false -o /build/qwen_runner ./cmd/qwen_runner) \
+                || echo "::warning::Go build of qwen_runner failed; see build.log"
+            (cd /src/x/mlxrunner/go && go test -buildvcs=false ./models/qwen3_6_a3b/...) \
+                || echo "::warning::Go tests for qwen3_6_a3b package failed; see build.log"
         ' > "$BUILD_DIR/build.log" 2>&1
     BUILD_RC=$?
     set -e
@@ -415,6 +448,47 @@ if [ -x "$BUILD_DIR/qwen_load_go" ] && [ -f "$MODEL_DIR/$LOAD_SHARD_FILE" ]; the
 else
     if [ ! -x "$BUILD_DIR/qwen_load_go" ]; then
         echo "qwen_load_go: skipped (Go cgo exe not built)"
+    fi
+fi
+
+# ------------------------------------------------------- qwen_runner -----
+# Phase D.3 step 1 (#189) — pure-Go config parser. No cgo, no GPU, no
+# safetensors I/O. Runs only if the exe built and the model dir has a
+# config.json. Failure DOES override FINAL_EXIT (load-bearing for D.3,
+# unlike the cgo block which was still in earliest plumbing stage).
+if [ -x "$BUILD_DIR/qwen_runner" ] && [ -f "$MODEL_DIR/config.json" ]; then
+    RUNNER_STATUS="running"
+    RUNNER_START=$(date +%s)
+    set +e
+    docker run --rm \
+        -v "$BUILD_DIR:/build:ro" \
+        -v "$MODEL_DIR:/models:ro" \
+        --entrypoint bash \
+        "$RUNTIME_IMAGE" \
+        -c "/build/qwen_runner -model /models" \
+        > "$BUILD_DIR/runner.stdout" 2> "$BUILD_DIR/runner.stderr"
+    RUNNER_RC=$?
+    set -e
+    RUNNER_DURATION=$(( $(date +%s) - RUNNER_START ))
+    RUNNER_STDOUT=$(tail -c 4000 "$BUILD_DIR/runner.stdout" || true)
+    RUNNER_STDERR=$(tail -c 4000 "$BUILD_DIR/runner.stderr" || true)
+    RUNNER_EXIT_CODE=$RUNNER_RC
+    if [ $RUNNER_RC -eq 0 ] && echo "$RUNNER_STDOUT" | grep -q "qwen_runner: OK"; then
+        RUNNER_STATUS="success"
+        echo "runner OK: qwen_runner completed in ${RUNNER_DURATION}s"
+    else
+        RUNNER_STATUS="failed"
+        echo "::error::qwen_runner failed (rc=$RUNNER_RC)"
+        if [ "$FINAL_EXIT" -eq 0 ]; then
+            FINAL_EXIT=2
+        fi
+    fi
+else
+    if [ ! -x "$BUILD_DIR/qwen_runner" ]; then
+        echo "qwen_runner: skipped (exe not built)"
+    fi
+    if [ ! -f "$MODEL_DIR/config.json" ]; then
+        echo "qwen_runner: skipped (no $MODEL_DIR/config.json)"
     fi
 fi
 
