@@ -248,7 +248,11 @@ else
             # commonly: libmlx_cabi.a archive missing -> means cmake didn'\''t
             # finish; reported by the cmake build above).
             if [ -f /build/libmlx_cabi.a ] && [ -f /build/mlx_build/libmlx.a ]; then
-              export CGO_LDFLAGS="-L/build -L/build/mlx_build -L/usr/local/cuda-11.4/lib64"
+              # /usr/local/cuda-11.4/lib64/stubs holds libcuda.so (the
+              # driver lib stub for link-time resolution; runtime uses the
+              # real libcuda.so.1 from /usr/local/nvidia/lib64 via the
+              # nvidia-container mount).
+              export CGO_LDFLAGS="-L/build -L/build/mlx_build -L/usr/local/cuda-11.4/lib64 -L/usr/local/cuda-11.4/lib64/stubs"
               export GOCACHE=/tmp/gocache
               # GOFLAGS env applies before any go subcommand, including
               # module-load-time VCS discovery (cmdline -buildvcs=false alone
