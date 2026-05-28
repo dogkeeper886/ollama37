@@ -45,6 +45,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Regression check — production GGML path still serves
+        # Safety net for the MLX rapid-merge cadence. Our changes only
+        # touch x/mlx/, x/mlxrunner/, this script, and this workflow —
+        # so the production llama.cpp/GGML serving path should be
+        # unaffected. If it isn't, fail loudly here BEFORE we stop
+        # the production container, instead of finding out a week later.
+        # gemma3:4b is small (~3 GB), no thinking mode, ~250 ms response.
+        run: |
+          if ! curl -sf http://localhost:11434/api/tags >/dev/null; then
+            echo "::error::production ollama37 /api/tags unreachable — pre-existing failure, not caused by this PR"
+            exit 1
+          fi
+          RESP=$(curl -s http://localhost:11434/api/generate -d '{
+            "model": "gemma3:4b",
+            "prompt": "Say hello in one word.",
+            "stream": false,
+            "options": {"num_predict": 8, "num_ctx": 256}
+          }')
+          TEXT=$(echo "$RESP" | jq -r '.response // ""')
+          EVAL=$(echo "$RESP" | jq -r '.eval_count // 0')
+          if [ -z "$TEXT" ] || [ "$EVAL" -lt 1 ]; then
+            echo "::error::production GGML path regressed — empty response or no tokens"
+            echo "$RESP" | jq '.'
+            exit 1
+          fi
+          echo "production OK: \"$TEXT\" ($EVAL tokens)"
+
       - name: Stop production ollama37
         run: |
           docker stop ollama37 || true
