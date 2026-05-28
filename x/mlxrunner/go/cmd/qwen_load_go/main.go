@@ -149,6 +149,33 @@ func main() {
 		C.GoString(C.mlx_array_dtype_name(full)), fullDims,
 		int64(C.mlx_array_size(full)))
 
+	// --- Materialize first 5 values to host for verification against numpy ---
+	// astype-to-float32 BEFORE copying — copying raw BF16 bytes through a
+	// float* lens gives denormal junk (same PR #199 trap on the C++ side).
+	fullF32 := C.mlx_array_to_float32(full)
+	if fullF32 == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: astype-float32 failed")
+		os.Exit(10)
+	}
+	defer C.mlx_array_release(fullF32)
+
+	// astype is lazy too; eval again.
+	toEval2 := []C.mlx_array_t{fullF32}
+	if rc := C.mlx_eval(&toEval2[0], C.int(len(toEval2))); rc != 0 {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: eval(f32) failed: rc=%d\n", int(rc))
+		os.Exit(11)
+	}
+
+	const N = 5
+	vals := make([]float32, N)
+	got := int(C.mlx_array_copy_float(
+		fullF32, (*C.float)(unsafe.Pointer(&vals[0])), C.int(N)))
+	if got < 0 {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: copy_float failed: rc=%d\n", got)
+		os.Exit(12)
+	}
+	fmt.Printf("qwen_load_go: dequant row 42 first %d = %v\n", got, vals[:got])
+
 	fmt.Println("qwen_load_go: cgo OK")
 }
 
