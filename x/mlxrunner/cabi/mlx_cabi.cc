@@ -6,12 +6,27 @@
 #include "mlx/mlx.h"
 #include "mlx/dtype_utils.h"  // dtype_to_string
 
+#include <cstdio>
 #include <cstring>
+#include <exception>
 #include <new>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+// Surface the exception what() to stderr so Go-side errors are debuggable.
+// Returns the passed-through error code unchanged so callers don't need to
+// change behavior.
+static int report_exc(const char* where, int rc) {
+  try { throw; }
+  catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: %s: %s\n", where, e.what());
+  } catch (...) {
+    std::fprintf(stderr, "mlx_cabi: %s: <non-std exception>\n", where);
+  }
+  return rc;
+}
 
 // Opaque struct definition; only visible inside this TU. The Go side
 // only ever holds the pointer.
@@ -155,6 +170,6 @@ int mlx_eval(mlx_array_t* arrs, int count) {
     mlx::core::eval(std::move(to_eval));
     return 0;
   } catch (...) {
-    return -3;
+    return report_exc("mlx_eval", -3);
   }
 }
