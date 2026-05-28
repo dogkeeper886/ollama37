@@ -108,6 +108,22 @@ mlx_array_t mlx_array_to_float32(mlx_array_t arr);
 //   -3: other exception
 int mlx_array_copy_float(mlx_array_t arr, float* out, int max_count);
 
+// Elementwise absolute value. Returns NULL on error.
+mlx_array_t mlx_array_abs(mlx_array_t arr);
+
+// Reduce over all axes (no keepdims). Returns scalar array.
+mlx_array_t mlx_array_mean_all(mlx_array_t arr);
+
+// fast::rms_norm(x, weight, eps). `weight` may be NULL for no-gain norm.
+mlx_array_t mlx_array_rms_norm(mlx_array_t x, mlx_array_t weight, float eps);
+
+// quantized_matmul(x, wq, scales, biases, transpose, group_size, bits, mode).
+// `biases` may be NULL for fp-mode quants. `transpose` is 0 or 1 (C-bool).
+// `mode` is "affine" or "fp" (or others MLX supports).
+mlx_array_t mlx_array_quantized_matmul(
+    mlx_array_t x, mlx_array_t wq, mlx_array_t scales, mlx_array_t biases,
+    int transpose, int group_size, int bits, const char* mode);
+
 #ifdef __cplusplus
 }
 #endif

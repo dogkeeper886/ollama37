@@ -214,3 +214,63 @@ int mlx_array_copy_float(mlx_array_t arr, float* out, int max_count) {
     return report_exc("mlx_array_copy_float", -3);
   }
 }
+
+mlx_array_t mlx_array_abs(mlx_array_t arr) {
+  if (!arr) return nullptr;
+  try {
+    return new (std::nothrow) mlx_array_s{mlx::core::abs(arr->data)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_abs: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+mlx_array_t mlx_array_mean_all(mlx_array_t arr) {
+  if (!arr) return nullptr;
+  try {
+    return new (std::nothrow) mlx_array_s{
+        mlx::core::mean(arr->data, /*keepdims=*/false)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_mean_all: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+mlx_array_t mlx_array_rms_norm(mlx_array_t x, mlx_array_t weight, float eps) {
+  if (!x) return nullptr;
+  try {
+    std::optional<mlx::core::array> w;
+    if (weight) w = weight->data;
+    return new (std::nothrow) mlx_array_s{
+        mlx::core::fast::rms_norm(x->data, w, eps)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_rms_norm: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+mlx_array_t mlx_array_quantized_matmul(
+    mlx_array_t x, mlx_array_t wq, mlx_array_t scales, mlx_array_t biases,
+    int transpose, int group_size, int bits, const char* mode) {
+  if (!x || !wq || !scales) return nullptr;
+  try {
+    std::optional<mlx::core::array> bs;
+    if (biases) bs = biases->data;
+    std::string m = mode ? mode : "affine";
+    auto out = mlx::core::quantized_matmul(
+        x->data, wq->data, scales->data, bs,
+        transpose != 0, group_size, bits, m);
+    return new (std::nothrow) mlx_array_s{std::move(out)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_quantized_matmul: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}

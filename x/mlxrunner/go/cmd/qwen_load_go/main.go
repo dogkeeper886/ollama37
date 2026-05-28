@@ -176,7 +176,135 @@ func main() {
 	}
 	fmt.Printf("qwen_load_go: dequant row 42 first %d = %v\n", got, vals[:got])
 
+	// --- rms_norm probe (mirrors qwen_load.cpp PR #203) ---
+	// Apply layer-0 input_layernorm to the dequant'd embed row. Bundles a
+	// reduce path validation (sum-of-squares uses the row_reduce AccT
+	// pattern from PR #200) AND the rms_norm dispatch on real BF16 input +
+	// gain. Ground truth from qwen_load.cpp:
+	//   first 5    = [0, 0, -1.09375, -1.00781, 0.710938]
+	//   abs_mean   = 0.650743
+	normGain := getTensor(st, "language_model.model.layers.0.input_layernorm.weight")
+	defer C.mlx_array_release(normGain)
+
+	normed := C.mlx_array_rms_norm(full, normGain, C.float(1e-6))
+	if normed == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: rms_norm failed")
+		os.Exit(13)
+	}
+	defer C.mlx_array_release(normed)
+
+	first5OfArray(normed, "rms_norm(dequant row 42)")
+
+	absMean := getAbsMeanScalar(normed)
+	fmt.Printf("qwen_load_go: rms_norm abs_mean=%g\n", absMean)
+
+	// --- quantized_matmul probe (mirrors qwen_load.cpp PR #204) ---
+	// First Phase-D quantized linear from Go: project the rms-normed
+	// embed via layer-0 in_proj_qkv. Bf16 [1, 2048] @ q4 [8192, 256] ->
+	// bf16 [1, 8192]. Ground truth:
+	//   out[0, 0] = 2.01562    out[0, 1] = -0.105469
+	qkvW := getTensor(st, "language_model.model.layers.0.linear_attn.in_proj_qkv.weight")
+	qkvS := getTensor(st, "language_model.model.layers.0.linear_attn.in_proj_qkv.scales")
+	qkvB := getTensor(st, "language_model.model.layers.0.linear_attn.in_proj_qkv.biases")
+	defer C.mlx_array_release(qkvW)
+	defer C.mlx_array_release(qkvS)
+	defer C.mlx_array_release(qkvB)
+
+	modeCqkv := C.CString("affine")
+	qkvProj := C.mlx_array_quantized_matmul(
+		normed, qkvW, qkvS, qkvB,
+		C.int(1),     // transpose=true
+		C.int(64),    // group_size
+		C.int(4),     // bits
+		modeCqkv)
+	C.free(unsafe.Pointer(modeCqkv))
+	if qkvProj == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: quantized_matmul failed")
+		os.Exit(14)
+	}
+	defer C.mlx_array_release(qkvProj)
+
+	// Print shape + first 2 values (the ones we have ground truth for).
+	qkvDims := dimsOf(qkvProj)
+	fmt.Printf("qwen_load_go: in_proj_qkv(rms_normed) shape=%v\n", qkvDims)
+	first5OfArray(qkvProj, "in_proj_qkv")
+
 	fmt.Println("qwen_load_go: cgo OK")
+}
+
+// dimsOf returns the shape of an array (uses mlx_array_ndim + mlx_array_dim).
+func dimsOf(arr C.mlx_array_t) []int64 {
+	n := int(C.mlx_array_ndim(arr))
+	d := make([]int64, n)
+	for i := 0; i < n; i++ {
+		d[i] = int64(C.mlx_array_dim(arr, C.int(i)))
+	}
+	return d
+}
+
+// first5OfArray astype-fp32-then-copy + prints the first 5 elements. Common
+// pattern; folding into a helper avoids three more boilerplate blocks.
+func first5OfArray(arr C.mlx_array_t, label string) {
+	f32 := C.mlx_array_to_float32(arr)
+	if f32 == nil {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: %s astype failed\n", label)
+		os.Exit(15)
+	}
+	defer C.mlx_array_release(f32)
+
+	to := []C.mlx_array_t{f32}
+	if rc := C.mlx_eval(&to[0], C.int(1)); rc != 0 {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: %s eval failed: rc=%d\n", label, int(rc))
+		os.Exit(16)
+	}
+
+	const N = 5
+	vals := make([]float32, N)
+	got := int(C.mlx_array_copy_float(
+		f32, (*C.float)(unsafe.Pointer(&vals[0])), C.int(N)))
+	if got < 0 {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: %s copy failed: rc=%d\n", label, got)
+		os.Exit(17)
+	}
+	fmt.Printf("qwen_load_go: %s first %d = %v\n", label, got, vals[:got])
+}
+
+// getAbsMeanScalar computes mean(abs(arr)) as fp32 and returns the scalar.
+func getAbsMeanScalar(arr C.mlx_array_t) float32 {
+	absA := C.mlx_array_abs(arr)
+	if absA == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: abs failed")
+		os.Exit(18)
+	}
+	defer C.mlx_array_release(absA)
+
+	meanA := C.mlx_array_mean_all(absA)
+	if meanA == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: mean failed")
+		os.Exit(19)
+	}
+	defer C.mlx_array_release(meanA)
+
+	f32 := C.mlx_array_to_float32(meanA)
+	if f32 == nil {
+		fmt.Fprintln(os.Stderr, "qwen_load_go: abs_mean astype failed")
+		os.Exit(20)
+	}
+	defer C.mlx_array_release(f32)
+
+	to := []C.mlx_array_t{f32}
+	if rc := C.mlx_eval(&to[0], C.int(1)); rc != 0 {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: abs_mean eval failed: rc=%d\n", int(rc))
+		os.Exit(21)
+	}
+
+	var v float32
+	if got := int(C.mlx_array_copy_float(
+		f32, (*C.float)(unsafe.Pointer(&v)), C.int(1))); got != 1 {
+		fmt.Fprintf(os.Stderr, "qwen_load_go: abs_mean copy got %d not 1\n", got)
+		os.Exit(22)
+	}
+	return v
 }
 
 func getTensor(st C.mlx_safetensors_t, name string) C.mlx_array_t {
