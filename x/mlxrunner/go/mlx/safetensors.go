@@ -42,6 +42,19 @@ func (s *SafeTensors) Count() int {
 	return int(C.mlx_safetensors_count(s.h))
 }
 
+// Get looks up a tensor by name. Returns nil if the tensor isn't in
+// the file. The returned Array holds its own reference and remains
+// valid after the SafeTensors is released — caller still owns it and
+// must Release it.
+func (s *SafeTensors) Get(name string) *Array {
+	if s == nil || s.h == nil {
+		return nil
+	}
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	return wrapArray(C.mlx_safetensors_get(s.h, cname))
+}
+
 // Release frees the underlying safetensors handle. Safe to call on a
 // nil receiver or one whose handle has already been released.
 func (s *SafeTensors) Release() {
