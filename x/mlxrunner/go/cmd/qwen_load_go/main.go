@@ -13,18 +13,21 @@
 
 package main
 
-// Library NAMES only here; -L paths supplied by CGO_LDFLAGS env at build
-// time so the cgo pragma works whether the build dir is /build,
-// /tmp/runner-X, or elsewhere. The CI script (test-mlx-smoke.sh) sets
-// the right -L flags.
+// cgo preamble notes (kept OUTSIDE the C block — every line in the C
+// preamble is fed to the C compiler, including the human-readable text
+// of `//` comments, so prose with `-lrt` and `C++` in it tripped the
+// first build):
 //
-// Link order matters: mlx_cabi calls into mlx, mlx calls into CUDA libs.
-// stdc++ is needed because libmlx.a is C++; -lrt -ldl -lpthread are
-// libmlx.a transitive deps.
-//
-// #cgo CFLAGS: -I${SRCDIR}/../../../cabi
-// #cgo LDFLAGS: -lmlx_cabi -lmlx -lcublas -lcublasLt -lcudart -lcuda -lstdc++ -lpthread -ldl -lm -lrt
-// #include "mlx_cabi.h"
+//   * LDFLAGS lists library NAMES only; -L paths come from CGO_LDFLAGS
+//     env at build time (CI script supplies them).
+//   * Link order: mlx_cabi -> mlx -> CUDA. Plus stdc++ (libmlx.a is C++)
+//     and libmlx.a transitive deps (pthread, dl, m, rt).
+
+/*
+#cgo CFLAGS: -I${SRCDIR}/../../../cabi
+#cgo LDFLAGS: -lmlx_cabi -lmlx -lcublas -lcublasLt -lcudart -lcuda -lstdc++ -lpthread -ldl -lm -lrt
+#include "mlx_cabi.h"
+*/
 import "C"
 
 import (
