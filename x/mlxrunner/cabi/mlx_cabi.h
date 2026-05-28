@@ -95,6 +95,19 @@ mlx_array_t mlx_array_dequantize(
 // negative on exception.
 int mlx_eval(mlx_array_t* arrs, int count);
 
+// astype(arr, float32). Returns NULL on error. Use this BEFORE
+// mlx_array_copy_float — copying raw BF16/FP16 bytes through a float* lens
+// reads denormal garbage (see PR #199 for the same bug on the C++ side).
+mlx_array_t mlx_array_to_float32(mlx_array_t arr);
+
+// Copy at most `max_count` float values from `arr`'s host buffer into
+// `out`. The array MUST be (a) eval'd already and (b) dtype == float32.
+// Returns number of values copied, or negative on error:
+//   -1: NULL arg / max_count <= 0
+//   -2: wrong dtype (the message goes to stderr via report_exc)
+//   -3: other exception
+int mlx_array_copy_float(mlx_array_t arr, float* out, int max_count);
+
 #ifdef __cplusplus
 }
 #endif

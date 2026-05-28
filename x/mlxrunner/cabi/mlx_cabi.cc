@@ -6,6 +6,7 @@
 #include "mlx/mlx.h"
 #include "mlx/dtype_utils.h"  // dtype_to_string
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -179,5 +180,37 @@ int mlx_eval(mlx_array_t* arrs, int count) {
     return 0;
   } catch (...) {
     return report_exc("mlx_eval", -3);
+  }
+}
+
+mlx_array_t mlx_array_to_float32(mlx_array_t arr) {
+  if (!arr) return nullptr;
+  try {
+    return new (std::nothrow) mlx_array_s{
+        mlx::core::astype(arr->data, mlx::core::float32)};
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "mlx_cabi: mlx_array_to_float32: %s\n", e.what());
+    return nullptr;
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+int mlx_array_copy_float(mlx_array_t arr, float* out, int max_count) {
+  if (!arr || !out || max_count <= 0) return -1;
+  if (arr->data.dtype() != mlx::core::float32) {
+    std::fprintf(stderr,
+        "mlx_cabi: mlx_array_copy_float: dtype must be float32; got %s\n",
+        mlx::core::dtype_to_string(arr->data.dtype()));
+    return -2;
+  }
+  try {
+    int n = std::min(
+        static_cast<int>(arr->data.size()),
+        max_count);
+    std::memcpy(out, arr->data.data<float>(), n * sizeof(float));
+    return n;
+  } catch (...) {
+    return report_exc("mlx_array_copy_float", -3);
   }
 }
