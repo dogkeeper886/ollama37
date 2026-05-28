@@ -295,7 +295,7 @@ else
               echo "qwen_load_go: skipped Go build (mlx_cabi or mlx archive missing)"
               echo "qwen_runner: skipped Go build (mlx_cabi or mlx archive missing)"
             fi
-            # Pure-Go package tests still always run (don't need libmlx).
+            # Pure-Go package tests always run; no libmlx dependency.
             export GOCACHE="${GOCACHE:-/tmp/gocache}"
             export GOFLAGS="${GOFLAGS:--buildvcs=false}"
             mkdir -p "$GOCACHE"
