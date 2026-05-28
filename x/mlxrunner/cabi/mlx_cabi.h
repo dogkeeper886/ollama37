@@ -27,6 +27,12 @@ extern "C" {
 // Opaque handle to a loaded safetensors file (name -> array map + metadata).
 typedef struct mlx_safetensors_s* mlx_safetensors_t;
 
+// Opaque handle to a single mlx::core::array. Owned by the caller; release
+// with mlx_array_release. Handles obtained from mlx_safetensors_get hold a
+// copy of the underlying array's reference, so it's safe to release the
+// safetensors handle before releasing arrays obtained from it.
+typedef struct mlx_array_s* mlx_array_t;
+
 // Initialize MLX state and pin the default stream to the GPU device.
 // Returns 0 on success, negative on error.
 int mlx_init(void);
@@ -42,6 +48,28 @@ int mlx_safetensors_count(mlx_safetensors_t st);
 
 // Release a safetensors handle. Safe to call on NULL.
 void mlx_safetensors_release(mlx_safetensors_t st);
+
+// ----- mlx_array -----
+
+// Look up a named tensor inside a loaded safetensors handle. Returns
+// NULL if `name` isn't in the file (or `st` is NULL). Caller must
+// release with mlx_array_release.
+mlx_array_t mlx_safetensors_get(mlx_safetensors_t st, const char* name);
+
+// Release an array handle. Safe to call on NULL.
+void mlx_array_release(mlx_array_t arr);
+
+// Dtype name as a static string ("bfloat16", "uint32", "float32", ...).
+// Returns "unknown" for NULL or unrecognized dtype. The returned pointer
+// has static storage; caller MUST NOT free it.
+const char* mlx_array_dtype_name(mlx_array_t arr);
+
+// Number of dimensions. Returns -1 on NULL.
+int mlx_array_ndim(mlx_array_t arr);
+
+// Size of dimension `axis` (0-indexed). Returns -1 on NULL or out-of-range
+// axis.
+long long mlx_array_dim(mlx_array_t arr, int axis);
 
 #ifdef __cplusplus
 }

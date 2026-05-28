@@ -3,6 +3,7 @@
 #include "mlx_cabi.h"
 
 #include "mlx/mlx.h"
+#include "mlx/dtype_utils.h"  // dtype_to_string
 
 #include <new>
 #include <utility>
@@ -14,6 +15,13 @@ struct mlx_safetensors_s {
   // unordered_map<string, string>>. Store as-is; lookups + metadata
   // access become trivial extensions later.
   mlx::core::SafetensorsLoad data;
+};
+
+// mlx::core::array is reference-counted internally, so we hold a copy
+// per handle. Releasing the handle drops the ref; if it was the last
+// ref the underlying buffer goes away.
+struct mlx_array_s {
+  mlx::core::array data;
 };
 
 int mlx_init(void) {
@@ -44,4 +52,41 @@ int mlx_safetensors_count(mlx_safetensors_t st) {
 
 void mlx_safetensors_release(mlx_safetensors_t st) {
   delete st;
+}
+
+// ----- mlx_array -----
+
+mlx_array_t mlx_safetensors_get(mlx_safetensors_t st, const char* name) {
+  if (!st || !name) return nullptr;
+  try {
+    auto it = st->data.first.find(name);
+    if (it == st->data.first.end()) return nullptr;
+    return new (std::nothrow) mlx_array_s{it->second};
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+void mlx_array_release(mlx_array_t arr) {
+  delete arr;
+}
+
+const char* mlx_array_dtype_name(mlx_array_t arr) {
+  if (!arr) return "unknown";
+  try {
+    return mlx::core::dtype_to_string(arr->data.dtype());
+  } catch (...) {
+    return "unknown";
+  }
+}
+
+int mlx_array_ndim(mlx_array_t arr) {
+  if (!arr) return -1;
+  return static_cast<int>(arr->data.ndim());
+}
+
+long long mlx_array_dim(mlx_array_t arr, int axis) {
+  if (!arr) return -1;
+  if (axis < 0 || axis >= static_cast<int>(arr->data.ndim())) return -1;
+  return static_cast<long long>(arr->data.shape(axis));
 }
