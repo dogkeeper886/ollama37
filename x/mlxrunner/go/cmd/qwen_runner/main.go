@@ -18,11 +18,13 @@ import (
 
 func main() {
 	var modelPath, shardPath string
+	var loadAll bool
 	flag.StringVar(&modelPath, "model", "", "Path to model directory (containing config.json)")
 	flag.StringVar(&shardPath, "shard", "", "Optional .safetensors shard to load + probe via cgo")
+	flag.BoolVar(&loadAll, "load-weights", false, "Load all shards via index.json and probe a few tensors from different shards")
 	flag.Parse()
 	if modelPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: qwen_runner -model PATH [-shard SHARD.safetensors]")
+		fmt.Fprintln(os.Stderr, "usage: qwen_runner -model PATH [-shard SHARD.safetensors] [-load-weights]")
 		os.Exit(2)
 	}
 
@@ -83,6 +85,42 @@ func main() {
 			fmt.Printf("qwen_runner: %s correctly returned nil\n", missing)
 		} else {
 			fmt.Printf("qwen_runner: %s unexpectedly found, dtype=%s\n", missing, a.DType())
+			a.Release()
+		}
+	}
+
+	if loadAll {
+		if shardPath == "" {
+			// mlx.Init wasn't called above; do it now.
+			if err := mlx.Init(); err != nil {
+				fmt.Fprintf(os.Stderr, "qwen_runner: %v\n", err)
+				os.Exit(5)
+			}
+		}
+		w, err := qwen.LoadWeights(modelPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "qwen_runner: load-weights: %v\n", err)
+			os.Exit(6)
+		}
+		defer w.Release()
+		fmt.Printf("qwen_runner: weights loaded, %d tensors across %d shards\n",
+			w.Count(), w.NumShards())
+
+		// Probe tensors that live in different shards, to prove the
+		// index routing works end-to-end (not just shard-1 lookup).
+		probes := []string{
+			"language_model.model.embed_tokens.weight",         // shard 1
+			"language_model.model.layers.0.linear_attn.in_proj_qkv.weight", // shard 1 or 2
+			"language_model.lm_head.weight",                    // shard 4
+		}
+		for _, name := range probes {
+			a := w.Get(name)
+			if a == nil {
+				fmt.Printf("qwen_runner: %s NOT FOUND in index\n", name)
+				continue
+			}
+			fmt.Printf("qwen_runner: %s  shard=%s dtype=%s shape=%v\n",
+				name, w.ShardOf(name), a.DType(), a.Shape())
 			a.Release()
 		}
 	}
