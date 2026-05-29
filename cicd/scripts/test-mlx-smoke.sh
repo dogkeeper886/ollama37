@@ -469,7 +469,7 @@ if [ -x "$BUILD_DIR/qwen_runner" ] && [ -f "$MODEL_DIR/config.json" ] && [ -f "$
         -e CUDA_VISIBLE_DEVICES=0 \
         --entrypoint bash \
         "$RUNTIME_IMAGE" \
-        -c "/build/qwen_runner -model /models -shard /models/$LOAD_SHARD_FILE -load-weights" \
+        -c "/build/qwen_runner -model /models -shard /models/$LOAD_SHARD_FILE -load-weights -probe-ops" \
         > "$BUILD_DIR/runner.stdout" 2> "$BUILD_DIR/runner.stderr"
     RUNNER_RC=$?
     set -e
