@@ -37,6 +37,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "qwen_runner: %v\n", err)
 		os.Exit(1)
 	}
+	// Config is read first (always) so the config-only path doesn't
+	// need cgo / GPU. Model construction (config + weights bundled) is
+	// only triggered when -load-weights or -probe-ops asks for it.
 
 	fmt.Printf("qwen_runner: architectures = %v\n", cfg.Architectures)
 	fmt.Printf("qwen_runner: model_type = %s\n", cfg.ModelType)
@@ -101,12 +104,16 @@ func main() {
 				os.Exit(5)
 			}
 		}
-		w, err := qwen.LoadWeights(modelPath)
+		// Use LoadModel so the Config + Weights live behind one handle
+		// — that's the receiver the forward-pass methods will hang off
+		// in subsequent D.3 steps.
+		m, err := qwen.LoadModel(modelPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "qwen_runner: load-weights: %v\n", err)
+			fmt.Fprintf(os.Stderr, "qwen_runner: load-model: %v\n", err)
 			os.Exit(6)
 		}
-		defer w.Release()
+		defer m.Close()
+		w := m.Weights
 		fmt.Printf("qwen_runner: weights loaded, %d tensors across %d shards\n",
 			w.Count(), w.NumShards())
 
