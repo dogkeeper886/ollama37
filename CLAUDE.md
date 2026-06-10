@@ -63,3 +63,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+## Open follow-ups
+
+- #225 — `.claude/skills/test-workflow-pattern/SKILL.md` was removed in #224 (STORY-001) but three live references remain in `cicd/README.md`, `cicd/docs/CICD.md`, `cicd/scripts/benchmark-throughput.sh`. Fix the broken links.
