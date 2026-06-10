@@ -25,4 +25,4 @@ User directive: keep only `.claude/commands/dev-workflow/` and `.claude/rules/`;
 ## Status
 
 - Created: 2026-06-10
-- PR: (pending)
+- PR: #224
