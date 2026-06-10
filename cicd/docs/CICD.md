@@ -247,7 +247,7 @@ Runs all test suites in sequence: build → runtime → inference → models. Th
 
 ### Perf / experiment workflows (separate pattern)
 
-The TC framework above handles **correctness validation** — "did this model load and produce coherent output?". Performance benchmarks and experiments live alongside under a separate, simpler contract documented in [`.claude/skills/test-workflow-pattern/SKILL.md`](../../.claude/skills/test-workflow-pattern/SKILL.md):
+The TC framework above handles **correctness validation** — "did this model load and produce coherent output?". Performance benchmarks and experiments live alongside under a separate, simpler contract:
 
 - One extracted bash script per workflow at `cicd/scripts/test-<name>.sh`
 - Shared helpers in `cicd/scripts/lib/` (response capture, simple check, LLM judge wrapper, container log snip)
