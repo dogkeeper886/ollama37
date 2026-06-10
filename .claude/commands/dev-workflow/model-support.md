@@ -2,7 +2,6 @@
 
 ```
 Identify a model's true architecture and route the request before creating issues.
-Reference `.claude/skills/model-support/SKILL.md` for context.
 
 Model: $ARGUMENTS
 
@@ -58,7 +57,7 @@ already in the tree. Verify, then identity-check, then route to the (usually sma
         │   │ Renamed/stripped from upstream              │ One small "restore" issue │
         │   │ Reachable via conversion (fmt/quant gap,    │ Trace conversion path;    │
         │   │   arch already supported)                   │ never drop on sight       │
-        │   │ Genuinely new arch (no match anywhere)      │ Full plan via /plan       │
+        │   │ Genuinely new arch (no match anywhere)      │ Full plan via /dw-plan    │
         │   └────────────────────────────────────────────┴───────────────────────────┘
         │
         └─► Step 6: Report
@@ -89,5 +88,5 @@ already in the tree. Verify, then identity-check, then route to the (usually sma
 
 - HF `config.json` is authoritative for architecture; the release name is marketing.
 - Upstream comparison via `gh api` — must be authenticated (`gh auth status`).
-- Output of this command feeds `/plan` (only for genuinely-new) or a single small issue.
+- Output of this command feeds `/dw-plan` (only for genuinely-new) or a single small issue.
 ```
