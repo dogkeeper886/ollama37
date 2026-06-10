@@ -25,10 +25,9 @@
 #
 # Exit status: non-zero if any model fails the output check (simple or dual).
 #
-# Implementation note: this script follows the unified test-workflow pattern
-# (.claude/skills/test-workflow-pattern/SKILL.md). Generic operations are
-# sourced from cicd/scripts/lib/ — only throughput-specific orchestration
-# (banner, GPU info, results table) lives here.
+# Implementation note: this script follows the unified test-workflow pattern.
+# Generic operations are sourced from cicd/scripts/lib/ — only throughput-specific
+# orchestration (banner, GPU info, results table) lives here.
 
 set -euo pipefail
 

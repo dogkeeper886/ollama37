@@ -90,7 +90,7 @@ These workflows execute the YAML test suites via the TypeScript runner with the 
 
 ### Perf / experiment workflows (the unified test-workflow pattern)
 
-These follow the contract documented in [`.claude/skills/test-workflow-pattern/SKILL.md`](../.claude/skills/test-workflow-pattern/SKILL.md): one extracted bash script per workflow at `cicd/scripts/test-<name>.sh`, sourcing shared helpers from `cicd/scripts/lib/`, emitting structured JSON to `/tmp/test-<name>-results.json`.
+These follow a shared contract: one extracted bash script per workflow at `cicd/scripts/test-<name>.sh`, sourcing shared helpers from `cicd/scripts/lib/`, emitting structured JSON to `/tmp/test-<name>-results.json`. Full bullet list in [`docs/CICD.md`](docs/CICD.md) → "Perf / experiment workflows".
 
 | Workflow | Script | Description |
 |----------|--------|-------------|
