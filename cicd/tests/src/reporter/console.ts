@@ -38,14 +38,14 @@ export class ConsoleReporter {
       const simpleStatus = report.simpleJudge.pass
         ? chalk.green('PASS')
         : chalk.red('FAIL');
-      const llmStatus = report.llmJudge.pass
+      const agentStatus = report.agentJudge.pass
         ? chalk.green('PASS')
         : chalk.red('FAIL');
 
       console.log(`  Simple Judge: ${simpleStatus} - ${report.simpleJudge.reason}`);
-      console.log(`  LLM Judge: ${llmStatus} - ${report.llmJudge.reason}`);
-      if (!report.llmJudge.pass && report.llmJudge.evidence) {
-        console.log(`  ${chalk.yellow('Evidence:')} ${report.llmJudge.evidence}`);
+      console.log(`  Agent Judge: ${agentStatus} - ${report.agentJudge.reason}`);
+      if (!report.agentJudge.pass && report.agentJudge.evidence) {
+        console.log(`  ${chalk.yellow('Evidence:')} ${report.agentJudge.evidence}`);
       }
 
       if (report.memoryProfile) {
@@ -76,7 +76,7 @@ export class ConsoleReporter {
     console.log(
       `  Simple Judge: ${summary.simple.passed}/${summary.total} passed`
     );
-    console.log(`  LLM Judge: ${summary.llm.passed}/${summary.total} passed`);
+    console.log(`  Agent Judge: ${summary.agent.passed}/${summary.total} passed`);
     console.log(`Duration: ${this.formatDuration(summary.duration)}`);
     console.log(`Output: ${summary.runId}`);
 

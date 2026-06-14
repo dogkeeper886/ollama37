@@ -24,7 +24,7 @@ export class JsonReporter {
   generateReports(
     results: TestResult[],
     simpleJudgments: Judgment[],
-    llmJudgments: Judgment[],
+    agentJudgments: Judgment[],
     startTime: Date,
     suite: string
   ): { summary: TestSummary; reports: TestReport[] } {
@@ -33,7 +33,7 @@ export class JsonReporter {
 
     // Create judgment maps for quick lookup
     const simpleMap = new Map(simpleJudgments.map((j) => [j.testId, j]));
-    const llmMap = new Map(llmJudgments.map((j) => [j.testId, j]));
+    const agentMap = new Map(agentJudgments.map((j) => [j.testId, j]));
 
     // Generate individual test reports
     const reports: TestReport[] = results.map((result) => {
@@ -42,14 +42,14 @@ export class JsonReporter {
         pass: false,
         reason: 'No judgment',
       };
-      const llm = llmMap.get(result.testCase.id) || {
+      const agent = agentMap.get(result.testCase.id) || {
         testId: result.testCase.id,
         pass: false,
         reason: 'No judgment',
       };
 
       // Both must pass in dual mode
-      const pass = simple.pass && llm.pass;
+      const pass = simple.pass && agent.pass;
 
       // Convert StepResult[] to StepReportEntry[]
       const steps: StepReportEntry[] = result.steps.map((step) => ({
@@ -71,19 +71,19 @@ export class JsonReporter {
         pass,
         reason: pass
           ? 'Both judges passed'
-          : `Simple: ${simple.reason}; LLM: ${llm.reason}`,
+          : `Simple: ${simple.reason}; Agent: ${agent.reason}`,
         duration: result.totalDuration,
         steps,
         logFile: result.logFile,
         simpleJudge: simple,
-        llmJudge: llm,
+        agentJudge: agent,
         memoryProfile,
       };
     });
 
     // Calculate summary
     const simplePassed = simpleJudgments.filter((j) => j.pass).length;
-    const llmPassed = llmJudgments.filter((j) => j.pass).length;
+    const agentPassed = agentJudgments.filter((j) => j.pass).length;
     const passed = reports.filter((r) => r.pass).length;
 
     const summary: TestSummary = {
@@ -98,9 +98,9 @@ export class JsonReporter {
         passed: simplePassed,
         failed: results.length - simplePassed,
       },
-      llm: {
-        passed: llmPassed,
-        failed: results.length - llmPassed,
+      agent: {
+        passed: agentPassed,
+        failed: results.length - agentPassed,
       },
       environment: {
         hostname: hostname(),
@@ -144,7 +144,7 @@ export class JsonReporter {
         duration: r.duration,
         steps: r.steps,
         simpleJudge: r.simpleJudge,
-        llmJudge: r.llmJudge,
+        agentJudge: r.agentJudge,
         memoryProfile: r.memoryProfile,
       })),
     };
