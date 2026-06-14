@@ -37,5 +37,5 @@ something real rather than a mock.
 ## Status
 
 - Created: 2026-06-14
-- Issues: #227
+- Issues: #227, #232, #233, #234
 - Plan: #231
