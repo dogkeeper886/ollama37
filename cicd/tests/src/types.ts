@@ -183,8 +183,8 @@ export interface TestReport {
   logFile: string;
   /** Simple judge verdict */
   simpleJudge: Judgment;
-  /** LLM judge verdict */
-  llmJudge: Judgment;
+  /** Agent judge verdict */
+  agentJudge: Judgment;
   /** Parsed memory profile from container logs (if available) */
   memoryProfile?: MemoryProfile;
 }
@@ -212,8 +212,8 @@ export interface TestSummary {
     passed: number;
     failed: number;
   };
-  /** LLM judge breakdown */
-  llm: {
+  /** Agent judge breakdown */
+  agent: {
     passed: number;
     failed: number;
   };
@@ -241,12 +241,9 @@ export interface RunConfig {
   testId?: string;
   /** Show what would run without executing */
   dryRun: boolean;
-  /** Skip LLM judging (simple judge only). Defaults to true; opt in with --llm. */
-  noLlm: boolean;
-  /** URL of the LLM judge Ollama instance */
-  judgeUrl: string;
-  /** Model to use for LLM judging */
-  judgeModel: string;
+  /** Judge mode: 'simple' (deterministic only) or 'dual' (also run the agent judge).
+   *  Defaults to 'simple'; opt in via JUDGE_MODE=dual or the deprecated --llm flag. */
+  judgeMode: 'simple' | 'dual';
   /** Output directory for results */
   outputDir: string;
   /** Output format */
@@ -262,8 +259,6 @@ export interface RunConfig {
  */
 export const DEFAULT_CONFIG: Partial<RunConfig> = {
   dryRun: false,
-  noLlm: true,
-  judgeUrl: 'http://localhost:11435',
-  judgeModel: 'gemma3:12b-judge',
+  judgeMode: 'simple',
   outputFormat: 'console',
 };

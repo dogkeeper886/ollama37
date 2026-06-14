@@ -5,17 +5,17 @@
  * Usage:
  *   npx tsx src/cli.ts run [options]
  *   npx tsx src/cli.ts list [options]
- *   npx tsx src/cli.ts judge-response [options]
  */
 
 import { Command } from 'commander';
 import path from 'path';
-import { mkdirSync, existsSync, readFileSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { TestLoader } from './loader.js';
 import { TestExecutor } from './executor.js';
-import { SimpleJudge, LLMJudge } from './judge/index.js';
+import { SimpleJudge, AgentJudge } from './judge/index.js';
 import { JsonReporter, ConsoleReporter } from './reporter/index.js';
-import { RunConfig, DEFAULT_CONFIG, TestCase, TestResult, StepResult } from './types.js';
+import { RunConfig } from './types.js';
+import { CONFIG } from './config.js';
 
 const program = new Command();
 
@@ -33,9 +33,9 @@ program
   .option('-s, --suite <suite>', 'Run only tests from this suite (build, runtime, inference, models)')
   .option('-i, --id <id>', 'Run only the test with this ID')
   .option('--dry-run', 'Show what would run without executing', false)
-  .option('--llm', 'Also run the LLM judge (default: simple judge only)', false)
-  .option('--judge-url <url>', 'Ollama URL for LLM judge', 'http://localhost:11435')
-  .option('--judge-model <model>', 'Model to use for LLM judging', 'gemma3:12b-judge')
+  .option('--llm', 'Deprecated alias for JUDGE_MODE=dual (runs the agent judge)', false)
+  .option('--judge-url <url>', 'Deprecated, ignored (the agent judge needs no Ollama URL)')
+  .option('--judge-model <model>', 'Deprecated, ignored (model selection lives in the ACP agent)')
   .option('-o, --output-dir <dir>', 'Output directory for results')
   .option('-f, --format <format>', 'Output format (console, json)', 'console')
   .action(async (options) => {
@@ -57,13 +57,16 @@ program
       mkdirSync(outputDir, { recursive: true });
     }
 
+    // Agent judge runs in 'dual' mode — enabled via JUDGE_MODE=dual or the
+    // deprecated --llm alias.
+    const judgeMode: RunConfig['judgeMode'] =
+      options.llm || CONFIG.judge.mode === 'dual' ? 'dual' : 'simple';
+
     const config: RunConfig = {
       suite: options.suite as RunConfig['suite'],
       testId: options.id,
       dryRun: options.dryRun,
-      noLlm: !options.llm,
-      judgeUrl: options.judgeUrl,
-      judgeModel: options.judgeModel,
+      judgeMode,
       outputDir,
       outputFormat: options.format as RunConfig['outputFormat'],
       workingDir: projectRoot,
@@ -74,7 +77,7 @@ program
     process.stderr.write(`[CONFIG] Docker compose: ${dockerDir}\n`);
     process.stderr.write(`[CONFIG] Testcases: ${testcasesDir}\n`);
     process.stderr.write(`[CONFIG] Output: ${outputDir}\n`);
-    process.stderr.write(`[CONFIG] LLM Judge: ${config.noLlm ? 'disabled' : config.judgeUrl}\n`);
+    process.stderr.write(`[CONFIG] Agent Judge: ${config.judgeMode === 'dual' ? 'enabled (dual)' : 'disabled (simple only)'}\n`);
 
     // Load test cases
     const loader = new TestLoader(testcasesDir);
@@ -139,21 +142,20 @@ program
     const simpleJudge = new SimpleJudge();
     const simpleJudgments = simpleJudge.judgeAll(results);
 
-    let llmJudgments = simpleJudgments.map((j) => ({
+    let agentJudgments = simpleJudgments.map((j) => ({
       ...j,
-      reason: config.noLlm ? 'LLM judge disabled' : j.reason,
+      reason: config.judgeMode === 'dual' ? j.reason : 'Agent judge disabled (simple mode)',
     }));
 
-    if (!config.noLlm) {
-      process.stderr.write('[JUDGE] Running LLM judge...\n');
-      const llmJudge = new LLMJudge(config.judgeUrl, config.judgeModel);
+    if (config.judgeMode === 'dual') {
+      process.stderr.write('[JUDGE] Running agent judge...\n');
+      const agentJudge = new AgentJudge();
 
-      const available = await llmJudge.isAvailable();
+      const available = await agentJudge.isAvailable();
       if (available) {
-        llmJudgments = await llmJudge.judgeResults(results);
-        await llmJudge.unloadModel();
+        agentJudgments = await agentJudge.judgeResults(results);
       } else {
-        process.stderr.write('[WARN] LLM judge not available, using simple judge results\n');
+        process.stderr.write('[WARN] Agent judge not available, using simple judge results\n');
       }
     }
 
@@ -162,7 +164,7 @@ program
     const { summary, reports } = jsonReporter.generateReports(
       results,
       simpleJudgments,
-      llmJudgments,
+      agentJudgments,
       startTime,
       suiteName
     );
@@ -219,81 +221,6 @@ program
 
     console.log('\n' + '='.repeat(60));
     console.log(`Total: ${testCases.length} test(s)`);
-  });
-
-/**
- * judge-response — grade a single captured inference response with the LLM judge.
- *
- * Built for workflows like test-fa-k80.yml that produce a /api/generate response
- * outside the run framework but still want the LLM judge's verdict on whether
- * the captured text makes sense for the prompt.
- *
- * Reads a response file (an Ollama /api/generate JSON body with a `.response`
- * field, or a raw text file), wraps it in a synthetic TestResult, runs LLMJudge
- * on it, prints the Judgment as JSON to stdout, and exits non-zero on fail.
- */
-program
-  .command('judge-response')
-  .description('Run the LLM judge against a single saved inference response')
-  .requiredOption('--response <path>', 'Path to a JSON file with a .response field, or a raw text file')
-  .requiredOption('--criteria <text>', 'Evaluation criteria for the LLM judge')
-  .option('--test-id <id>', 'Test identifier surfaced to the judge', 'AD-HOC')
-  .option('--test-name <name>', 'Test name surfaced to the judge', 'Ad-hoc inference judgment')
-  .option('--goal <text>', 'One-line test objective for judge context')
-  .option('--judge-url <url>', 'Ollama URL for the LLM judge', 'http://localhost:11435')
-  .option('--judge-model <model>', 'Model to use for LLM judging', 'gemma3:12b-judge')
-  .action(async (options) => {
-    let responseText: string;
-    const raw = readFileSync(options.response, 'utf-8');
-    try {
-      const parsed = JSON.parse(raw);
-      // /api/generate returns {response: "...", ...}; fall back to the raw body
-      // if there's no .response field (e.g., user passed a plain text file).
-      responseText = typeof parsed.response === 'string' ? parsed.response : raw;
-    } catch {
-      responseText = raw;
-    }
-
-    const testCase: TestCase = {
-      id: options.testId,
-      name: options.testName,
-      suite: 'inference',
-      priority: 1,
-      timeout: 0,
-      dependencies: [],
-      goal: options.goal,
-      steps: [{ name: 'inference', command: '(captured response)' }],
-      criteria: options.criteria,
-    };
-
-    const stepResult: StepResult = {
-      name: 'inference',
-      command: '(captured response)',
-      stdout: responseText,
-      stderr: '',
-      exitCode: 0,
-      duration: 0,
-    };
-
-    const result: TestResult = {
-      testCase,
-      steps: [stepResult],
-      totalDuration: 0,
-      logs: '',
-      logFile: '',
-    };
-
-    const llmJudge = new LLMJudge(options.judgeUrl, options.judgeModel);
-    if (!(await llmJudge.isAvailable())) {
-      process.stderr.write(`[ERROR] LLM judge not reachable at ${options.judgeUrl}\n`);
-      process.exit(2);
-    }
-
-    const [judgment] = await llmJudge.judgeResults([result]);
-    await llmJudge.unloadModel();
-
-    process.stdout.write(JSON.stringify(judgment, null, 2) + '\n');
-    process.exit(judgment.pass ? 0 : 1);
   });
 
 program.parse();

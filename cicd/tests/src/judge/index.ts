@@ -3,4 +3,4 @@
  */
 
 export { SimpleJudge } from './simple-judge.js';
-export { LLMJudge } from './llm-judge.js';
+export { AgentJudge } from './agent-judge.js';
