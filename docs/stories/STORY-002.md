@@ -38,3 +38,4 @@ something real rather than a mock.
 
 - Created: 2026-06-14
 - Issues: #227
+- Plan: #231
