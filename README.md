@@ -1,68 +1,173 @@
 # Ollama37
 
-**Ollama fork with CUDA compute capability 3.7 support for Tesla K80 GPUs**
+**Run modern LLMs on the NVIDIA Tesla K80.** Ollama37 is a fork of [Ollama](https://github.com/ollama/ollama) that restores CUDA compute capability 3.7, so a 2014-era K80 can serve today's models — Gemma, Qwen, DeepSeek, and more — long after upstream dropped Kepler support.
 
-## Demo Video
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker image](https://img.shields.io/docker/v/dogkeeper886/ollama37?label=docker%20hub&sort=semver)](https://hub.docker.com/r/dogkeeper886/ollama37)
+[![Docker pulls](https://img.shields.io/docker/pulls/dogkeeper886/ollama37.svg)](https://hub.docker.com/r/dogkeeper886/ollama37)
 
-[![Why I Run AI on 10-Year-Old GPUs](https://img.youtube.com/vi/iYxgGsPu5rM/maxresdefault.jpg)](https://www.youtube.com/watch?v=iYxgGsPu5rM)
+![Ollama37 brings modern LLMs to the Tesla K80](docs/images/readme/concept.png)
 
-**[Why I Run AI on 10-Year-Old GPUs: Ollama K80 Docker Build System & CI/CD Pipeline](https://www.youtube.com/watch?v=iYxgGsPu5rM)**
+> [!IMPORTANT]
+> **The published image runs on the Tesla K80 (compute capability 3.7) only.** It is
+> compiled to native CUBIN for `sm_37` with no PTX fallback, so it will **not** run on
+> any other GPU. To use different hardware, build it yourself — see
+> [Building for other GPUs](#building-for-other-gpus).
 
-In this video, I walk through our modern AI CI/CD pipeline built entirely on legacy Nvidia K80 GPUs. Why use old hardware in 2025? Because the hands-on challenges teach you skills you'd never learn otherwise—compiling kernels, managing GCC versions, debugging driver issues, and navigating end-of-life software dependencies.
+![The published image runs on the Tesla K80 only; other GPUs will not load it](docs/images/readme/compatibility.png)
 
-**Highlights:**
-- **Docker Build System**: Multi-stage build with Rocky Linux 8, CUDA 11.4, GCC 10, CMake 4.0, Go 1.25.3
-- **CI/CD & Test Framework**: Self-hosted GitHub Actions runner with Simple Judge (exit code/pattern matching) and LLM Judge (Gemma3 12B for log analysis)
-- **Full Pipeline**: Build → Container check → Runtime verification → Inference testing → Model compatibility testing
+## Contents
 
-## Overview
+- [Why Ollama37](#why-ollama37)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Tested Models](#tested-models)
+- [How It's Built](#how-its-built)
+- [Building for other GPUs](#building-for-other-gpus)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
-This fork adds CUDA compute capability 3.7 to Ollama, enabling it to run on Tesla K80 GPUs. It uses a multi-stage Docker build system that compiles everything from source and produces a slim ~1 GB runtime image.
+## Why Ollama37
 
-### Environment
-- Rocky Linux 8
-- CUDA 11.4 toolkit
-- GCC 10 (built from source)
-- CMake 4.0 (built from source)
-- Go 1.25.3
-- NVIDIA driver 470+
+The Tesla K80 is a 24 GB (2×12 GB) datacenter GPU you can buy used for very little, but
+modern Ollama won't run on it: CUDA 12, recent drivers, and upstream's prebuilt binaries
+all dropped Kepler (`sm_37`). Ollama37 keeps that hardware useful by pinning the exact
+toolchain the K80 still needs and shipping a ready-to-run image. Doing this by hand also
+teaches the parts that "just works" hides — compiling CUDA kernels, matching GCC to CUDA,
+and wrangling end-of-life drivers.
 
-### Supported GPUs
-- **3.7** - Tesla K80 (primary target)
-- **5.0-8.6** - Maxwell through Ampere (GTX 900 series to RTX 30 series)
+## Features
 
-### Tesla K80 Model Recommendations
+- **Tesla K80 support** — full CUDA compute capability 3.7 (`sm_37`).
+- **Fast cold start** — compiled to native CUBIN, so there's no multi-minute PTX JIT on
+  container start (a PTX build re-JITs for ~3–4 min on every restart).
+- **Qwen3.5 DeltaNet** — first Ollama fork to support the DeltaNet recurrent architecture.
+- **Tool calling** — verified via the API and LangChain.
 
-**VRAM:** 12GB per GPU (24GB for dual-GPU K80)
+## Requirements
 
-| Model Size | Quantization |
-|------------|-------------|
-| Small (1-4B) | Full precision or Q8 |
-| Medium (7-8B) | Q4_K_M |
-| Large (13B+) | Q4_0 or multi-GPU |
+- A **Tesla K80** (or another compute-capability-3.7 GPU).
+- **NVIDIA driver 470+** on the host. 470 is the last branch that supports Kepler —
+  newer drivers dropped the K80.
+- **Docker** with the **NVIDIA Container Runtime**.
+
+The container ships no driver of its own. At run time the NVIDIA Container Runtime mounts
+the host's driver in via `--gpus`, which is how the image reaches the K80:
+
+![Host driver → NVIDIA Container Runtime → ollama37 image → Tesla K80](docs/images/readme/runtime-stack.png)
+
+Why those exact versions? The K80's age pins the entire chain — newer drivers, CUDA, and
+GCC have all removed Kepler support:
+
+![K80 needs driver 470, which pairs with CUDA 11.4, which caps GCC at 10](docs/images/readme/version-chain.png)
 
 ## Quick Start
 
+![Pull the image, start the server, pull a model, then chat](docs/images/readme/quickstart-flow.png)
+
+Pull the prebuilt image from Docker Hub and run it (no build required):
+
 ```bash
-# Build
-cd docker
-make build
-
-# Run
-docker compose up -d
-
-# Test
-curl http://localhost:11434/api/tags
-docker exec ollama37 ollama pull gemma3:4b
-docker exec ollama37 ollama run gemma3:4b "Hello!"
+docker run -d \
+  --name ollama37 \
+  --runtime=nvidia \
+  --gpus all \
+  -p 11434:11434 \
+  -v ollama-data:/root/.ollama \
+  dogkeeper886/ollama37:latest
 ```
+
+Then pull a model and chat:
+
+```bash
+docker exec ollama37 ollama pull gemma3:4b
+docker exec ollama37 ollama run gemma3:4b "Why is the sky blue?"
+```
+
+Or call the API:
+
+```bash
+curl http://localhost:11434/api/generate -d '{
+  "model": "gemma3:4b",
+  "prompt": "Why is the sky blue?",
+  "stream": false
+}'
+```
+
+For Docker Compose and the full configuration, see [docker/README.md](docker/README.md).
+
+## Tested Models
+
+![Small models run at full precision or Q8, medium at Q4_K_M, large at Q4_0 or multi-GPU](docs/images/readme/model-sizing.png)
+
+A K80 has **12 GB VRAM per GPU** (24 GB for a dual-GPU board). Size quantization to fit:
+
+| Model size    | Quantization         |
+|---------------|----------------------|
+| Small (1–4B)  | Full precision or Q8 |
+| Medium (7–8B) | Q4_K_M               |
+| Large (13B+)  | Q4_0 or multi-GPU    |
+
+Verified on K80: `gemma3:4b`, `gemma3:27b`, `gemma4:e4b`, `gemma4:26b`, `qwen3.5:9b`,
+`qwen3.5:27b`, `gpt-oss:20b`, `deepseek-r1:7b`, `ministral-3`, `functiongemma`.
+
+## How It's Built
+
+Ollama37 is split into two Docker images so the thing you run stays small:
+
+![Source compiles in a ~15 GB builder image into a ~1 GB runtime image, published to Docker Hub](docs/images/readme/build-pipeline.png)
+
+- **`ollama37-builder` (~15 GB)** — the build environment only: CUDA 11.4 toolkit, GCC 10
+  and CMake 4 (compiled from source, ~90 min the first time), and Go. It is never shipped.
+- **`ollama37` (~1 GB)** — a multi-stage build. The code is compiled *inside* the builder
+  with the `CUDA 11 K80` preset (`CMAKE_CUDA_ARCHITECTURES=37`, native CUBIN), then only the
+  artifacts — the `ollama` binary, the GGML/CUDA libraries, the bundled CUDA runtime libs
+  (cuBLAS, cuBLASLt, cudart), and the GCC 10 runtime libs — are copied onto a slim
+  `rockylinux:8-minimal` base. This is the image published to Docker Hub.
+
+To build it yourself:
+
+```bash
+cd docker
+make build          # builds the builder image (first time only), then the runtime image
+docker compose up -d
+```
+
+## Building for other GPUs
+
+The published image is K80-only **by design** — that is the hardware this project targets
+and tests. The build system *can* target other architectures if you compile it yourself:
+`CMakePresets.json` ships a `CUDA 11` preset (PTX for `sm_37` through `sm_86`) and `CUDA 12`
+/ `CUDA 13` presets for newer cards. These paths are **unsupported** — they are not built
+or tested here, and you are on your own. See [docker/README.md](docker/README.md).
+
+## Troubleshooting
+
+The most common K80 snag: `nvidia-smi` works inside the container but Ollama reports **0
+GPUs**, because the host is missing the UVM device files. Fix it on the host with:
+
+```bash
+nvidia-modprobe -u -c=0
+```
+
+This and other issues (GPU not detected, model load failures, build problems) are covered
+in [docker/README.md](docker/README.md#troubleshooting).
 
 ## Documentation
 
-- **[docker/README.md](docker/README.md)** — Full Docker build system docs (architecture, build commands, configuration, troubleshooting)
-- **[CLAUDE.md](CLAUDE.md)** — Development process, branch workflow, and Claude Code instructions
-- **[Upstream Ollama](https://github.com/ollama/ollama)** — Original Ollama project
+- **[docker/README.md](docker/README.md)** — full build system: architecture, build
+  commands, configuration, and troubleshooting.
+- **[CLAUDE.md](CLAUDE.md)** — development process and contribution workflow.
+- **[Upstream Ollama](https://github.com/ollama/ollama)** — the original project.
+
+## Contributing
+
+Issues and pull requests are welcome — Tesla K80 compatibility reports and fixes
+especially. See the [issue tracker](https://github.com/dogkeeper886/ollama37/issues).
 
 ## License
 
-MIT (same as upstream Ollama)
+MIT, the same as upstream Ollama. See [LICENSE](LICENSE).
