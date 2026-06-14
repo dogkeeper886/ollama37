@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+  <rect width="760" height="200" fill="#ffffff"/>
+  <text x="380" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="#1f2328">Compiled from source into a slim image</text>
+
+  <!-- stage 1 -->
+  <rect x="16" y="74" width="156" height="86" rx="10" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.5"/>
+  <text x="94" y="112" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328">Source</text>
+  <text x="94" y="133" text-anchor="middle" font-size="12" fill="#57606a">Go + CUDA / C++</text>
+
+  <line x1="172" y1="117" x2="196" y2="117" stroke="#8c959f" stroke-width="2"/>
+  <polygon points="196,111 208,117 196,123" fill="#8c959f"/>
+
+  <!-- stage 2 -->
+  <rect x="212" y="74" width="180" height="86" rx="10" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.5"/>
+  <text x="302" y="106" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328">Builder image</text>
+  <text x="302" y="126" text-anchor="middle" font-size="11.5" fill="#57606a">Rocky 8 · CUDA 11.4</text>
+  <text x="302" y="142" text-anchor="middle" font-size="11.5" fill="#57606a">GCC 10 · CMake · Go</text>
+
+  <line x1="392" y1="117" x2="416" y2="117" stroke="#8c959f" stroke-width="2"/>
+  <polygon points="416,111 428,117 416,123" fill="#8c959f"/>
+
+  <!-- stage 3 -->
+  <rect x="432" y="74" width="150" height="86" rx="10" fill="#ddf4ff" stroke="#54aeff" stroke-width="1.5"/>
+  <text x="507" y="112" text-anchor="middle" font-size="15" font-weight="700" fill="#0969da">Compile</text>
+  <text x="507" y="133" text-anchor="middle" font-size="12" fill="#0969da">sm_37 CUBIN</text>
+
+  <line x1="582" y1="117" x2="606" y2="117" stroke="#8c959f" stroke-width="2"/>
+  <polygon points="606,111 618,117 606,123" fill="#8c959f"/>
+
+  <!-- stage 4 -->
+  <rect x="622" y="74" width="122" height="86" rx="10" fill="#dafbe1" stroke="#2da44e" stroke-width="1.5"/>
+  <text x="683" y="106" text-anchor="middle" font-size="15" font-weight="700" fill="#1a7f37">Runtime</text>
+  <text x="683" y="126" text-anchor="middle" font-size="12" fill="#1a7f37">slim image</text>
+  <text x="683" y="143" text-anchor="middle" font-size="12" font-weight="700" fill="#1a7f37">~1 GB</text>
+</svg>
