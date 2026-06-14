@@ -51,7 +51,6 @@ before `dw-tasks` decomposes it — no `dw-*` command produces or gates it (mirr
 | `dw-plan`      | **human review** (the plan issue) | the approach covers the story, before decomposition |
 | `dw-tasks`     | `dw-review-tasks`     | the issues cover the plan; each lean; trace back to the plan |
 | `dw-implement` | `dw-review-implement` | the change delivers the issue, surgical, fits the project |
-| `dw-test-design` | *(verified by running the suite)* | tests pass, native to the framework |
 | `dw-create-pr` | *(human review + `/review`)* | the PR overview before merge |
 | `dw-merge`     | *(is the terminal gate)* | green CI + human review |
 

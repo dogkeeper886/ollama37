@@ -60,6 +60,60 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Dev & QA workflow discipline
+
+Substantial work flows through a pipeline; each step is a gate that stops for a
+human decision (commands suggest the next, they never auto-run it):
+
+```
+dw-story → dw-review-story → dw-plan → [human reviews the plan issue]
+        → dw-tasks → dw-review-tasks → dw-implement → dw-review-implement
+        → dw-create-pr → [human review + /review] → dw-merge
+```
+
+The full flow + producer→review pairing lives in `.claude/rules/dev-workflow.md`. Trivial
+work skips the plan: `dw-story → dw-tasks`.
+
+**qa-workflow** is the sibling pipeline — same gated discipline, turning a story into
+trustworthy test docs:
+
+```
+qw-plan → qw-review-plan → qw-cases → qw-review-cases
+```
+
+The full flow + pairing lives in `.claude/rules/qa-workflow.md`.
+
+Two review gates are external skills this toolkit does not own — invoke them by hand:
+- `code-review` (bundled): adversarial diff review. Run after `dw-implement`,
+  alongside `dw-review-implement`. Earns its cost on logic/risk; skip for pure docs.
+- `/review` (builtin): PR overview. Run after `dw-create-pr`, before `dw-merge`.
+
+Don't wire these into the `dw-*` commands — they may not exist in every install,
+and a command that references a missing skill is a dangling pointer.
+
+**Right-size it.** A typo or a one-line doc change does not need the full chain —
+use judgment; branch + PR + merge is enough. The three review passes overlap:
+`dw-review-implement` is the always-on substance gate, `code-review` is for real
+logic or risk, `/review` is the PR summary. Running all three on a trivial diff is
+ritual, not rigor.
+
+## 6. Artifact & doc review discipline
+
+Match the reviewer to **who reads** the file you changed:
+
+- **Human-read docs** (README, `docs/` prose): run `reviewing-phrasing` (the words)
+  + `reviewing-typography` (the look) — the human-read doc review.
+- **Agent-read tooling** (commands, skills, CLAUDE.md, rules): run
+  `reviewing-artifacts` (does it do its job — one job, complete, goal-not-spec,
+  fits the project, right for its reader).
+
+These are skills this project owns. Like the dev-workflow gates, they stop for a human
+and never auto-run — invoke them by hand.
+
+**Right-size it.** A typo or a one-line tweak does not need a review pass — use
+judgment. Reach for these when a change is substantial enough that the look, the
+wording, or the artifact's fitness actually matters.
+
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
