@@ -43,6 +43,7 @@ issues. Two things make today's README fall short:
 ## Status
 
 - Created: 2026-06-14
-- Issues: #223 (origin — README update agreed there), #229 (task)
+- Completed: 2026-06-14
+- Issues: #223 (origin — README update agreed there), #229 (task, merged)
 - Plan: #228
-- PR: #230 (open)
+- PR: #230 (merged)
