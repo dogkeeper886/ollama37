@@ -45,3 +45,4 @@ issues. Two things make today's README fall short:
 - Created: 2026-06-14
 - Issues: #223 (origin — README update agreed there), #229 (task)
 - Plan: #228
+- PR: #230 (open)
