@@ -4,6 +4,18 @@
  * ollama37 keeps its run config in types.ts (DEFAULT_CONFIG); this file provides
  * the CONFIG block the ported ACP agent judge (judge/agent-judge.ts) reads.
  */
+
+/** Forward only the named env vars (comma-separated) from the parent process —
+ *  the spawned MCP server's creds come from the environment, never hardcoded. */
+function pickEnv(names: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of names.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const v = process.env[k];
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
 export const CONFIG = {
   projectName: 'ollama37',
 
@@ -21,5 +33,18 @@ export const CONFIG = {
     stdoutLimit: 1000,
     stderrLimit: 500,
     logsLimit: 3000,
+  },
+
+  // MCP tool-call test (cli.ts test-mcp). Drives a REAL stdio MCP server so a
+  // model's tool-calling can be checked end-to-end. testlink-mcp is only the
+  // default target — point --mcp-command / --mcp-args at any stdio MCP server.
+  mcp: {
+    command: process.env.MCP_COMMAND || 'npx',
+    args: (process.env.MCP_ARGS || '-y testlink-mcp').split(' ').filter(Boolean),
+    cwd: process.env.MCP_CWD || undefined,
+    prompt: process.env.MCP_PROMPT || 'List the projects.',
+    // Env var names to forward to the spawned server (its creds). Values come
+    // from the environment (.env locally / secret in CI). Default = testlink's.
+    env: pickEnv(process.env.MCP_ENV || 'TESTLINK_URL,TESTLINK_API_KEY'),
   },
 };
