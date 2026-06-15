@@ -227,22 +227,34 @@ export async function runFa(opts: FaOptions): Promise<number> {
 
   const failed = metrics.filter((m) => !m.ok || (m.check && !m.check.pass)).length;
 
+  // Single-mode --baseline-compare: does enabling FA change the output? Exact
+  // match means FA is numerically identical to the f16 baseline.
+  let comparison: { match: boolean } | undefined;
+  if (!opts.benchmark && opts.baselineCompare) {
+    const base = metrics.find((m) => m.config === 'baseline');
+    const fa = metrics.find((m) => m.config === 'fa');
+    if (base?.ok && fa?.ok) {
+      comparison = { match: base.response === fa.response };
+      process.stderr.write(comparison.match ? '::notice::baseline and FA outputs match exactly\n' : '::warning::baseline and FA outputs differ\n');
+    }
+  }
+
   if (opts.output) {
     writeFileSync(
       opts.output,
       JSON.stringify(
-        { mode: opts.benchmark ? 'benchmark' : 'single', model: opts.model, num_ctx: opts.numCtx, num_predict: opts.numPredict, configs: metrics },
+        { mode: opts.benchmark ? 'benchmark' : 'single', model: opts.model, num_ctx: opts.numCtx, num_predict: opts.numPredict, configs: metrics, ...(comparison ? { comparison } : {}) },
         null,
         2
       )
     );
   }
 
-  printTables(opts, metrics);
+  printTables(opts, metrics, comparison);
   return failed > 0 ? 1 : 0;
 }
 
-function printTables(opts: FaOptions, metrics: ConfigMetrics[]): void {
+function printTables(opts: FaOptions, metrics: ConfigMetrics[], comparison?: { match: boolean }): void {
   const out: string[] = [];
   if (opts.benchmark) {
     out.push('## K80 FA benchmark');
@@ -264,6 +276,10 @@ function printTables(opts: FaOptions, metrics: ConfigMetrics[]): void {
     const pass = m.ok && m.check?.pass;
     const reason = (m.check?.agent?.reason ?? m.check?.simple.reason ?? 'no judgment').replace(/[\n|]/g, ' ').slice(0, 200);
     out.push(`| ${m.config} | ${pass ? 'PASS' : 'FAIL'} | ${reason} |`);
+  }
+  if (comparison) {
+    out.push('');
+    out.push(`**Baseline vs FA output:** ${comparison.match ? 'match exactly' : 'differ'}`);
   }
   process.stdout.write(out.join('\n') + '\n');
 }
