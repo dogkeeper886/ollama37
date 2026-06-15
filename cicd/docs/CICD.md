@@ -249,12 +249,14 @@ Runs all test suites in sequence: build → runtime → inference → models. Th
 
 The TC framework above handles **correctness validation** — "did this model load and produce coherent output?". Performance benchmarks and experiments live alongside under a separate, simpler contract:
 
-- A TypeScript subcommand per workflow (`cli.ts bench-throughput`, `cli.ts test-fa`)
+- A TypeScript subcommand per workflow (`cli.ts bench-throughput`, `cli.ts test-fa`, `cli.ts test-mcp`)
 - Metrics + coherence judging reuse the framework's perf helpers and the one agent judge
 - A JSON report (`--output`) plus a markdown summary on stdout
 - Workflow manages container lifecycle (stop production → run → restart production → upload artifacts)
 
 Current perf workflows: `test-throughput.yml` (tok/s benchmark) and `test-fa-k80.yml` (FA regression + benchmark). The agent judge is invoked here too but only ever to answer "is this response meaningful for its prompt?" — never for static / log / exit-code checks.
+
+`cli.ts test-mcp` is a **capability** probe rather than a perf metric: it drives a **real** stdio MCP server (server-agnostic — default `testlink-mcp`, override via `--mcp-command`/`--mcp-args`), lists and translates its tools to Ollama's `/api/chat` `tools[]`, runs the model's tool loop against the live server, and reuses the one agent judge to grade whether the final answer is grounded in the tool result. It reports a per-model verdict (PASS / FAIL / NO TOOL SUPPORT) and is subcommand-only today (a manual `workflow_dispatch` workflow is a future follow-up). See [`docs/traces/mcp-tool-call-validation.md`](../../docs/traces/mcp-tool-call-validation.md) for an end-to-end validation run.
 
 ## Quick Start
 
