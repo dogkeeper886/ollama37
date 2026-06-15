@@ -89,6 +89,19 @@ function resultText(content: unknown): string {
     .join('\n');
 }
 
+/** Ollama is documented to return tool-call arguments as an object, but some
+ *  model templates emit a JSON string — normalize both to an object. */
+function asArgs(raw: unknown): Record<string, unknown> {
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return (raw ?? {}) as Record<string, unknown>;
+}
+
 export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
   const numCtx = opts.numCtx ?? 4096;
   const maxIters = opts.maxIters ?? 5;
@@ -110,29 +123,29 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     finalAnswer: '',
   };
 
+  const messages: any[] = [{ role: 'user', content: opts.prompt }];
+
   try {
     await client.connect(transport);
     const listed = await client.listTools();
     traj.toolNames = listed.tools.map((t) => t.name);
     const tools = mcpToOllamaTools(listed.tools);
 
-    const messages: any[] = [{ role: 'user', content: opts.prompt }];
-
     for (let i = 0; i < maxIters; i++) {
       const raw = await chat(opts.host, opts.model, messages, tools, numCtx);
 
+      if (!raw || typeof raw !== 'object') {
+        throw new Error('ollama /api/chat: no/invalid response');
+      }
       // Ollama returns {error: "...does not support tools"} when the model's
       // template can't do tool calling — a clean capability verdict, not a crash.
-      if (raw?.error) {
-        if (/does not support tools/i.test(String(raw.error))) {
-          traj.supported = false;
-          traj.error = String(raw.error);
-          return traj;
-        }
-        throw new Error(`ollama /api/chat: ${raw.error}`);
+      if (raw.error) {
+        if (/does not support tools/i.test(String(raw.error))) traj.supported = false;
+        traj.error = String(raw.error);
+        return traj;
       }
 
-      const msg = raw?.message;
+      const msg = raw.message;
       const toolCalls: any[] = msg?.tool_calls ?? [];
 
       if (toolCalls.length === 0) {
@@ -140,23 +153,37 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
         return traj;
       }
 
-      // Echo the assistant's tool-call turn, then run each call for real.
-      messages.push(msg);
+      // Echo the assistant's tool-call turn (normalized), then run each call.
+      messages.push({ role: 'assistant', content: msg?.content ?? '', tool_calls: toolCalls });
       for (const tc of toolCalls) {
         const name = tc.function?.name ?? '';
-        const args = (tc.function?.arguments ?? {}) as Record<string, unknown>;
+        const args = asArgs(tc.function?.arguments);
         traj.toolCalls.push({ name, arguments: args });
 
-        const result: any = await client.callTool({ name, arguments: args });
-        const content = resultText(result?.content);
-        traj.toolResults.push({ name, content, isError: Boolean(result?.isError) });
-
+        // A bad tool name / args throws — but "the model picked wrong" is exactly
+        // the verdict under test, so capture it and feed it back, don't crash.
+        let content: string;
+        let isError: boolean;
+        try {
+          const result: any = await client.callTool({ name, arguments: args });
+          content = resultText(result?.content);
+          isError = Boolean(result?.isError);
+        } catch (e) {
+          content = `tool call failed: ${e instanceof Error ? e.message : String(e)}`;
+          isError = true;
+        }
+        traj.toolResults.push({ name, content, isError });
         messages.push({ role: 'tool', content, tool_name: name });
       }
     }
 
     // Ran out of iterations still calling tools — report what we have.
     traj.error = `no final answer within ${maxIters} tool rounds`;
+    return traj;
+  } catch (e) {
+    // Connect/list/transport failure or an Ollama HTTP/JSON failure: return a
+    // trajectory carrying the error rather than throwing (mirrors perf/fa.ts).
+    traj.error = e instanceof Error ? e.message : String(e);
     return traj;
   } finally {
     await client.close().catch(() => {});
