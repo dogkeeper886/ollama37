@@ -46,6 +46,7 @@ task issues:
 
 ## Status
 
+- **Completed: 2026-06-15** — all tasks merged (#253, #254, #255, #256)
 - Created: 2026-06-15
 - Plan: #248
 - Issues: #249, #250, #251, #252
