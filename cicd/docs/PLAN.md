@@ -51,24 +51,21 @@ Based on analysis of test cases and existing documentation.
 |-------|------|---------|------------|
 | `ollama37-builder:latest` | 10-20GB | Toolchain (CUDA 11.4, GCC 10, Go) | ~90 min (cached) |
 | `ollama37:latest` | 15-25GB | Runtime with compiled binary | ~10 min |
-| `dogkeeper886/ollama37:latest` | ~18GB | LLM Judge (stable reference) | Pre-built |
-
 ### 4. Container Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────┐
 │                    Host Network                             │
 │                                                             │
-│  ┌─────────────────────┐    ┌─────────────────────┐        │
-│  │   ollama37          │    │   ollama37-judge    │        │
-│  │   (Test Subject)    │    │   (LLM Judge)       │        │
-│  │                     │    │                     │        │
-│  │  Port: 11434        │    │  Port: 11435        │        │
-│  │  GPU: Tesla K80     │    │  GPU: Tesla K80     │        │
-│  │                     │    │                     │        │
-│  │  Volume:            │    │  Volume:            │        │
-│  │  ollama-data        │    │  ollama-judge-data  │        │
-│  └─────────────────────┘    └─────────────────────┘        │
+│  ┌─────────────────────┐    Semantic judge: the keyless    │
+│  │   ollama37          │    ACP agent judge (a Claude       │
+│  │   (Test Subject)    │    agent over ACP) — no container, │
+│  │                     │    no port, no API key.            │
+│  │  Port: 11434        │                                    │
+│  │  GPU: Tesla K80     │                                    │
+│  │  Volume:            │                                    │
+│  │  ollama-data        │                                    │
+│  └─────────────────────┘                                    │
 │                                                             │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -78,14 +75,14 @@ Based on analysis of test cases and existing documentation.
 | Service | Container Port | Host Port | Purpose |
 |---------|---------------|-----------|---------|
 | ollama37 | 11434 | 11434 | Test subject API |
-| ollama37-judge | 11434 | 11435 | LLM Judge API |
+
+The agent judge needs no port — it runs as a stdio subprocess, keyless.
 
 ### 6. Volume Configuration
 
 | Volume | Mount Point | Purpose |
 |--------|-------------|---------|
 | `ollama-data` | `/root/.ollama` | Test subject models |
-| `ollama-judge-data` | `/root/.ollama` | Judge models |
 
 ---
 
@@ -158,8 +155,7 @@ cicd/
 │   ├── CICD.md                    # Design philosophy
 │   └── PLAN.md                    # This document
 ├── infrastructure/
-│   ├── docker-compose.judge.yml   # LLM Judge container
-│   └── README.md                  # Setup instructions
+│   └── README.md                  # Agent judge auth notes (no container)
 ├── specs/
 │   ├── build.md                   # Build test specifications
 │   ├── runtime.md                 # Runtime test specifications
@@ -174,7 +170,7 @@ cicd/
 │   │   ├── log-collector.ts       # Docker log capture
 │   │   ├── judge/
 │   │   │   ├── simple-judge.ts    # Exit code + patterns
-│   │   │   └── llm-judge.ts       # Semantic analysis
+│   │   │   └── agent-judge.ts     # Semantic analysis (keyless ACP agent)
 │   │   └── reporter/
 │   │       ├── json.ts            # JSON output
 │   │       └── console.ts         # Terminal output
@@ -209,7 +205,7 @@ cicd/
 - [x] Create YAML test case definitions (9 tests)
 - [x] Implement LogCollector (file-based markers)
 - [x] Implement Simple Judge (exit codes + patterns)
-- [x] Implement LLM Judge (semantic analysis)
+- [x] Implement the agent judge (keyless ACP semantic analysis)
 - [x] Implement Test Executor
 - [x] Implement JSON/Console reporters
 - [x] Implement CLI
@@ -242,25 +238,20 @@ The test subject and judge must use different ports:
 # Test Subject (docker-compose.test.yml)
 ports:
   - "11434:11434"
-
-# LLM Judge (docker-compose.judge.yml)
-ports:
-  - "11435:11434"
 ```
 
-This allows both to run simultaneously for real-time log evaluation.
+The semantic judge is the keyless ACP agent judge — a stdio subprocess, no port.
 
 ---
 
 ## GPU Sharing Considerations
 
-Both containers share the K80 GPUs. VRAM management:
+Only the test subject occupies the K80 GPUs; the agent judge runs no model on the GPU.
 
 | Container | Model | VRAM Usage |
 |-----------|-------|------------|
 | Test Subject | gemma3:4b | ~3GB |
-| LLM Judge | gemma3:4b | ~3GB |
-| **Total** | | ~6GB |
+| **Total** | | ~3GB |
 
 K80 has 2x12GB = 24GB total, so both can run concurrently.
 
