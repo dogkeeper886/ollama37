@@ -1,43 +1,22 @@
 # CI/CD Infrastructure
 
-Docker containers required on the GitHub Actions self-hosted runner.
+The test framework's semantic judge is the **keyless ACP agent judge** — it spawns a
+Claude agent over the Agent Client Protocol and needs **no separate container or model**.
 
-## LLM Judge (`docker-compose.judge.yml`)
+## Agent judge auth
 
-A stable Ollama instance for evaluating test results.
+Authentication is keyless — no `ANTHROPIC_API_KEY`:
 
-**Why it's needed:**
-- The test subject (the Ollama build being tested) runs on port 11434
-- The judge must be a separate, known-good instance to evaluate if tests pass
-- Uses the stable DockerHub image, not the build under test
+- **Local runs:** the agent uses the runner's `~/.claude` login.
+- **CI:** set `CLAUDE_CODE_OAUTH_TOKEN` as a secret in the `cicd-1` environment; the
+  workflows pass it to the judging steps.
 
-**Port mapping:**
-```
-11434 → Test subject (ollama37 build being tested)
-11435 → LLM Judge (stable reference)
-```
+Enable the judge per run with `JUDGE_MODE=dual` (the structured suites) or the perf
+subcommands' `--judge` flag. With it off (the default), tests run the deterministic
+SimpleJudge only.
 
-**Setup on runner:**
-```bash
-cd cicd/infrastructure
-docker compose -f docker-compose.judge.yml up -d
+## History
 
-# Pull base model (first time only)
-curl -X POST http://localhost:11435/api/pull -d '{"name": "gemma3:12b"}'
-
-# Create judge model with 8K context (first time only)
-docker cp Modelfile.judge ollama37-judge:/tmp/Modelfile.judge
-docker exec ollama37-judge ollama create gemma3:12b-judge -f /tmp/Modelfile.judge
-```
-
-**Verify:**
-```bash
-docker ps | grep ollama37-judge
-docker exec ollama37-judge ollama list  # should show gemma3:12b-judge
-```
-
-## Judge Model (`Modelfile.judge`)
-
-Custom model based on `gemma3:12b` with:
-- `num_ctx 8192` — doubled from default 4096 to handle test prompts without truncation
-- `temperature 0.1` — low temperature for consistent, deterministic judgments
+The old reference judge — a separate Ollama instance running a custom judge model, defined
+by `docker-compose.judge.yml` + `Modelfile.judge` — was removed in #237. The agent judge
+replaces it.

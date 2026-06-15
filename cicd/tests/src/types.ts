@@ -242,7 +242,7 @@ export interface RunConfig {
   /** Show what would run without executing */
   dryRun: boolean;
   /** Judge mode: 'simple' (deterministic only) or 'dual' (also run the agent judge).
-   *  Defaults to 'simple'; opt in via JUDGE_MODE=dual or the deprecated --llm flag. */
+   *  Defaults to 'simple'; opt in via the JUDGE_MODE=dual env var. */
   judgeMode: 'simple' | 'dual';
   /** Output directory for results */
   outputDir: string;

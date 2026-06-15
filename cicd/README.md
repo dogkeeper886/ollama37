@@ -19,8 +19,8 @@ npm run test -- --suite build
 npm run test -- --suite runtime
 npm run test -- --suite inference
 
-# Run with LLM judge enabled (default is simple judge only)
-npm run test -- --llm
+# Also run the agent judge (default is simple judge only)
+JUDGE_MODE=dual npm run test
 
 # List available tests
 npm run list
@@ -35,7 +35,7 @@ TypeScript-based test framework with dual-judge architecture.
 **Features:**
 - YAML-based test case definitions
 - Docker log collection with precise boundaries
-- Dual judge system (simple + LLM)
+- Dual judge system (simple + keyless agent judge)
 - JSON and console output formats
 - Pattern matching for test validation
 
@@ -49,28 +49,13 @@ TypeScript-based test framework with dual-judge architecture.
 
 Each test case lives in `cicd/tests/testcases/<suite>/TC-<SUITE>-NNN.yml`. The `intent:` block in every YAML — `user_story`, optional `acceptance`, optional `notes` — is the single design authority for that test.
 
-### LLM Judge (`infrastructure/docker-compose.judge.yml`)
+### Agent Judge
 
-A stable reference Ollama instance for semantic test evaluation.
-
-**Architecture:**
-```
-Port 11434 → ollama37 (test subject, local build)
-Port 11435 → ollama37-judge (stable reference, DockerHub)
-```
-
-**Usage:**
-```bash
-# Start judge container
-cd cicd/infrastructure
-docker compose -f docker-compose.judge.yml up -d
-
-# Pull model for judging (first time)
-curl -X POST http://localhost:11435/api/pull -d '{"name": "gemma3:4b"}'
-
-# Stop judge
-docker compose -f docker-compose.judge.yml down
-```
+The semantic judge is the **keyless ACP agent judge** — it spawns a Claude agent over the
+Agent Client Protocol; no container and no `ANTHROPIC_API_KEY`. Auth is the runner's
+`~/.claude` (local) or the `CLAUDE_CODE_OAUTH_TOKEN` secret (CI). Enable it with
+`JUDGE_MODE=dual`; a test passes only if both the simple judge and the agent judge pass.
+See [`infrastructure/README.md`](infrastructure/README.md).
 
 ## GitHub Actions Workflows
 
@@ -85,12 +70,12 @@ These workflows execute the YAML test suites via the TypeScript runner with the 
 | `test-pipeline.yml` | Full pipeline: build → runtime → inference → models |
 | `test-build.yml` | Build suite (image verification) |
 | `test-runtime.yml` | Runtime suite (container, GPU, health, metrics) |
-| `test-inference.yml` | Inference suite (pull + smoke); supports `--llm` opt-in judge |
-| `test-models.yml` | Models suite (all 13 per-model regressions); supports `--llm` opt-in judge |
+| `test-inference.yml` | Inference suite (pull + smoke); supports `JUDGE_MODE=dual` opt-in agent judge |
+| `test-models.yml` | Models suite (all 13 per-model regressions); supports `JUDGE_MODE=dual` opt-in agent judge |
 
 ### Perf / experiment workflows (the unified test-workflow pattern)
 
-These follow a shared contract: one extracted bash script per workflow at `cicd/scripts/test-<name>.sh`, sourcing shared helpers from `cicd/scripts/lib/`, emitting structured JSON to `/tmp/test-<name>-results.json`. Full bullet list in [`docs/CICD.md`](docs/CICD.md) → "Perf / experiment workflows".
+These run via the TypeScript runner's perf subcommands (`cli.ts bench-throughput`, `cli.ts test-fa`), which capture metrics and judge output coherence through the same agent judge, emitting a JSON report plus a markdown summary. Full bullet list in [`docs/CICD.md`](docs/CICD.md) → "Perf / experiment workflows".
 
 | Workflow | Script | Description |
 |----------|--------|-------------|
@@ -117,15 +102,10 @@ cicd/
 │   ├── CICD.md              # Design philosophy
 │   └── PLAN.md              # Infrastructure planning
 ├── infrastructure/
-│   ├── docker-compose.judge.yml
-│   └── README.md
-├── scripts/                 # Perf / experiment workflow scripts (unified pattern)
+│   └── README.md            # Agent judge auth notes (no container)
+├── scripts/                 # Perf / experiment helper scripts
 │   ├── format-results.sh
-│   └── lib/                 # Shared helpers (sourceable from any script)
-│       ├── response_capture.sh
-│       ├── simple_check.sh
-│       ├── judge_response.sh
-│       └── container_log_snip.sh
+│   └── test-mlx-smoke.sh
 ├── specs/
 │   ├── build.md             # Build test specifications
 │   ├── runtime.md           # Runtime test specifications

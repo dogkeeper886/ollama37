@@ -41,7 +41,7 @@ The framework implements a dual-judge architecture:
 - Pattern matching (expected patterns found, rejected patterns absent in output)
 - CUDA error detection (no CUBLAS/CUDA errors in logs)
 
-**LLM Judge**: Semantic analysis of test execution logs using a language model. The judge receives test criteria and logs, then evaluates whether the actual behavior matches expected behavior. This catches:
+**Agent Judge**: Semantic analysis via the keyless ACP agent judge — a Claude agent over the Agent Client Protocol (no API key, no container). It receives test criteria + logs and evaluates whether the actual behavior matches the expected behavior. This catches:
 - CUDA errors that don't cause exit failures
 - Subtle GPU fallback to CPU mode
 - Memory allocation warnings
@@ -168,7 +168,7 @@ The framework specifically watches for K80-related failure patterns:
 - `cudaMalloc failed` indicates VRAM exhaustion
 - `id=cpu library=cpu` means GPU detection failed entirely
 
-These patterns are checked by both the simple judge (via grep in test steps) and the LLM judge (via semantic log analysis).
+These patterns are checked by both the simple judge (via grep in test steps) and the agent judge (via semantic log analysis).
 
 ## Design Decisions
 
@@ -185,7 +185,7 @@ These patterns are checked by both the simple judge (via grep in test steps) and
 ## Limitations
 
 - Tests must run sequentially for accurate log collection
-- LLM judge requires a working Ollama instance (chicken-and-egg for broken builds)
+- The agent judge requires Claude auth on the runner (`~/.claude` or `CLAUDE_CODE_OAUTH_TOKEN`)
 - K80 VRAM limits restrict maximum model size to ~27B parameters
 - Build times are significant due to CUDA compilation
 
@@ -211,7 +211,7 @@ cicd/
 │   │   ├── log-collector.ts # Docker log capture
 │   │   ├── judge/
 │   │   │   ├── simple-judge.ts
-│   │   │   └── llm-judge.ts
+│   │   │   └── agent-judge.ts
 │   │   └── reporter/
 │   │       ├── json.ts
 │   │       └── console.ts
@@ -236,8 +236,8 @@ Runs all test suites in sequence: build → runtime → inference → models. Th
 **Individual TC-framework Workflows**:
 - `test-build.yml` — Build suite (3 tests)
 - `test-runtime.yml` — Runtime suite (4 tests)
-- `test-inference.yml` — Inference suite (2 tests); supports `--llm` opt-in judge
-- `test-models.yml` — Models suite (13 tests); supports `--llm` opt-in judge
+- `test-inference.yml` — Inference suite (2 tests); supports `JUDGE_MODE=dual` opt-in agent judge
+- `test-models.yml` — Models suite (13 tests); supports `JUDGE_MODE=dual` opt-in agent judge
 
 **Design Notes**:
 - Individual TC workflows do not manage container lifecycle
@@ -249,12 +249,12 @@ Runs all test suites in sequence: build → runtime → inference → models. Th
 
 The TC framework above handles **correctness validation** — "did this model load and produce coherent output?". Performance benchmarks and experiments live alongside under a separate, simpler contract:
 
-- One extracted bash script per workflow at `cicd/scripts/test-<name>.sh`
-- Shared helpers in `cicd/scripts/lib/` (response capture, simple check, LLM judge wrapper, container log snip)
-- Structured JSON output at `/tmp/test-<name>-results.json`
-- Workflow manages container lifecycle (stop production → run script → restart production → upload artifacts)
+- A TypeScript subcommand per workflow (`cli.ts bench-throughput`, `cli.ts test-fa`)
+- Metrics + coherence judging reuse the framework's perf helpers and the one agent judge
+- A JSON report (`--output`) plus a markdown summary on stdout
+- Workflow manages container lifecycle (stop production → run → restart production → upload artifacts)
 
-Current perf workflows: `test-throughput.yml` (tok/s benchmark) and `test-fa-k80.yml` (FA regression + benchmark). The LLM judge is invoked here too but only ever to answer "is this response meaningful for its prompt?" — never for static / log / exit-code checks (per CLAUDE.md → "LLM Judge Scope").
+Current perf workflows: `test-throughput.yml` (tok/s benchmark) and `test-fa-k80.yml` (FA regression + benchmark). The agent judge is invoked here too but only ever to answer "is this response meaningful for its prompt?" — never for static / log / exit-code checks.
 
 ## Quick Start
 
@@ -273,8 +273,8 @@ npm run test -- --suite build
 npm run test -- --suite runtime
 npm run test -- --suite inference
 
-# Run with LLM judge enabled (default is simple judge only)
-npm run test -- --llm
+# Also run the agent judge (default is simple judge only)
+JUDGE_MODE=dual npm run test
 
 # List available tests
 npm run list
