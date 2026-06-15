@@ -45,6 +45,9 @@ No producer ships without a review covering its output.
 - **Owns:** the authoring flow + the `docs/tests/` test-doc format (the contract). Self-contained
   — markdown + GitHub only.
 - **Hands off:** binding each case to an executable and running it is the **project's binding +
-  run layer**. Reusing vetted steps (a search index) is an **optional** project enhancement.
+  run layer** (`qw-bind` / `qw-review-bind` / `qw-drift`). In ollama37 that layer is **manual
+  today** — set the `Script:` link, keep the row-count invariant (a doc's Steps rows == the
+  bound YAML's `steps:`), run `npm --prefix cicd/tests test`. The automation (`audit-bind` /
+  `drift` / `port-yaml`) and a searchable step-store are **deferred ports** (STORY-006/Phase 2).
 
 The format a test doc must follow is `docs/tests/README.md`.
