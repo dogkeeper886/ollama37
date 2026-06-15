@@ -46,6 +46,8 @@ this is the cleanup that makes the rest of the synced tooling coherent.
 
 ## Status
 
+- **Completed: 2026-06-16** — all tasks merged (#268, #269, #270). The synced
+  qa-workflow/CI tooling now fits ollama37 or honestly states what isn't wired.
 - Created: 2026-06-16
 - Plan: #264
 - Issues: #265, #266, #267
