@@ -3,7 +3,7 @@ id: TS-02
 title: Runtime — container, GPU detection, health, metrics on K80
 namespace: ollama37
 story: STORY-005
-story_hash: 0598aff09de9ddd319d9c168f10a059e16496ea8a26a0d7dcfd1f39f12d9e0f3
+story_hash: 8dc577f7876df4962321b6b7aff6e5ccd37e0f12d1c2590b08062eae9342b523
 status: green
 ---
 

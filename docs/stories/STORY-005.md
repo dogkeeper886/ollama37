@@ -37,6 +37,7 @@ backfill: the foundational goal the existing K80 validation tests exist to verif
 
 ## Status
 
+- **Completed: 2026-06-16** — all tasks merged (#261, #262, #263); the four `docs/tests/TS-*.md` cover all 23 regression tests.
 - Created: 2026-06-15
 - Plan: #257
 - Issues: #258, #259, #260
