@@ -249,7 +249,7 @@ Runs all test suites in sequence: build → runtime → inference → models. Th
 
 The TC framework above handles **correctness validation** — "did this model load and produce coherent output?". Performance benchmarks and experiments live alongside under a separate, simpler contract:
 
-- A TypeScript subcommand per workflow (`cli.ts bench-throughput`, `cli.ts test-fa`, `cli.ts test-mcp`)
+- A TypeScript subcommand per workflow or experiment (`cli.ts bench-throughput`, `cli.ts test-fa`, `cli.ts test-mcp`)
 - Metrics + coherence judging reuse the framework's perf helpers and the one agent judge
 - A JSON report (`--output`) plus a markdown summary on stdout
 - Workflow manages container lifecycle (stop production → run → restart production → upload artifacts)
