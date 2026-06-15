@@ -15,9 +15,10 @@ import { TestExecutor } from './executor.js';
 import { SimpleJudge, AgentJudge } from './judge/index.js';
 import { JsonReporter, ConsoleReporter } from './reporter/index.js';
 import { RunConfig } from './types.js';
-import { CONFIG } from './config.js';
+import { CONFIG, pickEnv } from './config.js';
 import { runThroughput } from './perf/throughput.js';
 import { runFa } from './perf/fa.js';
+import { runMcpTest } from './mcp/test-mcp.js';
 
 const program = new Command();
 
@@ -279,6 +280,45 @@ program
       benchmark: options.benchmark,
       kvCacheType: options.kvCacheType,
       baselineCompare: options.baselineCompare,
+      output: options.output,
+    });
+    await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+    process.exit(code);
+  });
+
+/**
+ * test-mcp — can a model drive a REAL MCP server's tools end-to-end?
+ *
+ * Connects to a stdio MCP server (default testlink-mcp; override with
+ * --mcp-command/--mcp-args), lists + translates its tools, and runs the model
+ * through the tool loop. Reports a per-model verdict: structural check always,
+ * plus the keyless agent judge with --judge. Server-agnostic — no mock.
+ */
+program
+  .command('test-mcp')
+  .description("Test whether models can drive a real MCP server's tools")
+  .argument('<models...>', 'One or more model names to test')
+  .option('--prompt <text>', 'Prompt that should trigger a tool call', CONFIG.mcp.prompt)
+  .option('-c, --num-ctx <n>', 'Context window size', '4096')
+  .option('--judge', 'Also run the agent judge on the final answer (dual mode)', false)
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .option('--mcp-command <cmd>', 'Command to launch the stdio MCP server', CONFIG.mcp.command)
+  .option('--mcp-args <args>', 'Args for the MCP server (space-separated; no spaces within a single arg)', CONFIG.mcp.args.join(' '))
+  .option('--mcp-env <names>', 'Comma-separated env var names to forward to the server as creds (overrides MCP_ENV)', '')
+  .option('-o, --output <file>', 'Write the JSON report to this file')
+  .action(async (models: string[], options) => {
+    const code = await runMcpTest({
+      models,
+      prompt: options.prompt,
+      numCtx: Number(options.numCtx),
+      judge: options.judge,
+      host: options.host,
+      server: {
+        command: options.mcpCommand,
+        args: String(options.mcpArgs).split(' ').filter(Boolean),
+        cwd: CONFIG.mcp.cwd,
+        env: options.mcpEnv ? pickEnv(options.mcpEnv) : CONFIG.mcp.env,
+      },
       output: options.output,
     });
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));

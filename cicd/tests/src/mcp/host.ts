@@ -54,6 +54,8 @@ export interface McpTrajectory {
   supported: boolean;
   /** Tool names the MCP server exposed. */
   toolNames: string[];
+  /** Required arg names per tool, from each tool's inputSchema.required. */
+  toolRequired: Record<string, string[]>;
   toolCalls: ToolCallRecord[];
   toolResults: ToolResultRecord[];
   finalAnswer: string;
@@ -118,6 +120,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     model: opts.model,
     supported: true,
     toolNames: [],
+    toolRequired: {},
     toolCalls: [],
     toolResults: [],
     finalAnswer: '',
@@ -129,6 +132,10 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     await client.connect(transport);
     const listed = await client.listTools();
     traj.toolNames = listed.tools.map((t) => t.name);
+    for (const t of listed.tools) {
+      const req = (t.inputSchema as any)?.required;
+      traj.toolRequired[t.name] = Array.isArray(req) ? req : [];
+    }
     const tools = mcpToOllamaTools(listed.tools);
 
     for (let i = 0; i < maxIters; i++) {
