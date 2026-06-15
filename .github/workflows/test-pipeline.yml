@@ -4,18 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       judge_mode:
-        description: "Test judge mode for inference + models (simple = SimpleJudge only; dual = also run LLMJudge)"
+        description: "Test judge mode for inference + models (simple = SimpleJudge only; dual = also run the keyless agent judge)"
         required: false
         default: "simple"
         type: choice
         options:
           - "simple"
           - "dual"
-      judge_model:
-        description: "LLM model for judging (if dual mode)"
-        required: false
-        default: "gemma3:12b-judge"
-        type: string
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
         required: false
@@ -40,16 +35,17 @@ jobs:
     name: Inference Tests
     needs: runtime
     uses: ./.github/workflows/test-inference.yml
+    # Pass CLAUDE_CODE_OAUTH_TOKEN down to the keyless agent judge (dual mode).
+    secrets: inherit
     with:
       judge_mode: ${{ inputs.judge_mode }}
-      judge_model: ${{ inputs.judge_model }}
       debug: ${{ inputs.debug }}
 
   models:
     name: Models Tests
     needs: inference
     uses: ./.github/workflows/test-models.yml
+    secrets: inherit
     with:
       judge_mode: ${{ inputs.judge_mode }}
-      judge_model: ${{ inputs.judge_model }}
       debug: ${{ inputs.debug }}
