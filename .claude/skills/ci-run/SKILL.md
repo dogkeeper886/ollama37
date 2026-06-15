@@ -24,9 +24,8 @@ Run YAML test cases by executing commands and evaluating results against pattern
 ### Step 1: Load Test Cases
 
 Input can be:
-- A test ID (e.g., `TC-INT-001`) — run that specific test
-- A suite name (e.g., `integration`) — run all tests in that suite
-- A tag name (e.g., `auth`) — run all tests with that tag
+- A test ID (e.g., `TC-RUNTIME-001`) — run that specific test
+- A suite name (`build`, `runtime`, `inference`, or `models`) — run all tests in that suite
 - Empty — run all tests
 
 Read YAML test case files from `cicd/tests/testcases/`.
@@ -68,12 +67,12 @@ Output a summary table:
 ```
 Test Results
 ============
-TC-INT-001  Query resources            PASS  (1.2s)
-TC-INT-002  Create and verify          FAIL  (step 2: expected pattern "active" not found)
-TC-E2E-001  Full lifecycle             PASS  (5.8s)
+TC-RUNTIME-001   Container Startup     PASS  (12.4s)
+TC-RUNTIME-002   GPU Detection         FAIL  (step 4: expected "library=CUDA" not found)
+TC-INFERENCE-002 API Inference Test    PASS  (8.1s)
 
 Summary: 2/3 passed
-Duration: 8.2s
+Duration: 28.6s
 ```
 
 If any test failed, show:
@@ -87,12 +86,11 @@ Instead of agent-based execution, use the built-in CLI:
 
 ```bash
 cd cicd/tests
-npm test                        # All tests (simple judge — fast, no model)
-npm test -- --suite integration # Specific suite
-npm test -- --id TC-INT-001     # Specific test
-npm test -- --tag auth          # Tests tagged 'auth'
-npm test -- --dry-run           # Preview only
-JUDGE_MODE=dual npm test        # Opt in the agent judge (env, not a flag)
+npm test                         # All tests (simple judge — fast, no model)
+npm test -- --suite runtime      # Specific suite (build|runtime|inference|models)
+npm test -- --id TC-RUNTIME-001  # Specific test
+npm test -- --dry-run            # Preview only
+JUDGE_MODE=dual npm test         # Opt in the agent judge (env, not a flag)
 ```
 
 **Environment variables for CI:**

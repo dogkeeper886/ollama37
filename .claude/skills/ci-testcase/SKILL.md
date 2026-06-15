@@ -46,16 +46,23 @@ Create test case file(s) in `cicd/tests/testcases/<suite>/` using this format:
 ```yaml
 id: TC-[SUITE]-[NUMBER]
 name: Descriptive test name
-suite: build|integration|e2e
-goal: One-line test objective for agent judge
+suite: build|runtime|inference|models
 priority: 1-10 (lower = runs first)
 timeout: 30000
 dependencies: []
 tags: [feature-name]
 
+intent:                    # the design authority — why this test exists
+  user_story: |
+    What value this test delivers
+  acceptance:              # optional — observable criteria
+    - "..."
+  notes: |                 # optional — prerequisites, gotchas, acceptable warnings
+    ...
+
 steps:
   - name: Step description
-    command: <shell command or mcp-client.ts call>
+    command: <shell command>
     timeout: 5000              # Optional
     expectPatterns:
       - "regex pattern"
@@ -69,18 +76,14 @@ criteria: |
 ```
 
 **Suite guidelines:**
-- `build` — compilation, dependency checks, environment validation
-- `integration` — single tool/API calls, verify output format and correctness
-- `e2e` — multi-step workflows, verify end-to-end state
+- `build` — toolchain image, runtime image build, image sizes
+- `runtime` — container startup, GPU detection, health, `/api/metrics`
+- `inference` — model pull + GPU inference smoke
+- `models` — per-model regression on K80
 
-**ID format:** `TC-BUILD-XXX`, `TC-INT-XXX`, `TC-E2E-XXX`
+**ID format:** `TC-BUILD-XXX`, `TC-RUNTIME-XXX`, `TC-INFERENCE-XXX`, `TC-MODELS-XXX`
 
-**Tags:** Use feature names or capability areas (e.g., `auth`, `api`, `build`). Tags enable per-feature CI workflows via `--tag`.
-
-**For MCP tool testing:**
-```yaml
-command: npx tsx cicd/tests/src/mcp-client.ts <tool_name> '{"arg":"value"}'
-```
+**Tags:** the `tags:` field is optional metadata; the runner selects by `--suite`/`--id` (there is no `--tag` filter).
 
 **For shell command testing:**
 ```yaml
