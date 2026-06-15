@@ -15,9 +15,9 @@ name: K80 FA Validation
 #    Captures KV cache size, total VRAM (nvidia-smi), and tokens/sec per
 #    config. Use num_ctx + num_predict + model + prompt to vary the workload.
 #
-# Follows the unified test-workflow-pattern (#158): test logic lives in
-# cicd/scripts/test-fa-k80.sh; this YAML orchestrates container lifecycle
-# (stop production → run script → restart production → upload artifacts).
+# Test logic lives in the TS runner (cicd/tests: `cli.ts test-fa`); this YAML
+# orchestrates container lifecycle (stop production → run → restart production
+# → upload artifacts).
 
 on:
   workflow_dispatch:
@@ -91,12 +91,18 @@ jobs:
     runs-on: self-hosted
     environment: cicd-1
     timeout-minutes: 45
-    env:
-      JUDGE_HOST: http://localhost:11435
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install test runner dependencies
+        run: cd cicd/tests && npm ci
 
       - name: Stop existing ollama37 container
         run: |
@@ -127,12 +133,17 @@ jobs:
           BENCHMARK: ${{ inputs.benchmark }}
           KV_CACHE_TYPE: ${{ inputs.kv_cache_type }}
           BASELINE_COMPARE: ${{ inputs.baseline_compare }}
+          # Keyless agent judge auth. Falls back to the runner's ambient
+          # ~/.claude if the secret is unset.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
+          cd cicd/tests
           ARGS=(
             --model "$MODEL"
             --prompt "$PROMPT"
             --num-predict "$NUM_PREDICT"
             --num-ctx "$NUM_CTX"
+            --output /tmp/test-fa-k80-results.json
           )
           if [ "$BENCHMARK" = "true" ]; then
             ARGS+=(--benchmark)
@@ -144,23 +155,9 @@ jobs:
             ARGS+=(--baseline-compare)
           fi
 
-          bash cicd/scripts/test-fa-k80.sh "${ARGS[@]}"
-
-      - name: Publish summary tables
-        if: always()
-        run: |
-          if [ -f /tmp/fa-test/benchmark-table.md ]; then
-            {
-              echo "## K80 FA benchmark"
-              echo ""
-              echo "**Model**: ${{ inputs.model }} · **num_ctx**: ${{ inputs.num_ctx }} · **num_predict**: ${{ inputs.num_predict }}"
-              echo ""
-              cat /tmp/fa-test/benchmark-table.md
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f /tmp/fa-test/judge-table.md ]; then
-            cat /tmp/fa-test/judge-table.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          # The subcommand emits the benchmark + judge markdown tables on stdout
+          # (→ step summary) and writes the JSON report to --output.
+          npx tsx src/cli.ts test-fa "${ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Restart production ollama37
         if: always()
