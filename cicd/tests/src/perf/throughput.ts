@@ -99,6 +99,9 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
   const gpuBefore = await gpuInfo();
 
   const results: ModelResult[] = [];
+  // Full captured text per model — the report keeps only a preview, but the
+  // agent judge must see the complete response + thinking.
+  const fullText = new Map<string, { response: string; thinking: string }>();
 
   for (const model of models) {
     process.stderr.write(`--- ${model} ---\n`);
@@ -120,6 +123,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     const offload = await gpuOffload(host, model);
     const loaded = await gpuInfo();
     const simple = simpleContentCheck(cap.response, cap.thinking);
+    fullText.set(model, { response: cap.response, thinking: cap.thinking });
 
     results.push({
       model,
@@ -143,14 +147,14 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     if (eligible.length > 0) {
       const agentJudge = new AgentJudge();
       if (await agentJudge.isAvailable()) {
-        const captured = new Map(results.map((r) => [r.model, r]));
+        const byModel = new Map(results.map((r) => [r.model, r]));
         const trs = eligible.map((r) => {
-          const c = captured.get(r.model)!;
-          return toTestResult(r.model, c.response_preview, ''); // preview is enough for coherence
+          const ft = fullText.get(r.model) ?? { response: r.response_preview, thinking: '' };
+          return toTestResult(r.model, ft.response, ft.thinking);
         });
         const verdicts = await agentJudge.judgeResults(trs);
         for (const v of verdicts) {
-          const r = captured.get(v.testId);
+          const r = byModel.get(v.testId);
           if (r) {
             r.check.agent = v;
             r.check.overall_pass = r.check.simple.pass && v.pass;

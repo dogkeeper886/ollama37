@@ -249,6 +249,9 @@ program
       host: options.host,
       output: options.output,
     });
+    // Flush stdout before forcing exit — the markdown summary is piped to tee
+    // in CI, and process.exit() can truncate buffered pipe output.
+    await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
     process.exit(code);
   });
 
