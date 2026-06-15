@@ -66,12 +66,15 @@ function simpleMcpCheck(t: McpTrajectory): McpSimpleVerdict {
   return { pass: true, reason: `called ${t.toolCalls.map((c) => c.name).join(', ')} and produced a final answer` };
 }
 
-/** Build a synthetic TestResult so the AgentJudge can grade groundedness. */
+/** Build a synthetic TestResult so the AgentJudge can grade groundedness.
+ *  Lead with the prompt + final answer: the judge truncates step stdout, so a
+ *  large tool result must not push the answer out of the judge's window. Each
+ *  tool result is capped to keep enough grounding context within that window. */
 function toTestResult(t: McpTrajectory, prompt: string): TestResult {
   const toolLog = t.toolCalls
-    .map((c, i) => `TOOL CALL: ${c.name}(${JSON.stringify(c.arguments)})\nTOOL RESULT: ${t.toolResults[i]?.content ?? ''}`)
-    .join('\n\n');
-  const stdout = `PROMPT: ${prompt}\n\n${toolLog}\n\nFINAL ANSWER: ${t.finalAnswer}`;
+    .map((c, i) => `- ${c.name}(${JSON.stringify(c.arguments)}) -> ${(t.toolResults[i]?.content ?? '').slice(0, 500)}`)
+    .join('\n');
+  const stdout = `PROMPT: ${prompt}\n\nFINAL ANSWER: ${t.finalAnswer}\n\nTOOL CALLS AND RESULTS:\n${toolLog}`;
   return {
     testCase: {
       id: t.model,
