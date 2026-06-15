@@ -37,5 +37,7 @@ something real rather than a mock.
 ## Status
 
 - Created: 2026-06-14
-- Issues: #227, #232, #233, #234
+- Completed: 2026-06-15
+- Issues: #227, #232, #233, #234 (all closed)
 - Plan: #231
+- PRs: #235 (port + swap), #236 (validation)
