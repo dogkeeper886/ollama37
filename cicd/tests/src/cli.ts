@@ -15,7 +15,7 @@ import { TestExecutor } from './executor.js';
 import { SimpleJudge, AgentJudge } from './judge/index.js';
 import { JsonReporter, ConsoleReporter } from './reporter/index.js';
 import { RunConfig } from './types.js';
-import { CONFIG } from './config.js';
+import { CONFIG, pickEnv } from './config.js';
 import { runThroughput } from './perf/throughput.js';
 import { runFa } from './perf/fa.js';
 import { runMcpTest } from './mcp/test-mcp.js';
@@ -303,7 +303,8 @@ program
   .option('--judge', 'Also run the agent judge on the final answer (dual mode)', false)
   .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
   .option('--mcp-command <cmd>', 'Command to launch the stdio MCP server', CONFIG.mcp.command)
-  .option('--mcp-args <args>', 'Args for the MCP server (space-separated)', CONFIG.mcp.args.join(' '))
+  .option('--mcp-args <args>', 'Args for the MCP server (space-separated; no spaces within a single arg)', CONFIG.mcp.args.join(' '))
+  .option('--mcp-env <names>', 'Comma-separated env var names to forward to the server as creds (overrides MCP_ENV)', '')
   .option('-o, --output <file>', 'Write the JSON report to this file')
   .action(async (models: string[], options) => {
     const code = await runMcpTest({
@@ -316,7 +317,7 @@ program
         command: options.mcpCommand,
         args: String(options.mcpArgs).split(' ').filter(Boolean),
         cwd: CONFIG.mcp.cwd,
-        env: CONFIG.mcp.env,
+        env: options.mcpEnv ? pickEnv(options.mcpEnv) : CONFIG.mcp.env,
       },
       output: options.output,
     });

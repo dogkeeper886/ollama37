@@ -55,6 +55,11 @@ function simpleMcpCheck(t: McpTrajectory): McpSimpleVerdict {
   if (t.toolCalls.length === 0) return { pass: false, reason: 'model produced no tool call' };
   const unknown = t.toolCalls.find((c) => !t.toolNames.includes(c.name));
   if (unknown) return { pass: false, reason: `called unknown tool "${unknown.name}"` };
+  // Args vs schema: every required arg of the called tool must be present.
+  for (const c of t.toolCalls) {
+    const missing = (t.toolRequired[c.name] ?? []).filter((k) => !(k in c.arguments));
+    if (missing.length) return { pass: false, reason: `tool "${c.name}" called without required arg(s): ${missing.join(', ')}` };
+  }
   const errored = t.toolResults.find((r) => r.isError);
   if (errored) return { pass: false, reason: `tool "${errored.name}" call failed (bad args or server error)` };
   if (!t.finalAnswer.trim()) return { pass: false, reason: 'empty final answer' };
@@ -130,7 +135,9 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
     }
   }
 
-  const failed = results.filter((r) => !r.check.overall_pass).length;
+  // "No tool support" is an informational capability verdict, not a harness
+  // failure — only a supported model that failed its check drives a non-zero exit.
+  const failed = results.filter((r) => r.supported && !r.check.overall_pass).length;
 
   if (opts.output) {
     const full = results.map((r) => ({ ...r, trajectory: trajByModel.get(r.model) }));
@@ -160,7 +167,7 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   for (const r of results) {
     const verdict = r.check.overall_pass ? 'PASS' : r.supported ? 'FAIL' : 'NO TOOL SUPPORT';
     const calls = r.tool_calls.map((c) => c.name).join(', ') || '—';
-    const answer = r.final_answer_preview ? 'yes' : 'no';
+    const answer = r.final_answer_preview.trim() ? 'yes' : 'no';
     const reason = (r.check.agent?.reason ?? r.check.simple.reason ?? '').replace(/[\n|]/g, ' ').slice(0, 200);
     out.push(`| ${r.model} | ${verdict} | ${calls} | ${answer} | ${reason} |`);
   }

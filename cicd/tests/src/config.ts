@@ -7,7 +7,7 @@
 
 /** Forward only the named env vars (comma-separated) from the parent process —
  *  the spawned MCP server's creds come from the environment, never hardcoded. */
-function pickEnv(names: string): Record<string, string> {
+export function pickEnv(names: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const k of names.split(',').map((s) => s.trim()).filter(Boolean)) {
     const v = process.env[k];
