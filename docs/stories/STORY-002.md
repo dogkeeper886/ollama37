@@ -41,3 +41,4 @@ something real rather than a mock.
 - Issues: #227, #232, #233, #234 (all closed)
 - Plan: #231
 - PRs: #235 (port + swap), #236 (validation)
+- Follow-up: #237 (deferred CI migration — workflows + remove gemma3 judge)
