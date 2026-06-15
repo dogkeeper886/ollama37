@@ -94,7 +94,7 @@ These follow a shared contract: one extracted bash script per workflow at `cicd/
 
 | Workflow | Script | Description |
 |----------|--------|-------------|
-| `test-throughput.yml` | `cicd/scripts/benchmark-throughput.sh` | Per-model tok/s benchmark with simple + optional LLM-judge output check |
+| `test-throughput.yml` | `cli.ts bench-throughput` | Per-model tok/s benchmark with simple + optional agent-judge output check |
 | `test-fa-k80.yml` | `cicd/scripts/test-fa-k80.sh` | K80 flash-attention regression + benchmark (FA off/on × KV cache type) |
 
 ### Release workflow
@@ -120,7 +120,6 @@ cicd/
 │   ├── docker-compose.judge.yml
 │   └── README.md
 ├── scripts/                 # Perf / experiment workflow scripts (unified pattern)
-│   ├── benchmark-throughput.sh
 │   ├── test-fa-k80.sh
 │   ├── format-results.sh
 │   └── lib/                 # Shared helpers (sourceable from any script)
