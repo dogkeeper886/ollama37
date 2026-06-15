@@ -19,22 +19,16 @@ on:
         default: "2048"
         type: string
       judge_mode:
-        description: "Output validation mode (simple = response non-empty; dual = also run LLM judge for meaningfulness)"
+        description: "Output validation mode (simple = response non-empty; dual = also run the keyless agent judge for meaningfulness)"
         required: false
         default: "simple"
         type: choice
         options:
           - "simple"
           - "dual"
-      judge_model:
-        description: "LLM model used by the judge in dual mode"
-        required: false
-        default: "gemma3:12b-judge"
-        type: string
 
 env:
   OLLAMA_HOST: http://localhost:11434
-  JUDGE_HOST: http://localhost:11435
 
 jobs:
   throughput:
@@ -56,88 +50,36 @@ jobs:
             exit 1
           fi
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install test runner dependencies
+        run: cd cicd/tests && npm ci
+
       - name: Run throughput benchmark
         env:
           MODELS: ${{ inputs.models }}
+          # Keyless agent judge auth (dual mode). Falls back to the runner's
+          # ambient ~/.claude if the secret is unset.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          JUDGE_FLAGS=""
+          cd cicd/tests
+          JUDGE_FLAG=""
           if [ "${{ inputs.judge_mode || 'simple' }}" = "dual" ]; then
-            JUDGE_FLAGS="--llm --judge-model ${{ inputs.judge_model || 'gemma3:12b-judge' }} --judge-host ${JUDGE_HOST}"
+            JUDGE_FLAG="--judge"
           fi
-
           echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
-          echo "Judge flags: $JUDGE_FLAGS"
 
-          # shellcheck disable=SC2086 -- intentional word splitting on model names and judge flags
-          bash cicd/scripts/benchmark-throughput.sh \
+          # The subcommand prints a markdown summary to stdout (→ step summary)
+          # and writes the JSON report to --output. Exit code gates the job.
+          # shellcheck disable=SC2086 -- intentional word splitting on models + flag
+          npx tsx src/cli.ts bench-throughput $MODELS \
             --num-predict "${{ inputs.num_predict || '128' }}" \
             --context "${{ inputs.context_size || '2048' }}" \
             --output /tmp/throughput-results.json \
-            $JUDGE_FLAGS \
-            $MODELS
-
-      - name: Generate summary
-        if: always()
-        run: |
-          if [ ! -f /tmp/throughput-results.json ]; then
-            echo "No results to summarize" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          SHA=$(jq -r '.git_sha' /tmp/throughput-results.json)
-
-          # GPU info from before-benchmark snapshot
-          GPU=$(jq -r '.gpu.before' /tmp/throughput-results.json)
-          GPU_NAME=""
-          GPU_COUNT=0
-          GPU_TOTAL=""
-          if [ -n "$GPU" ] && [ "$GPU" != "null" ] && [ "$GPU" != "" ]; then
-            GPU_NAME=$(echo "$GPU" | head -1 | cut -d',' -f2 | sed 's/^ *//;s/ *$//')
-            GPU_TOTAL=$(echo "$GPU" | head -1 | cut -d',' -f4 | sed 's/^ *//;s/ *$//')
-            GPU_COUNT=$(echo "$GPU" | grep -c .)
-          fi
-
-          # Build per-GPU column headers
-          GPU_HDR=""
-          GPU_SEP=""
-          for i in $(seq 0 $((GPU_COUNT - 1))); do
-            GPU_HDR="${GPU_HDR} GPU${i} |"
-            GPU_SEP="${GPU_SEP} --- |"
-          done
-
-          JUDGE_MODE="${{ inputs.judge_mode || 'simple' }}"
-
-          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## Throughput Benchmark
-
-          **Commit:** \`${SHA}\` | **GPU:** ${GPU_COUNT}x ${GPU_NAME:-unknown} | **VRAM:** ${GPU_TOTAL:-?} MiB each | **Context:** ${{ inputs.context_size || '2048' }} | **Judge:** ${JUDGE_MODE}
-
-          | Model | Check | IN tok | OUT tok | Prompt tok/s | Gen tok/s | GPU% |${GPU_HDR}
-          |-------|-------|--------|---------|-------------|-----------|------|${GPU_SEP}
-          EOF
-
-          jq -r '.results[] |
-            (.gpu_info | split("\n") | map(select(length > 0)) |
-              if length > 0 then
-                map(split(",") | map(gsub("^\\s+|\\s+$";"")) | .[2])
-              else []
-              end
-            ) as $vram |
-            ((.check.overall_pass // false) | if . then "PASS" else "FAIL" end) as $check |
-            "| \(.model) | \($check) | \(.in_tokens) | \(.out_tokens) | \(.prompt_eval_tps) | \(.eval_tps) | \(.gpu_offload_pct)% |\($vram | map(" " + . + " |") | join("")) "' \
-            /tmp/throughput-results.json >> "$GITHUB_STEP_SUMMARY"
-
-          # Surface failure reasons if any model failed
-          if jq -e '.results | map(select(.check.overall_pass == false)) | length > 0' /tmp/throughput-results.json > /dev/null; then
-            {
-              echo ""
-              echo "### Failed output checks"
-              echo ""
-              jq -r '.results[] | select(.check.overall_pass == false) |
-                "- **\(.model)**: \(.check.llm.reason // .check.simple.reason // "no reason")"' \
-                /tmp/throughput-results.json
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+            $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Unload models
         if: always()

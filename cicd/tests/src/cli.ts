@@ -16,6 +16,7 @@ import { SimpleJudge, AgentJudge } from './judge/index.js';
 import { JsonReporter, ConsoleReporter } from './reporter/index.js';
 import { RunConfig } from './types.js';
 import { CONFIG } from './config.js';
+import { runThroughput } from './perf/throughput.js';
 
 const program = new Command();
 
@@ -221,6 +222,34 @@ program
 
     console.log('\n' + '='.repeat(60));
     console.log(`Total: ${testCases.length} test(s)`);
+  });
+
+/**
+ * bench-throughput — measure tok/s across models and validate the output.
+ *
+ * Ports benchmark-throughput.sh into the TS framework: perf metrics always,
+ * plus a coherence check (simple, and the keyless agent judge with --judge).
+ * Prints a markdown summary to stdout and writes a JSON report with --output.
+ */
+program
+  .command('bench-throughput')
+  .description('Benchmark model throughput (tok/s) + validate output')
+  .argument('<models...>', 'One or more model names to benchmark')
+  .option('-n, --num-predict <n>', 'Max tokens to generate', '128')
+  .option('-c, --context <n>', 'Context window size', '2048')
+  .option('--judge', 'Also run the agent judge on each response (dual mode)', false)
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .option('-o, --output <file>', 'Write the JSON report to this file')
+  .action(async (models: string[], options) => {
+    const code = await runThroughput({
+      models,
+      numPredict: Number(options.numPredict),
+      numCtx: Number(options.context),
+      judge: options.judge,
+      host: options.host,
+      output: options.output,
+    });
+    process.exit(code);
   });
 
 program.parse();
