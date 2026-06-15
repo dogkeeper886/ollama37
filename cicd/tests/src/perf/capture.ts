@@ -57,8 +57,11 @@ export async function captureResponse(
     options: { temperature: 0, seed: 42, num_predict: numPredict, num_ctx: numCtx },
   });
 
-  if (!raw || typeof raw !== 'object') {
-    throw new Error(`captureResponse: no response from ${model} at ${host}`);
+  // fetch does not throw on HTTP 4xx; ollama returns {error: "..."} for an
+  // unknown/unloadable model. Treat that as a failure (parity with curl -sf)
+  // rather than reporting a misleading all-zeros record.
+  if (!raw || typeof raw !== 'object' || raw.error) {
+    throw new Error(`captureResponse: ${model} at ${host} — ${raw?.error ?? 'no/invalid response'}`);
   }
 
   const result: CaptureResult = {
