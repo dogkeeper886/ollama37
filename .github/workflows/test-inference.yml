@@ -8,18 +8,13 @@ on:
         required: false
         type: string
       judge_mode:
-        description: "Test judge mode (simple = SimpleJudge only; dual = also run LLMJudge)"
+        description: "Test judge mode (simple = SimpleJudge only; dual = also run the keyless agent judge)"
         required: false
         default: "simple"
         type: choice
         options:
           - "simple"
           - "dual"
-      judge_model:
-        description: "LLM model for judging (if dual mode)"
-        required: false
-        default: "gemma3:12b-judge"
-        type: string
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
         required: false
@@ -31,11 +26,6 @@ on:
         description: "Test judge mode (simple, dual)"
         required: false
         default: "simple"
-        type: string
-      judge_model:
-        description: "LLM model for judging"
-        required: false
-        default: "gemma3:12b-judge"
         type: string
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
@@ -75,20 +65,14 @@ jobs:
 
       - name: Run inference tests
         id: inference-tests
+        env:
+          # dual mode runs the keyless agent judge; the runner reads JUDGE_MODE.
+          JUDGE_MODE: ${{ inputs.judge_mode || 'simple' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           cd cicd/tests
+          echo "Judge mode: ${JUDGE_MODE}"
 
-          # Build judge flags based on input. Default is simple (SimpleJudge
-          # only); dual adds the LLMJudge via --llm.
-          JUDGE_FLAGS=""
-          if [ "${{ inputs.judge_mode }}" = "dual" ]; then
-            JUDGE_FLAGS="--llm --judge-model ${{ inputs.judge_model || 'gemma3:12b-judge' }}"
-          fi
-
-          echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
-          echo "Judge flags: $JUDGE_FLAGS"
-
-          # Run tests with JSON output
           # Build test ID flag if provided
           ID_FLAG=""
           if [ -n "${{ inputs.test_id }}" ]; then
@@ -96,7 +80,7 @@ jobs:
             echo "Running single test: ${{ inputs.test_id }}"
           fi
 
-          npx tsx src/cli.ts run --suite inference $ID_FLAG $JUDGE_FLAGS --format json > /tmp/inference-results.json || true
+          npx tsx src/cli.ts run --suite inference $ID_FLAG --format json > /tmp/inference-results.json || true
 
           echo "--- JSON Results ---"
           cat /tmp/inference-results.json

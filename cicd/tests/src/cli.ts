@@ -35,9 +35,6 @@ program
   .option('-s, --suite <suite>', 'Run only tests from this suite (build, runtime, inference, models)')
   .option('-i, --id <id>', 'Run only the test with this ID')
   .option('--dry-run', 'Show what would run without executing', false)
-  .option('--llm', 'Deprecated alias for JUDGE_MODE=dual (runs the agent judge)', false)
-  .option('--judge-url <url>', 'Deprecated, ignored (the agent judge needs no Ollama URL)')
-  .option('--judge-model <model>', 'Deprecated, ignored (model selection lives in the ACP agent)')
   .option('-o, --output-dir <dir>', 'Output directory for results')
   .option('-f, --format <format>', 'Output format (console, json)', 'console')
   .action(async (options) => {
@@ -59,10 +56,8 @@ program
       mkdirSync(outputDir, { recursive: true });
     }
 
-    // Agent judge runs in 'dual' mode — enabled via JUDGE_MODE=dual or the
-    // deprecated --llm alias.
-    const judgeMode: RunConfig['judgeMode'] =
-      options.llm || CONFIG.judge.mode === 'dual' ? 'dual' : 'simple';
+    // Agent judge runs in 'dual' mode — enabled via the JUDGE_MODE env var.
+    const judgeMode: RunConfig['judgeMode'] = CONFIG.judge.mode === 'dual' ? 'dual' : 'simple';
 
     const config: RunConfig = {
       suite: options.suite as RunConfig['suite'],
