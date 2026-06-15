@@ -159,6 +159,10 @@ async function runInference(spec: ConfigSpec, opts: FaOptions): Promise<ConfigMe
       thinking: raw.thinking ?? '',
       ok: true,
     };
+  } catch (e) {
+    // A crash mid-generation (FA bug, OOM, CUDA error → dropped connection) is
+    // a FAIL for this config, not a reason to abort the whole sweep.
+    return fail(`inference error: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     await docker(['stop', '--time', '30', cname]).catch(() => {});
     await waitVramRelease(1024, 30);
