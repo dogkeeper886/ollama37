@@ -15,7 +15,7 @@ so coverage gaps are caught cheaply.
 Fits in the qa-workflow:
 
     qw-plan → qw-review-plan → qw-cases → qw-review-cases → qw-bind → qw-run
-    (qw-run = `make up` + the cicd runner — a phase, not a slash command)
+    (qw-run = `npm --prefix cicd/tests test` — the cicd runner; a phase, not a slash command)
 
 ---
 

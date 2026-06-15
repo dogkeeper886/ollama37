@@ -15,7 +15,7 @@ that together cover the need, so `qw-cases` has a scoped plan to write against.
 Fits in the qa-workflow:
 
     qw-plan → qw-review-plan → qw-cases → qw-review-cases → qw-bind → qw-run
-    (qw-run = `make up` + the cicd runner — a phase, not a slash command)
+    (qw-run = `npm --prefix cicd/tests test` — the cicd runner; a phase, not a slash command)
 
 ---
 
@@ -27,12 +27,11 @@ Fits in the qa-workflow:
         │   - If a STORY-XXX: read docs/stories/STORY-XXX.md (the need + "Success Looks Like").
         │   - If an on-request target: restate what behaviour is to be verified.
         │
-        ├─► Step 2: Check what already exists (dogfood the store)
-        │   - Search the step-store for steps/cases already covering this:
-        │       make query Q="<the behaviour>"
-        │     so the plan reuses vetted coverage instead of duplicating it.
-        │   - List the docs/tests/ scenarios already linked to this story:
+        ├─► Step 2: Check what already exists
+        │   - List the docs/tests/ scenarios already linked to this story and skim
+        │     them, so the plan reuses existing coverage instead of duplicating it:
         │       grep -l 'story: STORY-XXX' docs/tests/
+        │     (A searchable step-store is a deferred enhancement — STORY-006/Phase 2.)
         │
         ├─► Step 3: Propose scenarios
         │   - Break the need into scenarios (TS-to-be), each:

@@ -16,7 +16,7 @@ link still holds.
 Fits in the qa-workflow:
 
     qw-plan → qw-cases → qw-bind → qw-review-bind → qw-run → dw-merge
-    (qw-run = `npm test` — the cicd runner; a phase, not a slash command)
+    (qw-run = `npm --prefix cicd/tests test` — the cicd runner; a phase, not a slash command)
 
 ---
 
@@ -24,10 +24,10 @@ Fits in the qa-workflow:
 
 ### A. Forward — bind an existing test doc
 
-    /qw-bind docs/tests/TS-01-stack-lifecycle.md
+    /qw-bind docs/tests/TS-02-runtime.md
         │
         ├─► For each `### TC-NN:` case, set a `Script:` line to the cicd YAML that
-        │   runs it (e.g. cicd/tests/testcases/integration/TC-INTEGRATION-001.yml).
+        │   runs it (e.g. cicd/tests/testcases/runtime/TC-RUNTIME-001.yml).
         ├─► Keep the case's Steps table aligned 1:1 with the YAML's steps — the
         │   audit treats a step-count mismatch as `unbound`.
         └─► Run `/qw-review-bind` to confirm the binding.
@@ -36,19 +36,21 @@ Fits in the qa-workflow:
 
     /qw-bind cicd/tests/testcases/build/TC-BUILD-001.yml
         │
-        ├─► Generate a scaffold from the YAML:
-        │     npm --prefix cicd/tests run port-yaml -- <yaml> > docs/tests/TS-NN-<slug>.md
-        │   The scaffold carries the steps and the `Script:` binding; objective,
-        │   expected results, story link, and namespace are TODOs.
-        ├─► Fill the TODOs: `namespace`, `story` (+ `story_hash`), each TC's
-        │   objective and Expected Result column. (The format contract is docs/tests/README.md.)
-        └─► Run `/qw-review-bind` to confirm the binding, then `/qw-cases`-style review.
+        ├─► Scaffold a TS doc from the YAML by hand: one `### TC-NN` per case, a
+        │   `Script:` to the YAML, and a Steps row per YAML `step` (row count == the
+        │   YAML's `steps:`). The STORY-005 TS docs are worked examples; the format
+        │   contract is docs/tests/README.md.
+        ├─► Fill the rest: `namespace`, `story` (+ `story_hash`), each TC's objective
+        │   and Expected Result column.
+        └─► Run `/qw-review-bind` to confirm the binding.
+        (An automated `port-yaml` scaffolder is a deferred port — STORY-006/Phase 2.)
 
 ---
 
 ## API Notes
 
-- `port-yaml` is a scaffolder, not a translator — a human/agent fills meaning.
+- Scaffolding is by hand today; an automated `port-yaml` is a deferred port
+  (STORY-006/Phase 2). Either way it carries structure, not meaning — a human/agent fills that.
 - `story_hash` = `sha256sum docs/stories/STORY-XXX.md` (the drift anchor).
 - Producer paired with `/qw-review-bind` (the audit).
 ```

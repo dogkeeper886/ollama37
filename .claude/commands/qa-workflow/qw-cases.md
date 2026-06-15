@@ -1,8 +1,8 @@
 # Write the Test Docs
 
 ```
-Turn a reviewed test plan into readable test docs in docs/tests/ — reusing vetted
-steps from the store instead of re-inventing them.
+Turn a reviewed test plan into readable test docs in docs/tests/ — reusing existing
+steps instead of re-inventing them.
 
 Target: the scenarios approved by /qw-review-plan for a STORY-XXX.
 
@@ -16,7 +16,7 @@ Action / Expected Result rows.
 Fits in the qa-workflow:
 
     qw-plan → qw-review-plan → qw-cases → qw-review-cases → qw-bind → qw-run
-    (qw-run = `make up` + the cicd runner — a phase, not a slash command)
+    (qw-run = `npm --prefix cicd/tests test` — the cicd runner; a phase, not a slash command)
 
 ---
 
@@ -30,15 +30,13 @@ Fits in the qa-workflow:
         │       issue, status: green
         │   - (Format and field meanings: docs/tests/README.md.)
         │
-        ├─► Step 2: Write each case (TC) — reuse before re-inventing (dogfood the store)
-        │   - For each step you are about to write, ask the store first:
-        │       make query Q="<the action you mean>"
-        │     If a vetted step comes back close, phrase yours to match it — same
-        │     meaning, same good expected result — instead of coining a new one.
+        ├─► Step 2: Write each case (TC) — reuse before re-inventing
+        │   - Before writing a step, skim the existing docs/tests/ for one that
+        │     already means the same thing; phrase yours to match it — same meaning,
+        │     same good expected result — instead of coining a new one.
         │   - Fill the Steps table: each row one Action + its Expected Result.
         │
-        ├─► Step 3: Index + bind
-        │   - Load the new docs into the store:  npm --prefix step-store run load-tests
+        ├─► Step 3: Bind
         │   - Bind each case to its executable:  /qw-bind  (then /qw-review-bind)
         │
         └─► Step 4: Hand off
@@ -48,8 +46,9 @@ Fits in the qa-workflow:
 
 ## API Notes
 
-- Reuse is the point of the store: `search_step` (via `make query`) makes a vetted
-  step findable so coverage converges instead of duplicating.
+- Reuse keeps coverage converging instead of duplicating: skim the existing
+  docs/tests/ for a matching step before coining a new one. (A searchable step
+  store is a deferred enhancement — STORY-006/Phase 2.)
 - `story_hash`: `sha256sum docs/stories/STORY-XXX.md`.
 - Producer paired with `/qw-review-cases`.
 ```
