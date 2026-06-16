@@ -13,7 +13,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { runMcpHost, type McpServerConfig, type McpTrajectory } from './host.js';
-import { AgentJudge } from '../judge/index.js';
+import { AgentJudge, VerifierJudge } from '../judge/index.js';
 import { TestResult, Judgment } from '../types.js';
 
 const JUDGE_CRITERIA =
@@ -28,6 +28,14 @@ export interface McpTestOptions {
   host: string;
   numCtx: number;
   judge: boolean;
+  /** Opt in the live verifier: the judge calls the server's read-only tools itself
+   *  to check the answer against live ground truth (supersedes --judge). */
+  verifyLive?: boolean;
+  /** Exact tool names the verifier may call. Fail-closed: if empty/unset, the verifier
+   *  verifies nothing — pass an explicit allow-list (no prefix heuristic across servers). */
+  verifyAllow?: string[];
+  /** mcp__<name>__<tool> label the verifier registers the server under. */
+  verifyServerName?: string;
   output?: string;
 }
 
@@ -116,25 +124,47 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
     process.stderr.write(`  supported=${traj.supported} calls=${traj.toolCalls.length} simple=${simple.pass}\n`);
   }
 
-  // Agent judge (dual mode): one batch over a single reused session, only for
-  // models that passed the structural check (no point grading a non-call).
-  if (opts.judge) {
-    const eligible = results.filter((r) => r.check.simple.pass);
-    if (eligible.length > 0) {
-      const agentJudge = new AgentJudge();
-      if (await agentJudge.isAvailable()) {
-        const byModel = new Map(results.map((r) => [r.model, r]));
-        const verdicts = await agentJudge.judgeResults(eligible.map((r) => toTestResult(trajByModel.get(r.model)!, opts.prompt)));
-        for (const v of verdicts) {
-          const r = byModel.get(v.testId);
-          if (r) {
-            r.check.agent = v;
-            r.check.overall_pass = r.check.simple.pass && v.pass;
-          }
-        }
-      } else {
-        process.stderr.write('[WARN] agent judge not available — simple check only\n');
+  // Agent-level check, only for models that passed the structural check. Two modes:
+  //  --verify-live : the verifier calls the server's read-only tools itself to check
+  //                  the answer against LIVE truth (the stronger check; supersedes --judge).
+  //  --judge       : the sandboxed agent judge grades groundedness over the captured trajectory.
+  const eligible = results.filter((r) => r.check.simple.pass);
+  const byModel = new Map(results.map((r) => [r.model, r]));
+  const applyVerdicts = (verdicts: Judgment[]) => {
+    for (const v of verdicts) {
+      const r = byModel.get(v.testId);
+      if (r) {
+        r.check.agent = v;
+        r.check.overall_pass = r.check.simple.pass && v.pass;
       }
+    }
+  };
+
+  if (eligible.length > 0 && opts.verifyLive) {
+    // Full server tool list (same server for every model) → the verifier's allow/deny.
+    // Fail-closed: only an explicit --verify-allow opens tools. No prefix heuristic —
+    // it can't tell a read-only `get_x` from a destructive `get_and_purge` on an
+    // arbitrary server, and the verifier's contract is exact-name allow-listing.
+    const allToolNames = Array.from(new Set(eligible.flatMap((r) => r.tool_names)));
+    const allowTools = opts.verifyAllow ?? [];
+    const verifier = new VerifierJudge(
+      { server: opts.server, serverName: opts.verifyServerName ?? 'mcp', toolNames: allToolNames, allowTools },
+      '',
+      opts.server.cwd ?? process.cwd(),
+    );
+    if (await verifier.isAvailable()) {
+      applyVerdicts(
+        await verifier.verify(eligible.map((r) => ({ testId: r.model, prompt: opts.prompt, answer: trajByModel.get(r.model)!.finalAnswer }))),
+      );
+    } else {
+      process.stderr.write('[WARN] verifier agent not available — simple check only\n');
+    }
+  } else if (eligible.length > 0 && opts.judge) {
+    const agentJudge = new AgentJudge();
+    if (await agentJudge.isAvailable()) {
+      applyVerdicts(await agentJudge.judgeResults(eligible.map((r) => toTestResult(trajByModel.get(r.model)!, opts.prompt))));
+    } else {
+      process.stderr.write('[WARN] agent judge not available — simple check only\n');
     }
   }
 
@@ -147,7 +177,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
     writeFileSync(
       opts.output,
       JSON.stringify(
-        { timestamp: new Date().toISOString(), server: { command: opts.server.command, args: opts.server.args }, prompt: opts.prompt, judge: opts.judge ? 'dual' : 'simple', results: full },
+        { timestamp: new Date().toISOString(), server: { command: opts.server.command, args: opts.server.args }, prompt: opts.prompt, judge: opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple', results: full },
         null,
         2
       )
@@ -163,7 +193,7 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   const out: string[] = [];
   out.push('## MCP tool-call test');
   out.push('');
-  out.push(`**Server:** \`${opts.server.command} ${opts.server.args.join(' ')}\` · **Prompt:** ${opts.prompt} · **Judge:** ${opts.judge ? 'dual' : 'simple'}`);
+  out.push(`**Server:** \`${opts.server.command} ${opts.server.args.join(' ')}\` · **Prompt:** ${opts.prompt} · **Judge:** ${opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple'}`);
   out.push('');
   out.push('| Model | Verdict | Tool calls | Answer | Reason |');
   out.push('|---|---|---|---|---|');
