@@ -4,14 +4,26 @@
  * Unlike the sandboxed AgentJudge (which opens its session with `mcpServers: []` and
  * rejects every tool call), the verifier spawns the same ACP agent WITH the test's MCP
  * server attached and lets it call the tools itself to check the answer. Tool access is
- * restricted to a per-case allow-list (read-only by default) enforced two ways:
+ * restricted to a per-case **exact allow-list** of tool names (read-only by intent),
+ * enforced two ways:
  *
- *   1. Claude SDK `disallowedTools` — every server tool outside the allow-list is denied
- *      by the agent's own SDK, before execution (hard).
- *   2. our `requestPermission` backstop — allow only allow-listed tools (matched on the
- *      real tool name in `toolCall._meta.claudeCode.toolName`), else reject.
+ *   1. `requestPermission` backstop — the gate. For an MCP tool the permission request's
+ *      `toolCall.title` IS the `mcp__<server>__<tool>` id (the bundled claude-agent-acp
+ *      sets it there; `_meta.claudeCode.toolName` is NOT populated on permission requests).
+ *      We strip it to the bare name and ALLOW only if it's in the exact allow-list, else
+ *      REJECT. Built-in tools (Bash/Edit/Write/…) carry a prose title that is never in the
+ *      allow-list, so they are rejected too; an empty/unknown name also rejects (fail-closed).
+ *   2. Claude SDK `disallowedTools` (via newSession `_meta.claudeCode.options`) — defence in
+ *      depth: every server tool NOT in the allow-list is also denied by the agent's own SDK
+ *      before it reaches permission.
  *
- * This file does NOT touch `agent-judge.ts` — the generic judge stays sandboxed.
+ * Read-only is therefore by *exact allow-list*, never a name prefix (a prefix would let a
+ * `get_and_purge` through). This file does NOT touch `agent-judge.ts` — the generic judge
+ * stays sandboxed.
+ *
+ * NOTE: that the SDK actually hard-denies, and that the agent does call the tools, is proven
+ * live by the forced-write-refusal test in the validation task (#281) before this is trusted
+ * against a real backend.
  */
 
 import { spawn, type ChildProcess, type StdioOptions } from 'node:child_process';
@@ -41,16 +53,14 @@ export interface VerifyTarget {
 export interface VerifierConfig {
   /** The stdio MCP server the host used (same command/args/env). */
   server: McpServerConfig;
-  /** Rule prefix: tools are addressed as `mcp__<serverName>__<tool>`. */
+  /** Rule prefix: the server's tools are `mcp__<serverName>__<tool>`. */
   serverName: string;
-  /** Every tool the server exposes — used to derive the deny-list (deny-by-default). */
+  /** Every tool the server exposes — used to derive the SDK deny-list (deny-by-default). */
   toolNames: string[];
-  /** Allow-list predicate over the BARE tool name. Default: read-only. */
-  isAllowedTool?: (bareToolName: string) => boolean;
+  /** EXACT bare tool names the verifier may call (read-only by intent). Anything not here is
+   *  rejected. Empty ⇒ the verifier can call nothing (fail-closed). */
+  allowTools: string[];
 }
-
-/** Default per-case policy: read-only — `list_`, `read_`, `get_` prefixes. */
-export const READ_ONLY = (name: string): boolean => (/^(list_|read_|get_)/).test(name);
 
 export class VerifierJudge {
   private agentCmd: string;
@@ -61,17 +71,17 @@ export class VerifierJudge {
   private turnText = '';
 
   private readonly cfg: VerifierConfig;
-  private readonly allow: (bare: string) => boolean;
-  /** mcp__<server>__<tool> rules for every NON-allowed tool. */
+  private readonly allow: Set<string>;
+  /** `mcp__<server>__<tool>` rules for every tool NOT in the allow-list (SDK hard-deny). */
   private readonly disallowedTools: string[];
 
   constructor(cfg: VerifierConfig, agentCmd: string = CONFIG.judge.agent, cwd: string = process.cwd()) {
     this.cfg = cfg;
     this.agentCmd = agentCmd;
     this.cwd = cwd;
-    this.allow = cfg.isAllowedTool ?? READ_ONLY;
+    this.allow = new Set(cfg.allowTools);
     this.disallowedTools = cfg.toolNames
-      .filter((t) => !this.allow(t))
+      .filter((t) => !this.allow.has(t))
       .map((t) => `mcp__${cfg.serverName}__${t}`);
     process.once('exit', () => this.kill());
   }
@@ -111,6 +121,23 @@ export class VerifierJudge {
     return spawn(process.execPath, [entry], { cwd: this.cwd, stdio, env });
   }
 
+  /** The read-only gate: allow only exact-allow-listed tools, else reject (fail-closed). */
+  private decide(params: RequestPermissionRequest): RequestPermissionResponse {
+    const tc = params.toolCall as { _meta?: { claudeCode?: { toolName?: string } }; title?: string };
+    // For MCP tools `title` is the `mcp__server__tool` id; `_meta.claudeCode.toolName` is not
+    // set on permission requests, so prefer title and treat both as best-effort.
+    const raw = tc?.title ?? tc?._meta?.claudeCode?.toolName ?? '';
+    const allowed = this.allow.has(this.bareName(String(raw)));
+    const want = allowed ? 'allow' : 'reject';
+    const opt =
+      params.options.find((o) => o.kind?.startsWith(want)) ??
+      params.options.find((o) => o.kind?.startsWith('reject'));
+    if (!allowed) process.stderr.write(`  [verify] DENIED tool permission: "${String(raw).slice(0, 80)}"\n`);
+    return opt
+      ? { outcome: { outcome: 'selected', optionId: opt.optionId } }
+      : { outcome: { outcome: 'cancelled' } };
+  }
+
   private async ensureStarted(): Promise<void> {
     if (this.sessionId) return;
 
@@ -129,22 +156,8 @@ export class VerifierJudge {
           this.turnText += u.content.text;
         }
       },
-      // The backstop: allow only allow-listed tools, else reject. The real tool
-      // name is on toolCall._meta.claudeCode.toolName; disallowedTools has already
-      // hard-denied writes at the SDK layer, so this only ever sees allowed tools —
-      // but we re-check by name and default to reject if anything is unexpected.
-      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
-        const meta = (params.toolCall as { _meta?: { claudeCode?: { toolName?: string } }; title?: string });
-        const rawName = meta?._meta?.claudeCode?.toolName ?? meta?.title ?? '';
-        const allowed = this.allow(this.bareName(String(rawName)));
-        const want = allowed ? 'allow' : 'reject';
-        const opt =
-          params.options.find((o) => o.kind?.startsWith(want)) ??
-          params.options.find((o) => o.kind?.startsWith('reject'));
-        return opt
-          ? { outcome: { outcome: 'selected', optionId: opt.optionId } }
-          : { outcome: { outcome: 'cancelled' } };
-      },
+      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> =>
+        this.decide(params),
       readTextFile: async () => { throw new Error('filesystem access disabled for the verifier'); },
       writeTextFile: async () => { throw new Error('filesystem access disabled for the verifier'); },
     };
@@ -161,8 +174,8 @@ export class VerifierJudge {
       const session = await this.withTimeout(
         this.conn.newSession({
           cwd: this.cwd,
-          // Populate the server (the generic judge keeps this empty) and hard-deny
-          // every non-allowed tool via the agent's own SDK config.
+          // Populate the server (the generic judge keeps this empty); hard-deny every
+          // non-allow-listed server tool via the agent's own SDK config (defence in depth).
           mcpServers: [{ name: this.cfg.serverName, command: this.cfg.server.command, args: this.cfg.server.args, env }],
           _meta: { claudeCode: { options: { disallowedTools: this.disallowedTools } } },
         }),
@@ -182,28 +195,52 @@ export class VerifierJudge {
     this.sessionId = undefined;
   }
 
-  /** Probe: spawn, open a session (with the server attached), one throwaway turn. */
+  /** Probe agent reachability — without the MCP server, so it tests the agent, not the backend. */
   async isAvailable(): Promise<boolean> {
+    let child: ChildProcess | undefined;
     try {
-      await this.ensureStarted();
-      const reply = await this.promptAgent('Reply with exactly: ok');
-      if (!reply.trim()) throw new Error('verifier agent produced no output on probe turn');
+      child = this.spawnAgent();
+      const stream = ndJsonStream(
+        Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
+        Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>,
+      );
+      let text = '';
+      const client: Client = {
+        sessionUpdate: async (p: SessionNotification) => {
+          const u = p.update;
+          if (u.sessionUpdate === 'agent_message_chunk' && u.content.type === 'text') text += u.content.text;
+        },
+        requestPermission: async () => ({ outcome: { outcome: 'cancelled' } } as RequestPermissionResponse),
+        readTextFile: async () => { throw new Error('disabled'); },
+        writeTextFile: async () => { throw new Error('disabled'); },
+      };
+      const conn = new ClientSideConnection(() => client, stream);
+      await this.withTimeout(conn.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+        clientInfo: { name: `${CONFIG.projectName}-verifier`, version: '1.0.0' },
+      }), 'verifier probe initialize');
+      const s = await this.withTimeout(conn.newSession({ cwd: this.cwd, mcpServers: [] }), 'verifier probe session');
+      await this.withTimeout(conn.prompt({ sessionId: s.sessionId, prompt: [{ type: 'text', text: 'Reply with exactly: ok' }] }), 'verifier probe turn');
+      if (!text.trim()) throw new Error('verifier agent produced no output on probe turn');
       return true;
     } catch (error) {
       process.stderr.write(`  [verify] Agent not reachable: ${error}\n`);
-      this.kill();
       return false;
+    } finally {
+      try { child?.kill('SIGKILL'); } catch { /* gone */ }
     }
   }
 
   private buildPrompt(t: VerifyTarget): string {
     return JSON.stringify({
-      role: `You independently verify another model's answer for ${CONFIG.projectName}. You have READ-ONLY access to the ${this.cfg.serverName} MCP tools.`,
-      task: 'Call the tools yourself to find the real data, then judge whether the model\'s answer is correct and grounded in that real data. Do NOT trust the answer — check it.',
+      role: `You independently verify another model's answer for ${CONFIG.projectName}. You have access to the ${this.cfg.serverName} MCP tools.`,
+      task: 'You MUST call the available tools yourself to retrieve the real data, then judge whether the model\'s answer is correct and grounded in that real data. Do NOT trust the answer — check it. If you cannot call any tool, set pass=false and say so.',
+      allowed_tools: [...this.allow],
       user_prompt: t.prompt,
       model_answer: t.answer,
       rules: [
-        'Use the read-only tools to retrieve the ground truth.',
+        'Call the allowed tools to retrieve the ground truth before deciding.',
         'pass=true only if the answer matches the real data you retrieved.',
         'If the answer states facts the tools contradict or do not contain, pass=false.',
       ],
@@ -212,8 +249,8 @@ export class VerifierJudge {
         fields: {
           testId: t.testId,
           pass: 'true if the answer matches the live tool data, false otherwise',
-          reason: 'Brief explanation',
-          evidence: 'The tool result you verified against (required if pass is false)',
+          reason: 'Brief explanation, naming the tool(s) you called',
+          evidence: 'The tool result you verified against',
         },
       },
     }, null, 2);
@@ -265,25 +302,24 @@ export class VerifierJudge {
     }
   }
 
-  /** Verify each target over one reused session; tears the agent down when done. */
+  /** Verify each target in its OWN fresh session (no cross-target context bleed). */
   async verify(targets: VerifyTarget[]): Promise<Judgment[]> {
     const out: Judgment[] = [];
-    try {
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i];
-        process.stderr.write(`  [verify] Verifying ${i + 1}/${targets.length}: ${t.testId} (deny ${this.disallowedTools.length} write/non-read tools)...\n`);
-        try {
-          await this.ensureStarted();
-          const judgment = await this.verifyOne(t);
-          out.push(judgment);
-          process.stderr.write(`  [verify] ${t.testId}: ${judgment.pass ? 'PASS' : 'FAIL'} — ${judgment.reason}\n`);
-        } catch (error) {
-          process.stderr.write(`  [verify] Failed to verify ${t.testId}: ${error}\n`);
-          out.push({ testId: t.testId, pass: false, reason: 'Verifier failed: ' + String(error) });
-        }
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      process.stderr.write(`  [verify] Verifying ${i + 1}/${targets.length}: ${t.testId} (allow ${this.allow.size} tools, deny ${this.disallowedTools.length})...\n`);
+      try {
+        await this.ensureStarted();
+        const judgment = await this.verifyOne(t);
+        out.push(judgment);
+        process.stderr.write(`  [verify] ${t.testId}: ${judgment.pass ? 'PASS' : 'FAIL'} — ${judgment.reason}\n`);
+      } catch (error) {
+        process.stderr.write(`  [verify] Failed to verify ${t.testId}: ${error}\n`);
+        out.push({ testId: t.testId, pass: false, reason: 'Verifier failed: ' + String(error) });
+      } finally {
+        // Fresh session per target — tear down so the next target re-spawns clean.
+        this.kill();
       }
-    } finally {
-      this.kill();
     }
     return out;
   }
