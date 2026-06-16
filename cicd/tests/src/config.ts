@@ -39,8 +39,8 @@ export const CONFIG = {
   // model's tool-calling can be checked end-to-end. testlink-mcp is only the
   // default target — point --mcp-command / --mcp-args at any stdio MCP server.
   mcp: {
-    command: process.env.MCP_COMMAND || 'npx',
-    args: (process.env.MCP_ARGS || '-y testlink-mcp').split(' ').filter(Boolean),
+    command: process.env.MCP_COMMAND || 'docker',
+    args: (process.env.MCP_ARGS || 'run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest').split(' ').filter(Boolean),
     cwd: process.env.MCP_CWD || undefined,
     prompt: process.env.MCP_PROMPT || 'List the projects.',
     // Env var names to forward to the spawned server (its creds). Values come
