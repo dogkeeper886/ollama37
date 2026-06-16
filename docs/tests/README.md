@@ -73,6 +73,11 @@ Scenarios map to ollama37's four executable suites (see [`cicd/README.md`](../..
 ## Binding & drift
 
 - **Bind:** each TC's `Script:` points at the `cicd/tests/testcases/**/*.yml` that runs it.
+- **Subcommand / workflow binding:** when a tool has no YAML test case — e.g. a `cli.ts`
+  perf/capability subcommand (`bench-throughput`, `test-fa`, `test-mcp`) — a TC's `Script:` may
+  point at the **subcommand** (`cli.ts test-mcp …`) or its **workflow** instead. The row-count
+  invariant below applies **only to YAML-bound cases**; a subcommand-bound case's Steps describe
+  the subcommand's logical flow, not YAML `steps:`.
 - **Run:** `npm --prefix cicd/tests test` (the runner — `cli.ts run`; filter with `-- --suite <suite>`).
 - **Audit / drift:** the automated `audit-bind` / `drift` scripts are **not yet ported** to
   ollama37 (a planned follow-up). Until they are, the binding invariant — each TC's Steps-table
