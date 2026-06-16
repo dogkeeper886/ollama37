@@ -39,6 +39,8 @@ not change how any tool verifies a result.
 
 ## Status
 
+- **Completed: 2026-06-16** — all tasks merged (#276, #277, #278). The three capability
+  tools now have test docs (TS-05/06/07) and `test-mcp` runs via `test-mcp.yml`.
 - Created: 2026-06-16
 - Plan: #271
 - Issues: #273, #274, #275
