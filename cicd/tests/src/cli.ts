@@ -306,7 +306,7 @@ program
   .option('--mcp-args <args>', 'Args for the MCP server (space-separated; no spaces within a single arg)', CONFIG.mcp.args.join(' '))
   .option('--mcp-env <names>', 'Comma-separated env var names to forward to the server as creds (overrides MCP_ENV)', '')
   .option('--verify-live', 'Verify the answer against LIVE truth: the judge calls the server\'s read-only tools itself (supersedes --judge)', false)
-  .option('--verify-allow <names>', 'Comma-separated exact tool names the verifier may call (default: read-only list_/read_/get_)', '')
+  .option('--verify-allow <names>', 'Comma-separated exact tool names the verifier may call (fail-closed: empty verifies nothing)', '')
   .option('--verify-server-name <name>', 'mcp__<name>__<tool> label the verifier registers the server under', 'mcp')
   .option('-o, --output <file>', 'Write the JSON report to this file')
   .action(async (models: string[], options) => {

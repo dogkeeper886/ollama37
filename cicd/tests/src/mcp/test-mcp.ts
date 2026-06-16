@@ -31,8 +31,8 @@ export interface McpTestOptions {
   /** Opt in the live verifier: the judge calls the server's read-only tools itself
    *  to check the answer against live ground truth (supersedes --judge). */
   verifyLive?: boolean;
-  /** Exact tool names the verifier may call. Empty ⇒ derive read-only (list_/read_/get_)
-   *  from the server's tools — review that heuristic per server. */
+  /** Exact tool names the verifier may call. Fail-closed: if empty/unset, the verifier
+   *  verifies nothing — pass an explicit allow-list (no prefix heuristic across servers). */
   verifyAllow?: string[];
   /** mcp__<name>__<tool> label the verifier registers the server under. */
   verifyServerName?: string;
@@ -142,11 +142,11 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
 
   if (eligible.length > 0 && opts.verifyLive) {
     // Full server tool list (same server for every model) → the verifier's allow/deny.
+    // Fail-closed: only an explicit --verify-allow opens tools. No prefix heuristic —
+    // it can't tell a read-only `get_x` from a destructive `get_and_purge` on an
+    // arbitrary server, and the verifier's contract is exact-name allow-listing.
     const allToolNames = Array.from(new Set(eligible.flatMap((r) => r.tool_names)));
-    const allowTools =
-      opts.verifyAllow && opts.verifyAllow.length > 0
-        ? opts.verifyAllow
-        : allToolNames.filter((t) => (/^(list_|read_|get_)/).test(t));
+    const allowTools = opts.verifyAllow ?? [];
     const verifier = new VerifierJudge(
       { server: opts.server, serverName: opts.verifyServerName ?? 'mcp', toolNames: allToolNames, allowTools },
       '',
