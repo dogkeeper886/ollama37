@@ -81,7 +81,7 @@ These run via the TypeScript runner's perf subcommands (`cli.ts bench-throughput
 |----------|--------|-------------|
 | `test-throughput.yml` | `cli.ts bench-throughput` | Per-model tok/s benchmark with simple + optional agent-judge output check |
 | `test-fa-k80.yml` | `cli.ts test-fa` | K80 flash-attention regression + benchmark (FA off/on × KV cache type) |
-| _(subcommand only)_ | `cli.ts test-mcp` | Probe whether a model can drive a real MCP server's tools — server-agnostic (default `testlink-mcp`, override via `--mcp-command`/`--mcp-args`); structural check + optional agent judge; per-model verdict (PASS / FAIL / NO TOOL SUPPORT) |
+| `test-mcp.yml` | `cli.ts test-mcp` | Probe whether a model can drive a real MCP server's tools — server-agnostic (default `testlink-mcp`, override via `--mcp-command`/`--mcp-args`); structural check + optional agent judge; per-model verdict (PASS / FAIL / NO TOOL SUPPORT) |
 
 ### Release workflow
 
