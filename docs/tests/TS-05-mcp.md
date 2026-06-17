@@ -49,3 +49,21 @@ logical flow.
 |---|--------|-----------------|
 | 1 | Point the host at a second real stdio MCP server (e.g. an echo server) via the flags | the host lists + drives that server's tools, no testlink involved |
 | 2 | The model calls one of its tools and uses the result | tool executed against the real server; grounded answer → PASS |
+
+### TC-04: verify the answer against live ground truth (`--verify-live`)
+
+- **Objective:** the verdict reflects an **independent** check of the live tool, not just the
+  model's own captured trajectory — a confidently-wrong answer is caught.
+- **Script:** `cli.ts test-mcp <tool-capable-model> --verify-live --verify-allow <read-only-tool>`
+  (e.g. `--verify-allow list_projects`)
+- **How:** the verifier makes its OWN read-only call to the live MCP server (via the MCP SDK,
+  not the model's captured result), then the sandboxed keyless agent judge grades the model's
+  answer against that fresh ground truth. Read-only is by **exact allow-list** — only the named
+  tools are ever called; an empty allow-list verifies nothing (fail-closed). Keyless.
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | The verifier independently calls the allow-listed read-only tool against the live server | fresh live result captured (e.g. the real project list) |
+| 2 | The judge compares the model's answer to that fresh result | answer consistent with live truth → **PASS** |
+| 3 | A model answer that **contradicts** live truth (invented names/ids) | caught → **FAIL**, with the live result as evidence |
+| 4 | A mutating tool is not on the allow-list | never called — read-only is structural, no agent to steer |

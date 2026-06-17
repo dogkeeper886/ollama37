@@ -258,6 +258,8 @@ Current perf workflows: `test-throughput.yml` (tok/s benchmark) and `test-fa-k80
 
 `cli.ts test-mcp` is a **capability** probe rather than a perf metric: it drives a **real** stdio MCP server (server-agnostic — default `testlink-mcp`, override via `--mcp-command`/`--mcp-args`), lists and translates its tools to Ollama's `/api/chat` `tools[]`, runs the model's tool loop against the live server, and reuses the one agent judge to grade whether the final answer is grounded in the tool result. It reports a per-model verdict (PASS / FAIL / NO TOOL SUPPORT) and runs via the manual `test-mcp.yml` workflow (`workflow_dispatch`; testlink-mcp creds supplied as `cicd-1` secrets and forwarded with `--mcp-env`). See [`docs/traces/mcp-tool-call-validation.md`](../../docs/traces/mcp-tool-call-validation.md) for an end-to-end validation run.
 
+Add `--verify-live --verify-allow <read-only-tool>` for a stronger check: instead of trusting the result the model captured, the verifier makes its **own** read-only call to the live MCP server and the sandboxed agent judge grades the model's answer against that **fresh** ground truth — so a confidently-wrong (or stale-captured) answer FAILs where consistency-only would pass. Read-only is by exact allow-list (empty ⇒ fail-closed), and it stays keyless (the grading agent is never exposed to the tool). Background on why the verifier calls the tool itself rather than the agent: keyless ACP adapters either don't surface a client-injected stdio server or flood the agent with account connectors disableable only via `ANTHROPIC_API_KEY`.
+
 ## Quick Start
 
 ```bash
