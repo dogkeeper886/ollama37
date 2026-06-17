@@ -20,7 +20,7 @@ logical flow.
 
 - **Objective:** the model calls the right tool against the live server and produces a grounded answer.
 - **Script:** `cli.ts test-mcp <tool-capable-model> --judge` (default server: testlink-mcp)
-- **Preconditions:** Ollama up with the model pulled; testlink-mcp reachable with `TESTLINK_URL` / `TESTLINK_API_KEY`.
+- **Preconditions:** Ollama up with the model pulled; testlink-mcp reachable with `TESTLINK_URL` / `TESTLINK_API_KEY`. Locally these are read from `cicd/tests/.env` (copy `cicd/tests/.env.example`); in CI they come from the matching GitHub secrets.
 
 | # | Action | Expected Result |
 |---|--------|-----------------|

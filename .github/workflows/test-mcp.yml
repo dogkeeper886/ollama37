@@ -29,12 +29,12 @@ on:
       mcp_command:
         description: "Command to launch the stdio MCP server"
         required: false
-        default: "npx"
+        default: "docker"
         type: string
       mcp_args:
         description: "Args for the MCP server (space-separated)"
         required: false
-        default: "-y testlink-mcp"
+        default: "run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest"
         type: string
 
 env:
@@ -92,8 +92,8 @@ jobs:
           npx tsx src/cli.ts test-mcp $MODELS \
             --prompt "${{ inputs.prompt || 'List the projects.' }}" \
             --num-ctx "${{ inputs.num_ctx || '4096' }}" \
-            --mcp-command "${{ inputs.mcp_command || 'npx' }}" \
-            --mcp-args "${{ inputs.mcp_args || '-y testlink-mcp' }}" \
+            --mcp-command "${{ inputs.mcp_command || 'docker' }}" \
+            --mcp-args "${{ inputs.mcp_args || 'run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest' }}" \
             --mcp-env "TESTLINK_URL,TESTLINK_API_KEY" \
             --output /tmp/mcp-results.json \
             $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"

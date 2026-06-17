@@ -7,6 +7,7 @@
  *   npx tsx src/cli.ts list [options]
  */
 
+import 'dotenv/config'; // load cicd/tests/.env into process.env before config.ts reads it
 import { Command } from 'commander';
 import path from 'path';
 import { mkdirSync, existsSync } from 'fs';
