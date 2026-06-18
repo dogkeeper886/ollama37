@@ -163,6 +163,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
         testId: r.model,
         pass: false,
         reason: 'verify-live could not run: verifier agent unavailable (auth/availability)',
+        evidenceStatus: 'verifier-unavailable' as const,
       })));
     }
   } else if (eligible.length > 0 && opts.judge) {
@@ -195,6 +196,17 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
   return failed > 0 ? 1 : 0;
 }
 
+/** Turn an empty evidence cell into a one-glance reason instead of a bare "—" (STORY-010). */
+function evidenceWhy(status: Judgment['evidenceStatus']): string {
+  switch (status) {
+    case 'denied': return '— (tool denied)';
+    case 'not-called': return '— (no tool called)';
+    case 'no-data': return '— (tool returned no data)';
+    case 'verifier-unavailable': return '— (verifier did not run)';
+    default: return '—';
+  }
+}
+
 function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   const out: string[] = [];
   out.push('## MCP tool-call test');
@@ -209,7 +221,9 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
     const answer = r.final_answer_preview.trim() ? 'yes' : 'no';
     const reason = (r.check.agent?.reason ?? r.check.simple.reason ?? '').replace(/[\n|]/g, ' ').slice(0, 200);
     // The raw tool result the verifier captured (verify-live only); full result is in the JSON output.
-    const evidence = (r.check.agent?.evidence ?? '').replace(/[\n|]/g, ' ').slice(0, 200) || '—';
+    // When there's no captured data, say WHY rather than a bare "—" (STORY-010).
+    const evidence = (r.check.agent?.evidence ?? '').replace(/[\n|]/g, ' ').slice(0, 200)
+      || evidenceWhy(r.check.agent?.evidenceStatus);
     out.push(`| ${r.model} | ${verdict} | ${calls} | ${answer} | ${reason} | ${evidence} |`);
   }
   process.stdout.write(out.join('\n') + '\n');

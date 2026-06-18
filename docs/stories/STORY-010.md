@@ -40,4 +40,4 @@ and why — not reverse-engineer it.
 
 - Created: 2026-06-18
 - Plan: #297
-- Issues: none
+- Issues: #300, #301, #302, #303

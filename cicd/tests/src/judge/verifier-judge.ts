@@ -83,6 +83,8 @@ export class VerifierJudge {
    *  only ever shows ground truth from a tool we permit (not a denied/built-in call). Correlated by
    *  id because a `tool_call_update` carries the id but not the tool title. */
   private allowedCallIds = new Set<string>();
+  /** Whether the gate denied any tool this turn — lets an empty evidence cell explain itself. */
+  private sawDeniedCall = false;
 
   private readonly cfg: VerifierConfig;
   private readonly allow: Set<string>;
@@ -103,6 +105,14 @@ export class VerifierJudge {
   private bareName(name: string): string {
     const parts = name.split('__');
     return parts.length >= 3 ? parts.slice(2).join('__') : name;
+  }
+
+  /** Why this turn's evidence is what it is — so an empty cell explains itself (STORY-010). */
+  private currentEvidenceStatus(): NonNullable<Judgment['evidenceStatus']> {
+    if (this.toolEvidence) return 'captured';
+    if (this.sawDeniedCall) return 'denied';
+    if (this.allowedCallIds.size === 0) return 'not-called';
+    return 'no-data';
   }
 
   /** Pull the actual result text out of a `tool_call_update.content` envelope
@@ -209,6 +219,7 @@ export class VerifierJudge {
       params.options.find((o) => o.kind?.startsWith('reject'));
     // The security boundary — always log every decision (allow and reject), not just DEBUG.
     process.stderr.write(`  [verify] ${allowed ? 'ALLOWED' : 'DENIED'} tool permission: "${String(raw).slice(0, 80)}"\n`);
+    if (!allowed) this.sawDeniedCall = true;
     return opt
       ? { outcome: { outcome: 'selected', optionId: opt.optionId } }
       : { outcome: { outcome: 'cancelled' } };
@@ -380,6 +391,7 @@ export class VerifierJudge {
     this.turnText = '';
     this.toolEvidence = '';
     this.allowedCallIds.clear();
+    this.sawDeniedCall = false;
     try {
       await this.withTimeout(
         this.conn!.prompt({ sessionId: this.sessionId!, prompt: [{ type: 'text', text: prompt }] }),
@@ -394,12 +406,13 @@ export class VerifierJudge {
 
   private async verifyOne(t: VerifyTarget): Promise<Judgment> {
     const responseText = await this.promptAgent(this.buildPrompt(t));
+    const evidenceStatus = this.currentEvidenceStatus();
     if (!responseText) {
-      return { testId: t.testId, pass: false, reason: 'Verifier returned empty response' };
+      return { testId: t.testId, pass: false, reason: 'Verifier returned empty response', evidenceStatus };
     }
     const json = this.extractJson(responseText);
     if (!json) {
-      return { testId: t.testId, pass: false, reason: `No JSON in verifier response: ${responseText.substring(0, 200)}` };
+      return { testId: t.testId, pass: false, reason: `No JSON in verifier response: ${responseText.substring(0, 200)}`, evidenceStatus };
     }
     try {
       const judgment = JSON.parse(json) as Judgment;
@@ -408,14 +421,15 @@ export class VerifierJudge {
         judgment.pass = (judgment.pass as unknown as string).toLowerCase() === 'true';
       }
       if (typeof judgment.pass !== 'boolean') {
-        return { testId: t.testId, pass: false, reason: `Verifier response missing "pass": ${responseText.substring(0, 200)}` };
+        return { testId: t.testId, pass: false, reason: `Verifier response missing "pass": ${responseText.substring(0, 200)}`, evidenceStatus };
       }
       if (!judgment.reason) judgment.reason = judgment.pass ? 'Verified (no reason provided)' : 'Failed (no reason provided)';
       // Prefer the raw tool result we captured ourselves over the agent's self-reported evidence.
       if (this.toolEvidence) judgment.evidence = this.toolEvidence;
+      judgment.evidenceStatus = evidenceStatus;
       return judgment;
     } catch {
-      return { testId: t.testId, pass: false, reason: `Failed to parse verifier response: ${responseText.substring(0, 200)}` };
+      return { testId: t.testId, pass: false, reason: `Failed to parse verifier response: ${responseText.substring(0, 200)}`, evidenceStatus };
     }
   }
 
@@ -432,7 +446,7 @@ export class VerifierJudge {
         process.stderr.write(`  [verify] ${t.testId}: ${judgment.pass ? 'PASS' : 'FAIL'} — ${judgment.reason}\n`);
       } catch (error) {
         process.stderr.write(`  [verify] Failed to verify ${t.testId}: ${error}\n`);
-        out.push({ testId: t.testId, pass: false, reason: 'Verifier failed: ' + String(error) });
+        out.push({ testId: t.testId, pass: false, reason: 'Verifier failed: ' + String(error), evidenceStatus: 'verifier-unavailable' });
       } finally {
         // Fresh session per target — tear down so the next target re-spawns clean.
         this.kill();
