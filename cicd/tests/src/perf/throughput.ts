@@ -142,6 +142,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
 
   // Agent judge (dual mode): one batch over a single reused session, only for
   // models that passed the simple check (an empty output is already a fail).
+  let judgeFellBack = false;
   if (judge) {
     const eligible = results.filter((r) => r.check.simple.pass);
     if (eligible.length > 0) {
@@ -161,6 +162,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
           }
         }
       } else {
+        judgeFellBack = true;
         process.stderr.write('[WARN] agent judge not available — simple check only\n');
       }
     }
@@ -182,8 +184,10 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     process.stderr.write(`Results written to ${opts.output}\n`);
   }
 
-  // Markdown summary on stdout (CI appends this to the step summary)
-  printSummary(sha, gpuBefore, numCtx, judge ? 'dual' : 'simple', results);
+  // Markdown summary on stdout (CI appends this to the step summary). When dual was asked for but
+  // the judge couldn't run, say so — don't claim "dual" for a simple-only result (STORY-010).
+  const judgeMode = judge ? (judgeFellBack ? 'dual → simple (judge unavailable)' : 'dual') : 'simple';
+  printSummary(sha, gpuBefore, numCtx, judgeMode, results);
   return failed > 0 ? 1 : 0;
 }
 

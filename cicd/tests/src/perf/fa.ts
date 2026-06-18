@@ -210,6 +210,7 @@ export async function runFa(opts: FaOptions): Promise<number> {
     m.check.pass = m.check.simple.pass; // updated by the agent below
   }
   const eligible = judgeable.filter((m) => m.check!.simple.pass);
+  let judgeFellBack = false;
   if (eligible.length > 0) {
     const agentJudge = new AgentJudge();
     if (await agentJudge.isAvailable()) {
@@ -225,6 +226,7 @@ export async function runFa(opts: FaOptions): Promise<number> {
         }
       }
     } else {
+      judgeFellBack = true;
       process.stderr.write('[WARN] agent judge not available — simple check only\n');
     }
   }
@@ -254,11 +256,11 @@ export async function runFa(opts: FaOptions): Promise<number> {
     );
   }
 
-  printTables(opts, metrics, comparison);
+  printTables(opts, metrics, comparison, judgeFellBack);
   return failed > 0 ? 1 : 0;
 }
 
-function printTables(opts: FaOptions, metrics: ConfigMetrics[], comparison?: { match: boolean }): void {
+function printTables(opts: FaOptions, metrics: ConfigMetrics[], comparison: { match: boolean } | undefined, judgeFellBack: boolean): void {
   const out: string[] = [];
   if (opts.benchmark) {
     out.push('## K80 FA benchmark');
@@ -274,6 +276,11 @@ function printTables(opts: FaOptions, metrics: ConfigMetrics[], comparison?: { m
   }
   out.push('## K80 FA judge verdicts');
   out.push('');
+  // Don't pass off a simple-only result as a judged one — say the judge didn't run (STORY-010).
+  if (judgeFellBack) {
+    out.push('_Agent judge unavailable — verdicts below are the simple content check only._');
+    out.push('');
+  }
   out.push('| Config | Verdict | Reason |');
   out.push('|---|---|---|');
   for (const m of metrics) {
