@@ -19,13 +19,24 @@ on:
         default: "4096"
         type: string
       judge_mode:
-        description: "Verification mode (simple = structural check; dual = also run the keyless agent judge for groundedness)"
+        description: "Verification mode (simple = structural check; dual = also run the keyless agent judge for groundedness; verify-live = the keyless verifier calls the server's read-only tools itself and checks the answer against LIVE data)"
         required: false
         default: "simple"
         type: choice
         options:
           - "simple"
           - "dual"
+          - "verify-live"
+      verify_allow:
+        description: "verify-live only: comma-separated exact read-only tool names the verifier may call (fail-closed)"
+        required: false
+        default: "list_projects"
+        type: string
+      verify_server_name:
+        description: "verify-live only: mcp__<name>__<tool> label the verifier registers the server under"
+        required: false
+        default: "testlink"
+        type: string
       mcp_command:
         description: "Command to launch the stdio MCP server"
         required: false
@@ -71,8 +82,9 @@ jobs:
       - name: Run MCP tool-call test
         env:
           MODELS: ${{ inputs.models }}
-          # Keyless agent judge auth (dual mode). Falls back to the runner's
-          # ambient ~/.claude if the secret is unset.
+          # Keyless auth for the agent judge (dual) and the live verifier (verify-live).
+          # On this self-hosted runner the verifier symlinks the ambient ~/.claude token, so the
+          # secret is only needed where ~/.claude is absent.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # testlink-mcp creds. Forwarded to the spawned server via --mcp-env.
           # Without them the run degrades cleanly (errors / NO TOOL SUPPORT surfaced).
@@ -81,9 +93,10 @@ jobs:
         run: |
           cd cicd/tests
           JUDGE_FLAG=""
-          if [ "${{ inputs.judge_mode || 'simple' }}" = "dual" ]; then
-            JUDGE_FLAG="--judge"
-          fi
+          case "${{ inputs.judge_mode || 'simple' }}" in
+            dual) JUDGE_FLAG="--judge" ;;
+            verify-live) JUDGE_FLAG="--verify-live --verify-allow ${{ inputs.verify_allow || 'list_projects' }} --verify-server-name ${{ inputs.verify_server_name || 'testlink' }}" ;;
+          esac
           echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
 
           # The subcommand prints a markdown summary to stdout (→ step summary)

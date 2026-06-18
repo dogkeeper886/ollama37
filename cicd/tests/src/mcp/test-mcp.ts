@@ -150,14 +150,20 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
     const verifier = new VerifierJudge(
       { server: opts.server, serverName: opts.verifyServerName ?? 'mcp', toolNames: allToolNames, allowTools },
       '',
-      opts.server.cwd ?? process.cwd(),
     );
     if (await verifier.isAvailable()) {
       applyVerdicts(
         await verifier.verify(eligible.map((r) => ({ testId: r.model, prompt: opts.prompt, answer: trajByModel.get(r.model)!.finalAnswer }))),
       );
     } else {
-      process.stderr.write('[WARN] verifier agent not available — simple check only\n');
+      // Fail closed: a verify-live run whose verifier can't even start has NOT verified anything,
+      // so it must not green-light on the structural check alone. Mark every eligible model FAIL.
+      process.stderr.write('[ERROR] verify-live requested but the verifier agent is unavailable (auth/availability) — failing closed\n');
+      applyVerdicts(eligible.map((r) => ({
+        testId: r.model,
+        pass: false,
+        reason: 'verify-live could not run: verifier agent unavailable (auth/availability)',
+      })));
     }
   } else if (eligible.length > 0 && opts.judge) {
     const agentJudge = new AgentJudge();
@@ -195,14 +201,16 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   out.push('');
   out.push(`**Server:** \`${opts.server.command} ${opts.server.args.join(' ')}\` · **Prompt:** ${opts.prompt} · **Judge:** ${opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple'}`);
   out.push('');
-  out.push('| Model | Verdict | Tool calls | Answer | Reason |');
-  out.push('|---|---|---|---|---|');
+  out.push('| Model | Verdict | Tool calls | Answer | Reason | Live evidence |');
+  out.push('|---|---|---|---|---|---|');
   for (const r of results) {
     const verdict = r.check.overall_pass ? 'PASS' : r.supported ? 'FAIL' : 'NO TOOL SUPPORT';
     const calls = r.tool_calls.map((c) => c.name).join(', ') || '—';
     const answer = r.final_answer_preview.trim() ? 'yes' : 'no';
     const reason = (r.check.agent?.reason ?? r.check.simple.reason ?? '').replace(/[\n|]/g, ' ').slice(0, 200);
-    out.push(`| ${r.model} | ${verdict} | ${calls} | ${answer} | ${reason} |`);
+    // The raw tool result the verifier captured (verify-live only); full result is in the JSON output.
+    const evidence = (r.check.agent?.evidence ?? '').replace(/[\n|]/g, ' ').slice(0, 200) || '—';
+    out.push(`| ${r.model} | ${verdict} | ${calls} | ${answer} | ${reason} | ${evidence} |`);
   }
   process.stdout.write(out.join('\n') + '\n');
 }
