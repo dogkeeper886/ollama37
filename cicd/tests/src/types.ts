@@ -135,6 +135,10 @@ export interface Judgment {
   reason: string;
   /** Evidence log line (required when pass=false) */
   evidence?: string;
+  /** Why the evidence is what it is — so an empty cell explains itself instead of a bare "—":
+   *  'captured' (live data), 'denied' (a tool was refused), 'not-called' (no tool was called),
+   *  'no-data' (called but returned nothing), 'verifier-unavailable' (the verifier never ran). */
+  evidenceStatus?: 'captured' | 'denied' | 'not-called' | 'no-data' | 'verifier-unavailable';
 }
 
 // ============================================
