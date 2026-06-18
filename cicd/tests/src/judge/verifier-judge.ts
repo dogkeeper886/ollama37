@@ -446,7 +446,7 @@ export class VerifierJudge {
         process.stderr.write(`  [verify] ${t.testId}: ${judgment.pass ? 'PASS' : 'FAIL'} — ${judgment.reason}\n`);
       } catch (error) {
         process.stderr.write(`  [verify] Failed to verify ${t.testId}: ${error}\n`);
-        out.push({ testId: t.testId, pass: false, reason: 'Verifier failed: ' + String(error) });
+        out.push({ testId: t.testId, pass: false, reason: 'Verifier failed: ' + String(error), evidenceStatus: 'verifier-unavailable' });
       } finally {
         // Fresh session per target — tear down so the next target re-spawns clean.
         this.kill();
