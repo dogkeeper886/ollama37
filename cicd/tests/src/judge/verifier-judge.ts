@@ -29,7 +29,9 @@
 import { spawn, type ChildProcess, type StdioOptions } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { mkdirSync, writeFileSync, existsSync, symlinkSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -42,6 +44,10 @@ import {
 import type { McpServerConfig } from '../mcp/host.js';
 import type { Judgment } from '../types.js';
 import { CONFIG } from '../config.js';
+
+/** VERIFY_DEBUG=1 → reveal every ACP event (sessionUpdate kinds, tool calls, permission/trust
+ *  requests) so nothing the adapter emits is swallowed silently. */
+const DEBUG = !!process.env.VERIFY_DEBUG;
 
 /** One model's answer to verify against the live server. */
 export interface VerifyTarget {
@@ -64,21 +70,28 @@ export interface VerifierConfig {
 
 export class VerifierJudge {
   private agentCmd: string;
-  private cwd: string;
+  private isolatedCfgDir?: string;
+  private isolatedCwd?: string;
   private child?: ChildProcess;
   private conn?: ClientSideConnection;
   private sessionId?: string;
   private turnText = '';
+  /** Raw live tool result(s) the agent received this turn — captured from `tool_call_update`
+   *  events, independent of what the agent says it saw. Surfaced as Judgment.evidence. */
+  private toolEvidence = '';
+  /** `toolCallId`s of allow-listed tool calls seen this turn — gates evidence capture so the report
+   *  only ever shows ground truth from a tool we permit (not a denied/built-in call). Correlated by
+   *  id because a `tool_call_update` carries the id but not the tool title. */
+  private allowedCallIds = new Set<string>();
 
   private readonly cfg: VerifierConfig;
   private readonly allow: Set<string>;
   /** `mcp__<server>__<tool>` rules for every tool NOT in the allow-list (SDK hard-deny). */
   private readonly disallowedTools: string[];
 
-  constructor(cfg: VerifierConfig, agentCmd: string = CONFIG.judge.agent, cwd: string = process.cwd()) {
+  constructor(cfg: VerifierConfig, agentCmd: string = CONFIG.judge.agent) {
     this.cfg = cfg;
     this.agentCmd = agentCmd;
-    this.cwd = cwd;
     this.allow = new Set(cfg.allowTools);
     this.disallowedTools = cfg.toolNames
       .filter((t) => !this.allow.has(t))
@@ -90,6 +103,19 @@ export class VerifierJudge {
   private bareName(name: string): string {
     const parts = name.split('__');
     return parts.length >= 3 ? parts.slice(2).join('__') : name;
+  }
+
+  /** Pull the actual result text out of a `tool_call_update.content` envelope
+   *  (`[{ type:'content', content:{ type:'text', text } }]`) — not the wrapper JSON. */
+  private toolResultText(content: unknown): string {
+    if (!Array.isArray(content)) return '';
+    const parts: string[] = [];
+    for (const block of content) {
+      const b = block as { content?: { type?: string; text?: string }; text?: string };
+      if (b?.content?.type === 'text' && typeof b.content.text === 'string') parts.push(b.content.text);
+      else if (typeof b?.text === 'string') parts.push(b.text);
+    }
+    return parts.join('\n');
   }
 
   private async withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
@@ -104,21 +130,70 @@ export class VerifierJudge {
     }
   }
 
-  /** Spawn the configured ACP agent as a stdio child (same logic as AgentJudge). */
+  /** A PERMANENT CLAUDE_CONFIG_DIR holding only keyless creds + a pre-trusted, connector-free
+   *  `.claude.json`, plus a clean cwd with no project `.claude/`. This isolates the spawned client
+   *  from the operator's account connectors AND this repo's project config — the two confirmed
+   *  sources that flood the agent's toolset and bury the injected MCP server.
+   *
+   *  Built ONCE and then left completely alone (build-once-if-absent — every file is only written
+   *  when missing). The connectors-off guarantee lives in the per-spawn `ENABLE_CLAUDEAI_MCP_SERVERS=0`
+   *  env (see spawnAgent), NOT in this file staying pristine — the agent writes its own state back
+   *  here over time and that is fine. Fixed path keeps it outside the git tree. Credentials are a
+   *  symlink to the live `~/.claude/.credentials.json` (never an API key), so the token stays fresh
+   *  and is never duplicated on disk. Override the path with VERIFY_CONFIG_DIR. In CI no
+   *  `~/.claude/.credentials.json` exists, so the SDK reads the CLAUDE_CODE_OAUTH_TOKEN secret. */
+  private prepareIsolation(): { cfgDir: string; cwd: string } {
+    if (this.isolatedCfgDir && this.isolatedCwd) return { cfgDir: this.isolatedCfgDir, cwd: this.isolatedCwd };
+    const base = process.env.VERIFY_CONFIG_DIR || join(homedir(), '.cache', 'ollama37-verify');
+    const cfgDir = join(base, 'config');
+    const work = join(base, 'work');
+    mkdirSync(cfgDir, { recursive: true });
+    mkdirSync(work, { recursive: true });
+    const cred = join(homedir(), '.claude', '.credentials.json');
+    const credDest = join(cfgDir, '.credentials.json');
+    // SYMLINK (not copy) to the live credentials, so the verifier always uses the current,
+    // auto-refreshing OAuth token and we never duplicate the secret on disk. A frozen copy
+    // expires within ~1h and 401s. Self-heal a prior run's stale copy/link. In CI the source is
+    // absent, so we skip it and the SDK reads CLAUDE_CODE_OAUTH_TOKEN from the environment.
+    if (existsSync(cred)) {
+      rmSync(credDest, { force: true });
+      symlinkSync(cred, credDest);
+    }
+    // Pre-trust the clean cwd so no trust-folder prompt blocks; zero connectors, zero project servers.
+    const cfgJson = join(cfgDir, '.claude.json');
+    if (!existsSync(cfgJson)) writeFileSync(cfgJson, JSON.stringify({
+      hasCompletedOnboarding: true,
+      mcpServers: {},
+      projects: { [work]: { hasTrustDialogAccepted: true, mcpServers: {}, enabledMcpjsonServers: [], allowedTools: [] } },
+    }));
+    const settings = join(cfgDir, 'settings.json');
+    if (!existsSync(settings)) writeFileSync(settings, '{}');
+    if (DEBUG) process.stderr.write(`  [verify:isolate] CLAUDE_CONFIG_DIR=${cfgDir} cwd=${work}\n`);
+    this.isolatedCfgDir = cfgDir;
+    this.isolatedCwd = work;
+    return { cfgDir, cwd: work };
+  }
+
+  /** Spawn the configured ACP agent as a stdio child (same logic as AgentJudge), in an isolated
+   *  config dir + clean cwd, with claude.ai connectors and tool-search disabled. */
   private spawnAgent(): ChildProcess {
+    const { cfgDir, cwd } = this.prepareIsolation();
     const env = { ...process.env };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
     delete env.CLAUDE_CODE_SSE_PORT;
+    env.CLAUDE_CONFIG_DIR = cfgDir;
+    env.ENABLE_CLAUDEAI_MCP_SERVERS = '0';
+    env.ENABLE_TOOL_SEARCH = '0';
     const stdio: StdioOptions = ['pipe', 'pipe', 'inherit'];
 
     if (this.agentCmd) {
-      return spawn(this.agentCmd, { cwd: this.cwd, stdio, env, shell: true });
+      return spawn(this.agentCmd, { cwd, stdio, env, shell: true });
     }
     const require = createRequire(import.meta.url);
     const pkg = require.resolve('@agentclientprotocol/claude-agent-acp/package.json');
     const entry = resolve(dirname(pkg), 'dist/index.js');
-    return spawn(process.execPath, [entry], { cwd: this.cwd, stdio, env });
+    return spawn(process.execPath, [entry], { cwd, stdio, env });
   }
 
   /** The read-only gate: allow only exact-allow-listed tools, else reject (fail-closed). */
@@ -132,7 +207,8 @@ export class VerifierJudge {
     const opt =
       params.options.find((o) => o.kind?.startsWith(want)) ??
       params.options.find((o) => o.kind?.startsWith('reject'));
-    if (!allowed) process.stderr.write(`  [verify] DENIED tool permission: "${String(raw).slice(0, 80)}"\n`);
+    // The security boundary — always log every decision (allow and reject), not just DEBUG.
+    process.stderr.write(`  [verify] ${allowed ? 'ALLOWED' : 'DENIED'} tool permission: "${String(raw).slice(0, 80)}"\n`);
     return opt
       ? { outcome: { outcome: 'selected', optionId: opt.optionId } }
       : { outcome: { outcome: 'cancelled' } };
@@ -152,12 +228,37 @@ export class VerifierJudge {
     const client: Client = {
       sessionUpdate: async (params: SessionNotification): Promise<void> => {
         const u = params.update;
+        const x = u as Record<string, unknown>;
+        if (DEBUG) {
+          const extra =
+            u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update'
+              ? ` id=${JSON.stringify(x.toolCallId)} title=${JSON.stringify(x.title)} status=${String(x.status)}`
+              : '';
+          process.stderr.write(`  [verify:event] ${u.sessionUpdate}${extra}\n`);
+        }
         if (u.sessionUpdate === 'agent_message_chunk' && u.content.type === 'text') {
           this.turnText += u.content.text;
         }
+        // Remember which calls are allow-listed (the `tool_call` carries the title); a later
+        // `tool_call_update` for the same id is then known to be ground truth we permit.
+        if (u.sessionUpdate === 'tool_call' && typeof x.toolCallId === 'string' &&
+            this.allow.has(this.bareName(String(x.title ?? '')))) {
+          this.allowedCallIds.add(x.toolCallId);
+        }
+        // Bucket #3: capture the live tool result the agent received, independent of its prose —
+        // hard ground-truth evidence for the report. Only a COMPLETED call we allow-listed counts
+        // (a denied/built-in call is not ground truth); extract the inner text from the
+        // ToolCallContent envelope; total-cap so a chatty server can't blow the field.
+        if (u.sessionUpdate === 'tool_call_update' && typeof x.toolCallId === 'string' &&
+            this.allowedCallIds.has(x.toolCallId) && String(x.status) === 'completed') {
+          const text = this.toolResultText(x.content);
+          if (text) this.toolEvidence = (this.toolEvidence + text).slice(0, 2000);
+        }
       },
-      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> =>
-        this.decide(params),
+      requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+        if (DEBUG) process.stderr.write(`  [verify:event] requestPermission ${JSON.stringify(params).slice(0, 500)}\n`);
+        return this.decide(params);
+      },
       readTextFile: async () => { throw new Error('filesystem access disabled for the verifier'); },
       writeTextFile: async () => { throw new Error('filesystem access disabled for the verifier'); },
     };
@@ -173,15 +274,27 @@ export class VerifierJudge {
       const env = Object.entries(this.cfg.server.env ?? {}).map(([name, value]) => ({ name, value }));
       const session = await this.withTimeout(
         this.conn.newSession({
-          cwd: this.cwd,
+          cwd: this.prepareIsolation().cwd,
           // Populate the server (the generic judge keeps this empty); hard-deny every
           // non-allow-listed server tool via the agent's own SDK config (defence in depth).
           mcpServers: [{ name: this.cfg.serverName, command: this.cfg.server.command, args: this.cfg.server.args, env }],
-          _meta: { claudeCode: { options: { disallowedTools: this.disallowedTools } } },
+          // settingSources:[] loads NO filesystem settings (no project/local `.claude/`); the
+          // injected mcpServers above survive regardless.
+          _meta: { claudeCode: { options: { settingSources: [], disallowedTools: this.disallowedTools } } },
         }),
         'verifier session/new',
       );
       this.sessionId = session.sessionId;
+      if (DEBUG) {
+        // Diagnostic warm-up: ask the agent to list its actual toolset, so we can see whether the
+        // injected mcp__<server>__* tools surfaced and whether the flood is gone.
+        this.turnText = '';
+        await this.withTimeout(
+          this.conn.prompt({ sessionId: this.sessionId, prompt: [{ type: 'text', text: 'List the exact names of every tool you can call right now, one per line. Nothing else.' }] }),
+          'verifier warm-up',
+        ).catch((e) => process.stderr.write(`  [verify:warmup] error: ${e}\n`));
+        process.stderr.write(`  [verify:warmup] tools:\n${this.turnText}\n`);
+      }
     } catch (e) {
       this.kill();
       throw e;
@@ -220,7 +333,7 @@ export class VerifierJudge {
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
         clientInfo: { name: `${CONFIG.projectName}-verifier`, version: '1.0.0' },
       }), 'verifier probe initialize');
-      const s = await this.withTimeout(conn.newSession({ cwd: this.cwd, mcpServers: [] }), 'verifier probe session');
+      const s = await this.withTimeout(conn.newSession({ cwd: this.prepareIsolation().cwd, mcpServers: [] }), 'verifier probe session');
       await this.withTimeout(conn.prompt({ sessionId: s.sessionId, prompt: [{ type: 'text', text: 'Reply with exactly: ok' }] }), 'verifier probe turn');
       if (!text.trim()) throw new Error('verifier agent produced no output on probe turn');
       return true;
@@ -265,6 +378,8 @@ export class VerifierJudge {
 
   private async promptAgent(prompt: string): Promise<string> {
     this.turnText = '';
+    this.toolEvidence = '';
+    this.allowedCallIds.clear();
     try {
       await this.withTimeout(
         this.conn!.prompt({ sessionId: this.sessionId!, prompt: [{ type: 'text', text: prompt }] }),
@@ -296,6 +411,8 @@ export class VerifierJudge {
         return { testId: t.testId, pass: false, reason: `Verifier response missing "pass": ${responseText.substring(0, 200)}` };
       }
       if (!judgment.reason) judgment.reason = judgment.pass ? 'Verified (no reason provided)' : 'Failed (no reason provided)';
+      // Prefer the raw tool result we captured ourselves over the agent's self-reported evidence.
+      if (this.toolEvidence) judgment.evidence = this.toolEvidence;
       return judgment;
     } catch {
       return { testId: t.testId, pass: false, reason: `Failed to parse verifier response: ${responseText.substring(0, 200)}` };

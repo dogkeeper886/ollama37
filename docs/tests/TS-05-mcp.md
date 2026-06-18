@@ -49,3 +49,17 @@ logical flow.
 |---|--------|-----------------|
 | 1 | Point the host at a second real stdio MCP server (e.g. an echo server) via the flags | the host lists + drives that server's tools, no testlink involved |
 | 2 | The model calls one of its tools and uses the result | tool executed against the real server; grounded answer → PASS |
+
+### TC-04: `--verify-live` — an independent keyless verifier checks the answer against live data
+
+- **Objective:** the verifier itself calls the read-only tool against the live server and confirms the model's answer, keyless and read-only.
+- **Script:** `cli.ts test-mcp <tool-capable-model> --verify-live --verify-allow list_projects --verify-server-name testlink`
+- **Preconditions:** as TC-01, plus a keyless login in `~/.claude` (no `ANTHROPIC_API_KEY`); in CI the `CLAUDE_CODE_OAUTH_TOKEN` secret.
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | The verifier spawns the ACP agent in the isolated config dir | only the injected `mcp__testlink__*` tool surfaces — the account connectors are gone (flood cleared) |
+| 2 | The verifier calls the allow-listed `list_projects` itself | the read-only gate ALLOWS it; live data comes back and is captured |
+| 3 | A non-allow-listed / write tool is attempted | the gate DENIES it (fail-closed) — the verifier can never write |
+| 4 | The verdict is reported | PASS only if the answer matches the live data; the **Live evidence** column shows the captured result |
+| 5 | The verifier can't authenticate or start | the run **fails closed** (FAIL), never a silent downgrade to the structural check |
