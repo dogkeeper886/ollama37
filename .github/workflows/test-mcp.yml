@@ -91,6 +91,9 @@ jobs:
           TESTLINK_URL: ${{ secrets.TESTLINK_URL }}
           TESTLINK_API_KEY: ${{ secrets.TESTLINK_API_KEY }}
         run: |
+          # pipefail so the test runner's exit code survives the `| tee` below — without it a
+          # FAIL/fail-closed verdict is masked by tee's 0 and the job goes green dishonestly.
+          set -o pipefail
           cd cicd/tests
           JUDGE_FLAG=""
           case "${{ inputs.judge_mode || 'simple' }}" in
