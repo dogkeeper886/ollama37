@@ -53,6 +53,26 @@ const DEBUG = !!process.env.VERIFY_DEBUG;
  *  warm-up turn. DEBUG implies VERBOSE. */
 const VERBOSE = DEBUG || !!process.env.VERIFY_VERBOSE;
 
+/** How much captured tool result to keep — large enough for the deterministic cross-check to see
+ *  every record (the report still shows only the first ~200 chars). */
+const EVIDENCE_CAP = 20000;
+
+/** Deterministic cross-check (STORY-011): the distinctive identifiers a model's answer claims —
+ *  multi-digit ids and identifier-like names (those containing a digit or hyphen) — must appear in
+ *  the captured live result. Returns the claims that DON'T, i.e. the likely inventions. Conservative
+ *  by design: it ignores plain prose words so it never fails a truthful answer over wording, which
+ *  means it catches invented/contradicted facts — not incompleteness (that stays the model's job). */
+export function unsupportedClaims(answer: string, evidence: string): string[] {
+  if (!evidence) return [];
+  const ev = evidence.toLowerCase();
+  const claims = new Set<string>();
+  for (const m of answer.matchAll(/\b\d{3,}\b/g)) claims.add(m[0]);          // numeric ids (3+ digits)
+  for (const m of answer.matchAll(/\b[a-zA-Z][\w.-]{3,}\b/g)) {              // identifier-like names
+    if (/[0-9-]/.test(m[0])) claims.add(m[0]);                              // …but only the distinctive ones
+  }
+  return [...claims].filter((c) => !ev.includes(c.toLowerCase()));
+}
+
 /** One model's answer to verify against the live server. */
 export interface VerifyTarget {
   testId: string;
@@ -268,7 +288,7 @@ export class VerifierJudge {
         if (u.sessionUpdate === 'tool_call_update' && typeof x.toolCallId === 'string' &&
             this.allowedCallIds.has(x.toolCallId) && String(x.status) === 'completed') {
           const text = this.toolResultText(x.content);
-          if (text) this.toolEvidence = (this.toolEvidence + text).slice(0, 2000);
+          if (text) this.toolEvidence = (this.toolEvidence + text).slice(0, EVIDENCE_CAP);
         }
       },
       requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
@@ -432,6 +452,17 @@ export class VerifierJudge {
         return { testId: t.testId, pass: false, reason: `Verifier response missing "pass": ${responseText.substring(0, 200)}`, evidenceStatus };
       }
       if (!judgment.reason) judgment.reason = judgment.pass ? 'Verified (no reason provided)' : 'Failed (no reason provided)';
+      // Deterministic cross-check: the verifying model's PASS only stands if the answer's claimed
+      // facts actually appear in the live result we captured. The LLM is a second opinion, never the
+      // sole judge — it cannot wave through an answer the ground truth doesn't support.
+      if (judgment.pass && this.toolEvidence) {
+        const unsupported = unsupportedClaims(t.answer, this.toolEvidence);
+        if (unsupported.length) {
+          judgment.pass = false;
+          judgment.reason = `Deterministic cross-check FAILED: answer claims not present in live data: ${unsupported.join(', ')}. (verifier had said: ${judgment.reason})`;
+          process.stderr.write(`  [verify] cross-check overrode PASS→FAIL — unsupported: ${unsupported.join(', ')}\n`);
+        }
+      }
       // Prefer the raw tool result we captured ourselves over the agent's self-reported evidence.
       if (this.toolEvidence) judgment.evidence = this.toolEvidence;
       judgment.evidenceStatus = evidenceStatus;
