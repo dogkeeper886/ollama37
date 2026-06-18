@@ -48,6 +48,10 @@ import { CONFIG } from '../config.js';
 /** VERIFY_DEBUG=1 → reveal every ACP event (sessionUpdate kinds, tool calls, permission/trust
  *  requests) so nothing the adapter emits is swallowed silently. */
 const DEBUG = !!process.env.VERIFY_DEBUG;
+/** VERIFY_VERBOSE=1 → a middle level between the terse default and the DEBUG firehose: the
+ *  decisive per-step trace (config isolation, tool calls/results) without every event or the
+ *  warm-up turn. DEBUG implies VERBOSE. */
+const VERBOSE = DEBUG || !!process.env.VERIFY_VERBOSE;
 
 /** One model's answer to verify against the live server. */
 export interface VerifyTarget {
@@ -178,7 +182,7 @@ export class VerifierJudge {
     }));
     const settings = join(cfgDir, 'settings.json');
     if (!existsSync(settings)) writeFileSync(settings, '{}');
-    if (DEBUG) process.stderr.write(`  [verify:isolate] CLAUDE_CONFIG_DIR=${cfgDir} cwd=${work}\n`);
+    if (VERBOSE) process.stderr.write(`  [verify:isolate] CLAUDE_CONFIG_DIR=${cfgDir} cwd=${work}\n`);
     this.isolatedCfgDir = cfgDir;
     this.isolatedCwd = work;
     return { cfgDir, cwd: work };
@@ -240,11 +244,12 @@ export class VerifierJudge {
       sessionUpdate: async (params: SessionNotification): Promise<void> => {
         const u = params.update;
         const x = u as Record<string, unknown>;
-        if (DEBUG) {
-          const extra =
-            u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update'
-              ? ` id=${JSON.stringify(x.toolCallId)} title=${JSON.stringify(x.title)} status=${String(x.status)}`
-              : '';
+        // VERBOSE shows the decisive tool-call steps; DEBUG adds every other event (the firehose).
+        const isToolEvent = u.sessionUpdate === 'tool_call' || u.sessionUpdate === 'tool_call_update';
+        if (DEBUG || (VERBOSE && isToolEvent)) {
+          const extra = isToolEvent
+            ? ` id=${JSON.stringify(x.toolCallId)} title=${JSON.stringify(x.title)} status=${String(x.status)}`
+            : '';
           process.stderr.write(`  [verify:event] ${u.sessionUpdate}${extra}\n`);
         }
         if (u.sessionUpdate === 'agent_message_chunk' && u.content.type === 'text') {
@@ -406,6 +411,9 @@ export class VerifierJudge {
 
   private async verifyOne(t: VerifyTarget): Promise<Judgment> {
     const responseText = await this.promptAgent(this.buildPrompt(t));
+    // Parity with AgentJudge — log the raw response at the normal level so a surprising verdict
+    // (or a parse failure) is diagnosable without VERIFY_DEBUG.
+    process.stderr.write(`  [verify] Raw response for ${t.testId} (${responseText.length} chars): ${responseText.substring(0, 500)}\n`);
     const evidenceStatus = this.currentEvidenceStatus();
     if (!responseText) {
       return { testId: t.testId, pass: false, reason: 'Verifier returned empty response', evidenceStatus };
