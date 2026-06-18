@@ -38,6 +38,10 @@ and why — not reverse-engineer it.
 
 ## Status
 
+- **Completed: 2026-06-18** — all four tasks merged (#300–#303). A verdict now
+  carries why it landed (empty evidence says denied / not-called / no-data /
+  verifier-unavailable), the verifier logs its raw response, `VERIFY_VERBOSE`
+  gives a middle log level, and throughput/fa say when `dual` fell back to simple.
 - Created: 2026-06-18
 - Plan: #297
 - Issues: #300, #301, #302, #303
