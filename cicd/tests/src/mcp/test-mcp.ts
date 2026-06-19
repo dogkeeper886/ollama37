@@ -36,6 +36,8 @@ export interface McpTestOptions {
   verifyAllow?: string[];
   /** mcp__<name>__<tool> label the verifier registers the server under. */
   verifyServerName?: string;
+  /** Per-model Ollama response timeout (ms). Default 600000 (10 min). */
+  timeoutMs?: number;
   output?: string;
 }
 
@@ -52,6 +54,10 @@ interface McpModelResult {
   tool_results: { name: string; isError: boolean }[];
   final_answer_preview: string;
   error?: string;
+  /** Ollama generation perf for this model. */
+  out_tokens: number;
+  total_duration_s: number;
+  eval_tps: number;
   check: { overall_pass: boolean; simple: McpSimpleVerdict; agent: Judgment | null };
 }
 
@@ -108,7 +114,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
 
   for (const model of opts.models) {
     process.stderr.write(`--- ${model} ---\n`);
-    const traj = await runMcpHost({ host: opts.host, model, prompt: opts.prompt, server: opts.server, numCtx: opts.numCtx });
+    const traj = await runMcpHost({ host: opts.host, model, prompt: opts.prompt, server: opts.server, numCtx: opts.numCtx, timeoutMs: opts.timeoutMs });
     trajByModel.set(model, traj);
     const simple = simpleMcpCheck(traj);
     results.push({
@@ -119,9 +125,12 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
       tool_results: traj.toolResults.map((r) => ({ name: r.name, isError: r.isError })),
       final_answer_preview: traj.finalAnswer.slice(0, 200),
       error: traj.error,
+      out_tokens: traj.outTokens,
+      total_duration_s: traj.totalDurationS,
+      eval_tps: traj.evalTps,
       check: { overall_pass: simple.pass, simple, agent: null },
     });
-    process.stderr.write(`  supported=${traj.supported} calls=${traj.toolCalls.length} simple=${simple.pass}\n`);
+    process.stderr.write(`  supported=${traj.supported} calls=${traj.toolCalls.length} simple=${simple.pass} · ${traj.outTokens} tok @ ${traj.evalTps} tok/s in ${traj.totalDurationS}s\n`);
   }
 
   // Agent-level check, only for models that passed the structural check. Two modes:
@@ -228,8 +237,8 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   out.push('');
 
   // Scannable table — judge stages + cross-check, no raw JSON in the cells.
-  out.push('| Model | Verdict | Tool call(s) | Judge stages (tool·query·content) | Cross-check |');
-  out.push('|---|---|---|---|---|');
+  out.push('| Model | Verdict | Tool call(s) | Judge stages (tool·query·content) | Cross-check | Time (s) | Out tok | tok/s |');
+  out.push('|---|---|---|---|---|--:|--:|--:|');
   for (const r of results) {
     const verdict = r.check.overall_pass ? '✅ PASS' : r.supported ? '❌ FAIL' : '⚪ NO TOOL SUPPORT';
     const calls = r.tool_calls.map((c) => c.name).join(', ') || '—';
@@ -237,7 +246,7 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
     const stages = s ? `${tick(s.tool)} · ${tick(s.query)} · ${tick(s.content)}` : '—';
     const cc = r.check.agent?.crossCheckUnsupported;
     const cross = cc === undefined ? '—' : cc.length ? `❌ ${cc.join(', ').slice(0, 60)}` : '✅ grounded';
-    out.push(`| ${r.model} | ${verdict} | ${calls} | ${stages} | ${cross} |`);
+    out.push(`| ${r.model} | ${verdict} | ${calls} | ${stages} | ${cross} | ${r.total_duration_s || '—'} | ${r.out_tokens || '—'} | ${r.eval_tps || '—'} |`);
   }
 
   // Per-model detail (reasoning + raw evidence) tucked behind a toggle — proof without the clutter.

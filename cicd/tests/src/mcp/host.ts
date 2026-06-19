@@ -35,6 +35,9 @@ export interface McpHostOptions {
   numCtx?: number;
   /** Max chat↔tool rounds before giving up (guards against a tool loop). */
   maxIters?: number;
+  /** Per-call Ollama response timeout (ms). Default 600000 (10 min) — heavy models on slow
+   *  hardware (the K80) need more than fetch's implicit ~5-min default. */
+  timeoutMs?: number;
 }
 
 export interface ToolCallRecord {
@@ -59,6 +62,11 @@ export interface McpTrajectory {
   toolCalls: ToolCallRecord[];
   toolResults: ToolResultRecord[];
   finalAnswer: string;
+  /** Ollama generation perf, summed across the chat↔tool rounds. */
+  inTokens: number;
+  outTokens: number;
+  totalDurationS: number;
+  evalTps: number;
   error?: string;
 }
 
@@ -74,14 +82,18 @@ export function mcpToOllamaTools(tools: Array<{ name: string; description?: stri
   }));
 }
 
-async function chat(host: string, model: string, messages: unknown[], tools: unknown[], numCtx: number): Promise<any> {
+async function chat(host: string, model: string, messages: unknown[], tools: unknown[], numCtx: number, timeoutMs: number): Promise<any> {
   const res = await fetch(`${host}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ model, messages, tools, stream: false, options: { temperature: 0, seed: 42, num_ctx: numCtx } }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   return res.json();
 }
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+const tps = (tokens: number, durNs: number): number => (durNs > 0 ? round2(tokens / (durNs / 1e9)) : 0);
 
 /** Join an MCP CallToolResult's content blocks into a single text payload. */
 function resultText(content: unknown): string {
@@ -107,6 +119,12 @@ function asArgs(raw: unknown): Record<string, unknown> {
 export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
   const numCtx = opts.numCtx ?? 4096;
   const maxIters = opts.maxIters ?? 5;
+  // Clamp to a sane (1s … 1h) window: rejects NaN/0/negative (→ default) and caps huge values that
+  // would overflow the 32-bit timer and abort instantly. Bad --timeout can't silently fail every model.
+  const reqMs = Number(opts.timeoutMs);
+  const timeoutMs = Number.isFinite(reqMs) && reqMs > 0 ? Math.min(reqMs, 3_600_000) : 600000;
+  let totalDurNs = 0;
+  let evalDurNs = 0;
 
   const transport = new StdioClientTransport({
     command: opts.server.command,
@@ -124,6 +142,10 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     toolCalls: [],
     toolResults: [],
     finalAnswer: '',
+    inTokens: 0,
+    outTokens: 0,
+    totalDurationS: 0,
+    evalTps: 0,
   };
 
   const messages: any[] = [{ role: 'user', content: opts.prompt }];
@@ -139,7 +161,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     const tools = mcpToOllamaTools(listed.tools);
 
     for (let i = 0; i < maxIters; i++) {
-      const raw = await chat(opts.host, opts.model, messages, tools, numCtx);
+      const raw = await chat(opts.host, opts.model, messages, tools, numCtx, timeoutMs);
 
       if (!raw || typeof raw !== 'object') {
         throw new Error('ollama /api/chat: no/invalid response');
@@ -151,6 +173,13 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
         traj.error = String(raw.error);
         return traj;
       }
+      // Accumulate generation perf across the rounds (Ollama durations are ns).
+      traj.inTokens += raw.prompt_eval_count ?? 0;
+      traj.outTokens += raw.eval_count ?? 0;
+      totalDurNs += raw.total_duration ?? 0;
+      evalDurNs += raw.eval_duration ?? 0;
+      traj.totalDurationS = round2(totalDurNs / 1e9);
+      traj.evalTps = tps(traj.outTokens, evalDurNs);
 
       const msg = raw.message;
       const toolCalls: any[] = msg?.tool_calls ?? [];

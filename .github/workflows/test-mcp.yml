@@ -18,6 +18,11 @@ on:
         required: false
         default: "4096"
         type: string
+      timeout:
+        description: "Per-model Ollama response timeout (seconds) — heavy models on the K80 need more"
+        required: false
+        default: "600"
+        type: string
       judge_mode:
         description: "Verification mode (simple = structural check; dual = also run the keyless agent judge for groundedness; verify-live = the keyless verifier calls the server's read-only tools itself and checks the answer against LIVE data)"
         required: false
@@ -108,6 +113,7 @@ jobs:
           npx tsx src/cli.ts test-mcp $MODELS \
             --prompt "${{ inputs.prompt || 'List the projects.' }}" \
             --num-ctx "${{ inputs.num_ctx || '4096' }}" \
+            --timeout "${{ inputs.timeout || '600' }}" \
             --mcp-command "${{ inputs.mcp_command || 'docker' }}" \
             --mcp-args "${{ inputs.mcp_args || 'run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest' }}" \
             --mcp-env "TESTLINK_URL,TESTLINK_API_KEY" \
