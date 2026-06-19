@@ -51,4 +51,4 @@ second check rather than the sole authority.
 
 - Created: 2026-06-18
 - Plan: #298
-- Issues: none
+- Issues: #308, #309, #310
