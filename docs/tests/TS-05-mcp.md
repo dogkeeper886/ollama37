@@ -63,3 +63,16 @@ logical flow.
 | 3 | A non-allow-listed / write tool is attempted | the gate DENIES it (fail-closed) — the verifier can never write |
 | 4 | The verdict is reported | PASS only if the answer matches the live data; the **Live evidence** column shows the captured result |
 | 5 | The verifier can't authenticate or start | the run **fails closed** (FAIL), never a silent downgrade to the structural check |
+
+### TC-05: derived-argument tool use — the model must work out a tool argument ([STORY-012](../stories/STORY-012.md))
+
+- **Objective:** the model must pick the right tool *and* supply a **derived** argument, so the verifier's **query** stage does real work — unlike the no-argument `list_projects`, where "queried correctly" is a no-op. The model is asked by project *name* and must resolve it to the id itself.
+- **Script:** `cli.ts test-mcp <tool-capable-model> --prompt "List the test suites in the ollama37 project." --verify-live --verify-allow list_projects,list_test_suites --verify-server-name testlink`
+- **Preconditions:** as TC-04, plus the testlink `ollama37` project has test suites (Build/Inference/Runtime/Models Tests). Chained tool use is slow on the K80 (~8 min end-to-end); use a generous `--timeout`.
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | The model is asked by **name** ("the ollama37 project") — the id is never given | it must *derive* the id, not copy it from the prompt |
+| 2 | The model drives the chain | `list_projects` (finds ollama37 = id 1) → `list_test_suites(project_id="1")` with the derived id and exact arg key |
+| 3 | The verifier grades the three stages | tool selection (right tools) ✅, **query (correct derived `project_id`)** ✅, interpretation (answer matches the real suites) ✅ |
+| 4 | A model guesses/uses a wrong `project_id`, or skips the lookup | FAILs on the **query** stage — no longer an automatic pass (the failure the no-arg case can't catch) |
