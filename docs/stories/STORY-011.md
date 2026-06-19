@@ -49,6 +49,11 @@ second check rather than the sole authority.
 
 ## Status
 
+- **Completed: 2026-06-19** — all three tasks merged (#308–#310). A verifier PASS
+  now means: the model picked the right tool, queried it correctly, and gave a
+  grounded answer (3-stage rubric over the model's actual tool calls), AND the
+  answer's claimed facts were checked in code against the captured live result —
+  the LLM is a second opinion, not the sole judge.
 - Created: 2026-06-18
 - Plan: #298
 - Issues: #308, #309, #310
