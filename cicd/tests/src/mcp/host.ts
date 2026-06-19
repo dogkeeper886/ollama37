@@ -119,7 +119,7 @@ function asArgs(raw: unknown): Record<string, unknown> {
 export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
   const numCtx = opts.numCtx ?? 4096;
   const maxIters = opts.maxIters ?? 5;
-  const timeoutMs = opts.timeoutMs ?? 600000;
+  const timeoutMs = Number.isFinite(opts.timeoutMs) ? (opts.timeoutMs as number) : 600000;
   let totalDurNs = 0;
   let evalDurNs = 0;
 
