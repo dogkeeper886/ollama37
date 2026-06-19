@@ -78,6 +78,9 @@ export interface VerifyTarget {
   testId: string;
   prompt: string;
   answer: string;
+  /** The model-under-test's actual tool calls — so the verifier can grade tool selection and
+   *  query, not just the final answer. */
+  toolCalls: { name: string; arguments: Record<string, unknown> }[];
 }
 
 export interface VerifierConfig {
@@ -383,23 +386,36 @@ export class VerifierJudge {
 
   private buildPrompt(t: VerifyTarget): string {
     return JSON.stringify({
-      role: `You independently verify another model's answer for ${CONFIG.projectName}. You have access to the ${this.cfg.serverName} MCP tools.`,
-      task: 'You MUST call the available tools yourself to retrieve the real data, then judge whether the model\'s answer is correct and grounded in that real data. Do NOT trust the answer — check it. If you cannot call any tool, set pass=false and say so.',
+      role: `You independently verify another model's tool-use attempt for ${CONFIG.projectName}, by calling the ${this.cfg.serverName} MCP tools yourself.`,
+      task: 'Retrieve the ground truth by calling the allowed tools yourself, then grade the model\'s ATTEMPT against the three-stage rubric below. Do NOT trust the model — check it. If you cannot call any tool, set pass=false and say so.',
       allowed_tools: [...this.allow],
-      user_prompt: t.prompt,
-      model_answer: t.answer,
+      // The question the model was asked.
+      question_asked_to_model: t.prompt,
+      // The model's attempt — what it DID and what it CLAIMED. This is the thing under test; the
+      // ground truth is what YOU retrieve yourself, kept separate so you judge against fact, not the claim.
+      model_attempt: {
+        tool_calls: t.toolCalls,
+        answer: t.answer,
+      },
+      grade_each_stage: {
+        tool_selection: 'Did the model call the right tool(s) for the question — the necessary ones, no wrong or wasteful extras?',
+        query: 'Did it call them with correct arguments (right values/filters, no invented parameters)?',
+        interpretation: 'Is the final answer both correct/complete AND grounded — every fact it states is actually present in the data you retrieved, nothing invented?',
+      },
       rules: [
-        'Call the allowed tools to retrieve the ground truth before deciding.',
-        'pass=true only if the answer matches the real data you retrieved.',
+        'Call the allowed tools to retrieve the ground truth BEFORE deciding.',
+        'pass=true only if all three stages hold against the real data.',
         'If the answer states facts the tools contradict or do not contain, pass=false.',
       ],
       respond: {
         format: 'Respond with a single JSON object and nothing else',
         fields: {
           testId: t.testId,
-          pass: 'true if the answer matches the live tool data, false otherwise',
-          reason: 'Brief explanation, naming the tool(s) you called',
-          evidence: 'The tool result you verified against',
+          tool_selection_ok: 'true/false — right tool(s) for the question',
+          query_ok: 'true/false — correct arguments',
+          interpretation_ok: 'true/false — answer correct and grounded in the retrieved data',
+          pass: 'true only if all three stages are true',
+          reason: 'Brief explanation: name the tool(s) you called and, if pass=false, which stage failed',
         },
       },
     }, null, 2);
