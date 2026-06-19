@@ -46,4 +46,5 @@ come later; this story is about taking the first real step off the trivial case.
 ## Status
 
 - Created: 2026-06-19
+- Plan: #318
 - Issues: none
