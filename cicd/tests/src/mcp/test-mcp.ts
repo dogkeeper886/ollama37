@@ -153,7 +153,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
     );
     if (await verifier.isAvailable()) {
       applyVerdicts(
-        await verifier.verify(eligible.map((r) => ({ testId: r.model, prompt: opts.prompt, answer: trajByModel.get(r.model)!.finalAnswer }))),
+        await verifier.verify(eligible.map((r) => ({ testId: r.model, prompt: opts.prompt, answer: trajByModel.get(r.model)!.finalAnswer, toolCalls: r.tool_calls }))),
       );
     } else {
       // Fail closed: a verify-live run whose verifier can't even start has NOT verified anything,
