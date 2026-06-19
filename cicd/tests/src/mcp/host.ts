@@ -119,7 +119,10 @@ function asArgs(raw: unknown): Record<string, unknown> {
 export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
   const numCtx = opts.numCtx ?? 4096;
   const maxIters = opts.maxIters ?? 5;
-  const timeoutMs = Number.isFinite(opts.timeoutMs) ? (opts.timeoutMs as number) : 600000;
+  // Clamp to a sane (1s … 1h) window: rejects NaN/0/negative (→ default) and caps huge values that
+  // would overflow the 32-bit timer and abort instantly. Bad --timeout can't silently fail every model.
+  const reqMs = Number(opts.timeoutMs);
+  const timeoutMs = Number.isFinite(reqMs) && reqMs > 0 ? Math.min(reqMs, 3_600_000) : 600000;
   let totalDurNs = 0;
   let evalDurNs = 0;
 
