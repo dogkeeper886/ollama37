@@ -207,24 +207,54 @@ function evidenceWhy(status: Judgment['evidenceStatus']): string {
   }
 }
 
+const tick = (b: boolean): string => (b ? '✅' : '❌');
+
 function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
+  const mode = opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple';
+  const supported = results.filter((r) => r.supported);
+  const passed = supported.filter((r) => r.check.overall_pass).length;
+  const failed = supported.length - passed;
+  const sha = process.env.GITHUB_SHA?.slice(0, 8);
   const out: string[] = [];
-  out.push('## MCP tool-call test');
+
+  // Banner — a glance tells you the outcome.
+  out.push(`## 🧪 MCP tool-call test — ${failed === 0 ? '✅' : '❌'} ${passed} passed · ${failed} failed`);
   out.push('');
-  out.push(`**Server:** \`${opts.server.command} ${opts.server.args.join(' ')}\` · **Prompt:** ${opts.prompt} · **Judge:** ${opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple'}`);
+  out.push(`**Server:** \`${opts.server.command} ${opts.server.args.join(' ')}\``);
+  out.push(`**Prompt:** ${opts.prompt} · **Judge:** ${mode}${sha ? ` · **Commit:** \`${sha}\`` : ''}`);
   out.push('');
-  out.push('| Model | Verdict | Tool calls | Answer | Reason | Live evidence |');
-  out.push('|---|---|---|---|---|---|');
+
+  // Scannable table — judge stages + cross-check, no raw JSON in the cells.
+  out.push('| Model | Verdict | Tool call(s) | Judge stages (tool·query·content) | Cross-check |');
+  out.push('|---|---|---|---|---|');
   for (const r of results) {
-    const verdict = r.check.overall_pass ? 'PASS' : r.supported ? 'FAIL' : 'NO TOOL SUPPORT';
+    const verdict = r.check.overall_pass ? '✅ PASS' : r.supported ? '❌ FAIL' : '⚪ NO TOOL SUPPORT';
     const calls = r.tool_calls.map((c) => c.name).join(', ') || '—';
-    const answer = r.final_answer_preview.trim() ? 'yes' : 'no';
-    const reason = (r.check.agent?.reason ?? r.check.simple.reason ?? '').replace(/[\n|]/g, ' ').slice(0, 200);
-    // The raw tool result the verifier captured (verify-live only); full result is in the JSON output.
-    // When there's no captured data, say WHY rather than a bare "—" (STORY-010).
-    const evidence = (r.check.agent?.evidence ?? '').replace(/[\n|]/g, ' ').slice(0, 200)
-      || evidenceWhy(r.check.agent?.evidenceStatus);
-    out.push(`| ${r.model} | ${verdict} | ${calls} | ${answer} | ${reason} | ${evidence} |`);
+    const s = r.check.agent?.stages;
+    const stages = s ? `${tick(s.tool)} · ${tick(s.query)} · ${tick(s.content)}` : '—';
+    const cc = r.check.agent?.crossCheckUnsupported;
+    const cross = cc === undefined ? '—' : cc.length ? `❌ ${cc.join(', ').slice(0, 60)}` : '✅ grounded';
+    out.push(`| ${r.model} | ${verdict} | ${calls} | ${stages} | ${cross} |`);
+  }
+
+  // Per-model detail (reasoning + raw evidence) tucked behind a toggle — proof without the clutter.
+  for (const r of results) {
+    const reason = (r.check.agent?.reason ?? r.check.simple.reason ?? '').trim();
+    const evidence = r.check.agent?.evidence ?? '';
+    out.push('');
+    out.push(`<details><summary>Judge detail — ${r.model}</summary>`);
+    out.push('');
+    if (reason) out.push(`**Reasoning:** ${reason.replace(/\n/g, ' ')}`);
+    out.push('');
+    if (evidence) {
+      out.push('**Live evidence:**');
+      out.push('```json');
+      out.push(evidence.slice(0, 4000));
+      out.push('```');
+    } else {
+      out.push(`**Live evidence:** ${evidenceWhy(r.check.agent?.evidenceStatus)}`);
+    }
+    out.push('</details>');
   }
   process.stdout.write(out.join('\n') + '\n');
 }

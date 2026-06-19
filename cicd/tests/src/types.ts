@@ -140,6 +140,12 @@ export interface Judgment {
    *  'no-data' (called but returned nothing), 'verifier-unavailable' (the verifier produced no
    *  verdict — couldn't start, or errored/timed out mid-run). */
   evidenceStatus?: 'captured' | 'denied' | 'not-called' | 'no-data' | 'verifier-unavailable';
+  /** verify-live: the verifier's per-stage rubric flags (tool selection / query / interpretation),
+   *  if it graded them — so the report can show *judge info*, not just the final pass/fail. */
+  stages?: { tool: boolean; query: boolean; content: boolean };
+  /** verify-live deterministic cross-check: the claimed facts NOT found in the live data
+   *  (empty = all grounded). Undefined when there was no captured evidence to check against. */
+  crossCheckUnsupported?: string[];
 }
 
 // ============================================

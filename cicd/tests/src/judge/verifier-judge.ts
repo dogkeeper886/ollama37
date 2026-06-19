@@ -57,6 +57,16 @@ const VERBOSE = DEBUG || !!process.env.VERIFY_VERBOSE;
  *  every record (the report still shows only the first ~200 chars). */
 const EVIDENCE_CAP = 20000;
 
+/** Redact secret-like JSON field values (api_key, token, password, …) from a captured tool result
+ *  before it becomes evidence — so credentials a server returns never reach the report, the JSON
+ *  artifact, or the CI log. Matches the field NAME; leaves everything else intact. */
+export function redactSecrets(s: string): string {
+  return s.replace(
+    /("(?:[\w-]*(?:api[_-]?key|key|token|secret|password|passwd|credential)[\w-]*)"\s*:\s*)"[^"]*"/gi,
+    '$1"[redacted]"',
+  );
+}
+
 /** Deterministic cross-check (STORY-011): the distinctive identifiers a model's answer claims —
  *  multi-digit ids and identifier-like names (those containing a digit or hyphen) — must appear in
  *  the captured live result. Returns the claims that DON'T, i.e. the likely inventions. Conservative
@@ -291,7 +301,7 @@ export class VerifierJudge {
         if (u.sessionUpdate === 'tool_call_update' && typeof x.toolCallId === 'string' &&
             this.allowedCallIds.has(x.toolCallId) && String(x.status) === 'completed') {
           const text = this.toolResultText(x.content);
-          if (text) this.toolEvidence = (this.toolEvidence + text).slice(0, EVIDENCE_CAP);
+          if (text) this.toolEvidence = (this.toolEvidence + redactSecrets(text)).slice(0, EVIDENCE_CAP);
         }
       },
       requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
@@ -461,6 +471,12 @@ export class VerifierJudge {
     try {
       const judgment = JSON.parse(json) as Judgment;
       judgment.testId = t.testId;
+      // Capture the verifier's per-stage rubric flags (it grades these; surface them as judge info).
+      const raw = judgment as unknown as Record<string, unknown>;
+      const toBool = (v: unknown) => v === true || String(v).toLowerCase() === 'true';
+      if ('tool_selection_ok' in raw || 'query_ok' in raw || 'interpretation_ok' in raw) {
+        judgment.stages = { tool: toBool(raw.tool_selection_ok), query: toBool(raw.query_ok), content: toBool(raw.interpretation_ok) };
+      }
       if (typeof judgment.pass === 'string') {
         judgment.pass = (judgment.pass as unknown as string).toLowerCase() === 'true';
       }
@@ -471,9 +487,10 @@ export class VerifierJudge {
       // Deterministic cross-check: the verifying model's PASS only stands if the answer's claimed
       // facts actually appear in the live result we captured. The LLM is a second opinion, never the
       // sole judge — it cannot wave through an answer the ground truth doesn't support.
-      if (judgment.pass && this.toolEvidence) {
+      if (this.toolEvidence) {
         const unsupported = unsupportedClaims(t.answer, this.toolEvidence);
-        if (unsupported.length) {
+        judgment.crossCheckUnsupported = unsupported;        // record the result for the report (judge info)
+        if (judgment.pass && unsupported.length) {
           judgment.pass = false;
           judgment.reason = `Deterministic cross-check FAILED: answer claims not present in live data: ${unsupported.join(', ')}. (verifier had said: ${judgment.reason})`;
           process.stderr.write(`  [verify] cross-check overrode PASS→FAIL — unsupported: ${unsupported.join(', ')}\n`);
