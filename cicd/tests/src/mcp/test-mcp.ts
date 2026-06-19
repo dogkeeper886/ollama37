@@ -184,7 +184,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
     writeFileSync(
       opts.output,
       JSON.stringify(
-        { timestamp: new Date().toISOString(), server: { command: opts.server.command, args: opts.server.args }, prompt: opts.prompt, judge: opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple', results: full },
+        { timestamp: new Date().toISOString(), server: { command: opts.server.command, args: opts.server.args }, prompt: opts.prompt, judge: judgeLabel(opts), results: full },
         null,
         2
       )
@@ -208,20 +208,23 @@ function evidenceWhy(status: Judgment['evidenceStatus']): string {
 }
 
 const tick = (b: boolean): string => (b ? '✅' : '❌');
+const judgeLabel = (opts: McpTestOptions): string => (opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple');
+/** Escape so model/server-controlled text can't break out of the Markdown/<details>/code block. */
+const mdSafe = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
-  const mode = opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple';
   const supported = results.filter((r) => r.supported);
   const passed = supported.filter((r) => r.check.overall_pass).length;
   const failed = supported.length - passed;
   const sha = process.env.GITHUB_SHA?.slice(0, 8);
   const out: string[] = [];
 
-  // Banner — a glance tells you the outcome.
-  out.push(`## 🧪 MCP tool-call test — ${failed === 0 ? '✅' : '❌'} ${passed} passed · ${failed} failed`);
+  // Banner — a glance tells you the outcome. ⚪ when nothing was actually verified (don't fake a green).
+  const icon = failed > 0 ? '❌' : passed > 0 ? '✅' : '⚪';
+  out.push(`## 🧪 MCP tool-call test — ${icon} ${passed} passed · ${failed} failed`);
   out.push('');
   out.push(`**Server:** \`${opts.server.command} ${opts.server.args.join(' ')}\``);
-  out.push(`**Prompt:** ${opts.prompt} · **Judge:** ${mode}${sha ? ` · **Commit:** \`${sha}\`` : ''}`);
+  out.push(`**Prompt:** ${opts.prompt} · **Judge:** ${judgeLabel(opts)}${sha ? ` · **Commit:** \`${sha}\`` : ''}`);
   out.push('');
 
   // Scannable table — judge stages + cross-check, no raw JSON in the cells.
@@ -242,15 +245,14 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
     const reason = (r.check.agent?.reason ?? r.check.simple.reason ?? '').trim();
     const evidence = r.check.agent?.evidence ?? '';
     out.push('');
-    out.push(`<details><summary>Judge detail — ${r.model}</summary>`);
+    out.push(`<details><summary>Judge detail — ${mdSafe(r.model)}</summary>`);
     out.push('');
-    if (reason) out.push(`**Reasoning:** ${reason.replace(/\n/g, ' ')}`);
+    if (reason) out.push(`**Reasoning:** ${mdSafe(reason.replace(/\n/g, ' '))}`);
     out.push('');
     if (evidence) {
+      // HTML-escaped <pre> (not a ``` fence) so a ``` or </details> in the result can't break out.
       out.push('**Live evidence:**');
-      out.push('```json');
-      out.push(evidence.slice(0, 4000));
-      out.push('```');
+      out.push(`<pre>${mdSafe(evidence.slice(0, 4000))}</pre>`);
     } else {
       out.push(`**Live evidence:** ${evidenceWhy(r.check.agent?.evidenceStatus)}`);
     }

@@ -61,8 +61,10 @@ const EVIDENCE_CAP = 20000;
  *  before it becomes evidence — so credentials a server returns never reach the report, the JSON
  *  artifact, or the CI log. Matches the field NAME; leaves everything else intact. */
 export function redactSecrets(s: string): string {
+  // Field name contains a secret-ish word → replace its value (string-with-escapes, array, object,
+  // or bare number/bool/null) with [redacted]. Over-redacts (safe direction) rather than miss one.
   return s.replace(
-    /("(?:[\w-]*(?:api[_-]?key|key|token|secret|password|passwd|credential)[\w-]*)"\s*:\s*)"[^"]*"/gi,
+    /("(?:[\w-]*(?:api[_-]?key|key|token|secret|password|passwd|credential|authorization|auth|bearer|session|cookie|signature|access|private)[\w-]*)"\s*:\s*)(?:"(?:\\.|[^"\\])*"|\[[^\]]*\]|\{[^}]*\}|[^,}\]\s][^,}\]]*)/gi,
     '$1"[redacted]"',
   );
 }
