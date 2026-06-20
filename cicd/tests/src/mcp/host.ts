@@ -111,6 +111,9 @@ async function chat(host: string, model: string, messages: unknown[], tools: unk
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
+        // The response is a separate emitter from req — a reset mid-body (a real risk on a
+        // slow/OOMing K80 backend) errors here, not on req. Without this it's an uncaught throw.
+        res.on('error', reject);
         res.on('end', () => {
           try {
             resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
