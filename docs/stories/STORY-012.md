@@ -47,4 +47,5 @@ come later; this story is about taking the first real step off the trivial case.
 
 - Created: 2026-06-19
 - Plan: #318
-- Issues: #320, #321, #322
+- Issues: #320, #321, #322, #324
+- PRs: #325 (open) — multi-server host / Playwright distractor (#324)

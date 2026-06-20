@@ -14,14 +14,14 @@ on:
         default: "List the projects."
         type: string
       num_ctx:
-        description: "Context window size"
+        description: "Context window size (8192 fits a merged multi-server tool menu; one server fits in 4096)"
         required: false
-        default: "4096"
+        default: "8192"
         type: string
       timeout:
-        description: "Per-model Ollama response timeout (seconds) — heavy models on the K80 need more"
+        description: "Per-call Ollama response timeout (seconds) — a multi-server menu on the K80 takes ~18 min/round; a single server is far faster"
         required: false
-        default: "600"
+        default: "1800"
         type: string
       judge_mode:
         description: "Verification mode (simple = structural check; dual = also run the keyless agent judge for groundedness; verify-live = the keyless verifier calls the server's read-only tools itself and checks the answer against LIVE data)"
@@ -51,6 +51,16 @@ on:
         description: "Args for the MCP server (space-separated)"
         required: false
         default: "run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest"
+        type: string
+      distractor_command:
+        description: "Optional second (menu-only) MCP server command, e.g. npx for Playwright — its tools become distractors the model must NOT pick (the verifier never touches it). Leave empty for one server."
+        required: false
+        default: ""
+        type: string
+      distractor_args:
+        description: "Args for the distractor MCP server, e.g. @playwright/mcp@latest"
+        required: false
+        default: ""
         type: string
 
 env:
@@ -112,11 +122,13 @@ jobs:
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
           npx tsx src/cli.ts test-mcp $MODELS \
             --prompt "${{ inputs.prompt || 'List the projects.' }}" \
-            --num-ctx "${{ inputs.num_ctx || '4096' }}" \
-            --timeout "${{ inputs.timeout || '600' }}" \
+            --num-ctx "${{ inputs.num_ctx || '8192' }}" \
+            --timeout "${{ inputs.timeout || '1800' }}" \
             --mcp-command "${{ inputs.mcp_command || 'docker' }}" \
             --mcp-args "${{ inputs.mcp_args || 'run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest' }}" \
             --mcp-env "TESTLINK_URL,TESTLINK_API_KEY" \
+            --distractor-command "${{ inputs.distractor_command }}" \
+            --distractor-args "${{ inputs.distractor_args }}" \
             --output /tmp/mcp-results.json \
             $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"
 
