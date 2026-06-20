@@ -24,7 +24,9 @@ const JUDGE_CRITERIA =
 export interface McpTestOptions {
   models: string[];
   prompt: string;
-  server: McpServerConfig;
+  /** Servers whose tools are merged into one menu for the model. With more than one,
+   *  picking the right tool is a real choice — extra servers act as distractors. */
+  servers: McpServerConfig[];
   host: string;
   numCtx: number;
   judge: boolean;
@@ -34,7 +36,9 @@ export interface McpTestOptions {
   /** Exact tool names the verifier may call. Fail-closed: if empty/unset, the verifier
    *  verifies nothing — pass an explicit allow-list (no prefix heuristic across servers). */
   verifyAllow?: string[];
-  /** mcp__<name>__<tool> label the verifier registers the server under. */
+  /** Selects WHICH server the verifier spawns (by McpServerConfig.name) and the
+   *  mcp__<name>__<tool> label it registers it under — the verifier only ever sees
+   *  this one server, so distractor servers stay out of its reach. */
   verifyServerName?: string;
   /** Per-model Ollama response timeout (ms). Default 600000 (10 min). */
   timeoutMs?: number;
@@ -116,7 +120,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
 
   for (const model of opts.models) {
     process.stderr.write(`--- ${model} ---\n`);
-    const traj = await runMcpHost({ host: opts.host, model, prompt: opts.prompt, server: opts.server, numCtx: opts.numCtx, timeoutMs: opts.timeoutMs });
+    const traj = await runMcpHost({ host: opts.host, model, prompt: opts.prompt, servers: opts.servers, numCtx: opts.numCtx, timeoutMs: opts.timeoutMs });
     trajByModel.set(model, traj);
     const simple = simpleMcpCheck(traj);
     results.push({
@@ -153,30 +157,45 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
   };
 
   if (eligible.length > 0 && opts.verifyLive) {
-    // Full server tool list (same server for every model) → the verifier's allow/deny.
-    // Fail-closed: only an explicit --verify-allow opens tools. No prefix heuristic —
-    // it can't tell a read-only `get_x` from a destructive `get_and_purge` on an
-    // arbitrary server, and the verifier's contract is exact-name allow-listing.
-    const allToolNames = Array.from(new Set(eligible.flatMap((r) => r.tool_names)));
+    // The verifier spawns ONLY its named server (read-only, fail-closed); distractor
+    // servers on the model's menu never reach it. Hand it that server's tools only —
+    // filtered by which server each came from — so its deny-list doesn't sprout bogus
+    // rules for tools it can't even see. Fail-closed: only --verify-allow opens tools.
+    const verifyServerName = opts.verifyServerName ?? 'mcp';
+    const verifyServer = opts.servers.find((s) => (s.name ?? 'mcp') === verifyServerName);
+    const toolServer = trajByModel.get(eligible[0].model)?.toolServer ?? {};
+    const verifyToolNames = Array.from(new Set(eligible.flatMap((r) => r.tool_names))).filter((n) => toolServer[n] === verifyServerName);
     const allowTools = opts.verifyAllow ?? [];
-    const verifier = new VerifierJudge(
-      { server: opts.server, serverName: opts.verifyServerName ?? 'mcp', toolNames: allToolNames, allowTools },
-      '',
-    );
-    if (await verifier.isAvailable()) {
-      applyVerdicts(
-        await verifier.verify(eligible.map((r) => ({ testId: r.model, prompt: opts.prompt, answer: trajByModel.get(r.model)!.finalAnswer, toolCalls: r.tool_calls }))),
-      );
-    } else {
-      // Fail closed: a verify-live run whose verifier can't even start has NOT verified anything,
-      // so it must not green-light on the structural check alone. Mark every eligible model FAIL.
-      process.stderr.write('[ERROR] verify-live requested but the verifier agent is unavailable (auth/availability) — failing closed\n');
+    if (!verifyServer) {
+      // Misconfigured: verify-live asked, but no server matches the name. Don't fall back
+      // to some other server (could be a distractor) — fail closed.
+      process.stderr.write(`[ERROR] verify-live: no configured server named "${verifyServerName}" — failing closed\n`);
       applyVerdicts(eligible.map((r) => ({
         testId: r.model,
         pass: false,
-        reason: 'verify-live could not run: verifier agent unavailable (auth/availability)',
+        reason: `verify-live could not run: no server named "${verifyServerName}"`,
         evidenceStatus: 'verifier-unavailable' as const,
       })));
+    } else {
+      const verifier = new VerifierJudge(
+        { server: verifyServer, serverName: verifyServerName, toolNames: verifyToolNames, allowTools },
+        '',
+      );
+      if (await verifier.isAvailable()) {
+        applyVerdicts(
+          await verifier.verify(eligible.map((r) => ({ testId: r.model, prompt: opts.prompt, answer: trajByModel.get(r.model)!.finalAnswer, toolCalls: r.tool_calls }))),
+        );
+      } else {
+        // Fail closed: a verify-live run whose verifier can't even start has NOT verified anything,
+        // so it must not green-light on the structural check alone. Mark every eligible model FAIL.
+        process.stderr.write('[ERROR] verify-live requested but the verifier agent is unavailable (auth/availability) — failing closed\n');
+        applyVerdicts(eligible.map((r) => ({
+          testId: r.model,
+          pass: false,
+          reason: 'verify-live could not run: verifier agent unavailable (auth/availability)',
+          evidenceStatus: 'verifier-unavailable' as const,
+        })));
+      }
     }
   } else if (eligible.length > 0 && opts.judge) {
     const agentJudge = new AgentJudge();
@@ -196,7 +215,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
     writeFileSync(
       opts.output,
       JSON.stringify(
-        { timestamp: new Date().toISOString(), server: { command: opts.server.command, args: opts.server.args }, prompt: opts.prompt, judge: judgeLabel(opts), results: full },
+        { timestamp: new Date().toISOString(), servers: opts.servers.map((s) => ({ name: s.name ?? 'mcp', command: s.command, args: s.args })), prompt: opts.prompt, judge: judgeLabel(opts), results: full },
         null,
         2
       )
@@ -239,7 +258,8 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   const icon = failed > 0 ? '❌' : passed > 0 ? '✅' : '⚪';
   out.push(`## 🧪 MCP tool-call test — ${icon} ${passed} passed · ${failed} failed`);
   out.push('');
-  out.push(`**Server:** \`${opts.server.command} ${opts.server.args.join(' ')}\``);
+  const serverLabel = opts.servers.map((s) => `\`${s.command} ${s.args.join(' ')}\``).join(' + ');
+  out.push(`**Server${opts.servers.length > 1 ? 's' : ''}:** ${serverLabel}`);
   out.push(`**Prompt:** ${opts.prompt} · **Judge:** ${judgeLabel(opts)}${sha ? ` · **Commit:** \`${sha}\`` : ''}`);
   out.push('');
 

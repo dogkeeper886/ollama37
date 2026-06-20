@@ -21,6 +21,7 @@ logical flow.
 - **Objective:** the model calls the right tool against the live server and produces a grounded answer.
 - **Script:** `cli.ts test-mcp <tool-capable-model> --judge` (default server: testlink-mcp)
 - **Preconditions:** Ollama up with the model pulled; testlink-mcp reachable with `TESTLINK_URL` / `TESTLINK_API_KEY`. Locally these are read from `cicd/tests/.env` (copy `cicd/tests/.env.example`); in CI they come from the matching GitHub secrets.
+- **Multi-server menu (optional):** add `--distractor-command <cmd> --distractor-args <args>` (e.g. `--distractor-command npx --distractor-args "@playwright/mcp@latest"`) to merge a second server's tools into the menu as distractors. The objective, ground truth, and the verifier's testlink-only allow-list are unchanged — but `tool_selection` must now **reject** the distractor tools and still pick `list_projects`. A correct run never calls a distractor tool, so the distractor server never does any work. The merged testlink+Playwright menu is ~50 tools (~6.8k prompt tokens), so use `--num-ctx 8192` to avoid truncation and a generous `--timeout` — on the K80 a correct run takes ~18 min (verified: `list_projects` chosen, distractors ignored, PASS).
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
@@ -69,6 +70,7 @@ logical flow.
 - **Objective:** the model must pick the right tool *and* supply a **derived** argument, so the verifier's **query** stage does real work — unlike the no-argument `list_projects`, where "queried correctly" is a no-op. The model is asked by project *name* and must resolve it to the id itself.
 - **Script:** `cli.ts test-mcp <tool-capable-model> --prompt "List the test suites in the ollama37 project." --verify-live --verify-allow list_projects,list_test_suites --verify-server-name testlink`
 - **Preconditions:** as TC-04, plus the testlink `ollama37` project has test suites (Build/Inference/Runtime/Models Tests). Chained tool use is slow on the K80 (~8 min end-to-end); use a generous `--timeout`.
+- **Multi-server menu (optional):** as TC-01, add `--distractor-command/--distractor-args` to make `tool_selection` harder — the model must reject the distractor tools *and* still derive the `project_id`. Both the selection and query stages then do real work. The merged menu enlarges every prompt, so watch the `Peak in/ctx` report column against `--num-ctx`.
 
 | # | Action | Expected Result |
 |---|--------|-----------------|

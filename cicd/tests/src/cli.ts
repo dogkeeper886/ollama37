@@ -300,16 +300,18 @@ program
   .description("Test whether models can drive a real MCP server's tools")
   .argument('<models...>', 'One or more model names to test')
   .option('--prompt <text>', 'Prompt that should trigger a tool call', CONFIG.mcp.prompt)
-  .option('-c, --num-ctx <n>', 'Context window size', '4096')
+  .option('-c, --num-ctx <n>', 'Context window size (8192 fits a merged multi-server tool menu; one server fits in 4096)', '8192')
   .option('--judge', 'Also run the agent judge on the final answer (dual mode)', false)
   .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
   .option('--mcp-command <cmd>', 'Command to launch the stdio MCP server', CONFIG.mcp.command)
   .option('--mcp-args <args>', 'Args for the MCP server (space-separated; no spaces within a single arg)', CONFIG.mcp.args.join(' '))
   .option('--mcp-env <names>', 'Comma-separated env var names to forward to the server as creds (overrides MCP_ENV)', '')
+  .option('--distractor-command <cmd>', 'Optional second (menu-only) MCP server, e.g. playwright — its tools join the menu as distractors the model must NOT pick; the verifier never touches it')
+  .option('--distractor-args <args>', 'Args for the distractor MCP server (space-separated; no spaces within a single arg)', '')
   .option('--verify-live', 'Verify the answer against LIVE truth: the judge calls the server\'s read-only tools itself (supersedes --judge)', false)
   .option('--verify-allow <names>', 'Comma-separated exact tool names the verifier may call (fail-closed: empty verifies nothing)', '')
-  .option('--verify-server-name <name>', 'mcp__<name>__<tool> label the verifier registers the server under', 'mcp')
-  .option('--timeout <seconds>', 'Per-model Ollama response timeout (heavy models need more)', '600')
+  .option('--verify-server-name <name>', 'Name of the server the verifier spawns (the primary server is registered under this name); its tools are mcp__<name>__<tool>', 'mcp')
+  .option('--timeout <seconds>', 'Per-call Ollama response timeout (a multi-server menu on the K80 takes ~18 min/round; a single server is far faster)', '1800')
   .option('-o, --output <file>', 'Write the JSON report to this file')
   .action(async (models: string[], options) => {
     const code = await runMcpTest({
@@ -322,12 +324,24 @@ program
       verifyAllow: options.verifyAllow ? String(options.verifyAllow).split(',').map((s: string) => s.trim()).filter(Boolean) : undefined,
       verifyServerName: options.verifyServerName,
       host: options.host,
-      server: {
-        command: options.mcpCommand,
-        args: String(options.mcpArgs).split(' ').filter(Boolean),
-        cwd: CONFIG.mcp.cwd,
-        env: options.mcpEnv ? pickEnv(options.mcpEnv) : CONFIG.mcp.env,
-      },
+      // Primary server (the verifier's read-only target) is named after --verify-server-name
+      // so the verifier can find it. An optional distractor server joins the model's menu only.
+      servers: [
+        {
+          name: options.verifyServerName,
+          command: options.mcpCommand,
+          args: String(options.mcpArgs).split(' ').filter(Boolean),
+          cwd: CONFIG.mcp.cwd,
+          env: options.mcpEnv ? pickEnv(options.mcpEnv) : CONFIG.mcp.env,
+        },
+        ...(options.distractorCommand
+          ? [{
+              name: 'distractor',
+              command: options.distractorCommand,
+              args: String(options.distractorArgs).split(' ').filter(Boolean),
+            }]
+          : []),
+      ],
       output: options.output,
     });
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));

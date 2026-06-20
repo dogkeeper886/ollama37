@@ -13,11 +13,16 @@
  * the catch-returns-FAIL shape in perf/fa.ts). The server choice + its
  * credentials are config, not code.
  */
+import http from 'node:http';
+import https from 'node:https';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 /** How to spawn the stdio MCP server. testlink-mcp is just one such config. */
 export interface McpServerConfig {
+  /** Identifies the server when several share one menu — e.g. the verifier picks
+   *  its read-only server by this name. Defaults to 'mcp' when unset. */
+  name?: string;
   command: string;
   args: string[];
   cwd?: string;
@@ -31,7 +36,10 @@ export interface McpHostOptions {
   host: string;
   model: string;
   prompt: string;
-  server: McpServerConfig;
+  /** One or more stdio MCP servers whose tools are merged into a single menu the
+   *  model picks from. Two+ servers make "tool selection" a real choice (the model
+   *  must reach for the right one); a tool call routes back to its owning server. */
+  servers: McpServerConfig[];
   numCtx?: number;
   /** Max chat↔tool rounds before giving up (guards against a tool loop). */
   maxIters?: number;
@@ -55,10 +63,13 @@ export interface McpTrajectory {
   model: string;
   /** false ⇢ the model's template can't do tools (Ollama rejected `tools`). */
   supported: boolean;
-  /** Tool names the MCP server exposed. */
+  /** Tool names the MCP server(s) exposed (merged across servers). */
   toolNames: string[];
   /** Required arg names per tool, from each tool's inputSchema.required. */
   toolRequired: Record<string, string[]>;
+  /** Which server each tool came from (toolName → server name) — lets a caller
+   *  pick out one server's tools (e.g. the verifier's read-only server). */
+  toolServer: Record<string, string>;
   toolCalls: ToolCallRecord[];
   toolResults: ToolResultRecord[];
   finalAnswer: string;
@@ -85,14 +96,37 @@ export function mcpToOllamaTools(tools: Array<{ name: string; description?: stri
   }));
 }
 
+/** POST /api/chat over node:http so the per-call timeout is honored end-to-end.
+ *  fetch() (undici) imposes its own ~300s headers/body timeout that AbortSignal
+ *  can't lift — it silently kills slow K80 generations at 5 min. node:http has no
+ *  such cap, so timeoutMs (via AbortSignal) is the only deadline. */
 async function chat(host: string, model: string, messages: unknown[], tools: unknown[], numCtx: number, timeoutMs: number): Promise<any> {
-  const res = await fetch(`${host}/api/chat`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model, messages, tools, stream: false, options: { temperature: 0, seed: 42, num_ctx: numCtx } }),
-    signal: AbortSignal.timeout(timeoutMs),
+  const body = JSON.stringify({ model, messages, tools, stream: false, options: { temperature: 0, seed: 42, num_ctx: numCtx } });
+  const url = new URL(`${host}/api/chat`);
+  const transport = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = transport.request(
+      url,
+      { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+          } catch {
+            reject(new Error('ollama /api/chat: invalid JSON response'));
+          }
+        });
+      },
+    );
+    const signal = AbortSignal.timeout(timeoutMs);
+    const onAbort = () => req.destroy(new Error(`ollama /api/chat timed out after ${timeoutMs}ms`));
+    signal.addEventListener('abort', onAbort, { once: true });
+    req.on('close', () => signal.removeEventListener('abort', onAbort));
+    req.on('error', reject);
+    req.end(body);
   });
-  return res.json();
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -129,19 +163,26 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
   let totalDurNs = 0;
   let evalDurNs = 0;
 
-  const transport = new StdioClientTransport({
-    command: opts.server.command,
-    args: opts.server.args,
-    cwd: opts.server.cwd,
-    env: { ...getDefaultEnvironment(), ...(opts.server.env ?? {}) },
-  });
-  const client = new Client({ name: 'ollama37-mcp-host', version: '1.0.0' });
+  // One client per server; their tools are merged into a single menu, and a tool
+  // call routes back to the server that owns the name (toolToClient).
+  const clients = opts.servers.map((s) => ({
+    name: s.name ?? 'mcp',
+    client: new Client({ name: 'ollama37-mcp-host', version: '1.0.0' }),
+    transport: new StdioClientTransport({
+      command: s.command,
+      args: s.args,
+      cwd: s.cwd,
+      env: { ...getDefaultEnvironment(), ...(s.env ?? {}) },
+    }),
+  }));
+  const toolToClient = new Map<string, Client>();
 
   const traj: McpTrajectory = {
     model: opts.model,
     supported: true,
     toolNames: [],
     toolRequired: {},
+    toolServer: {},
     toolCalls: [],
     toolResults: [],
     finalAnswer: '',
@@ -155,14 +196,25 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
   const messages: any[] = [{ role: 'user', content: opts.prompt }];
 
   try {
-    await client.connect(transport);
-    const listed = await client.listTools();
-    traj.toolNames = listed.tools.map((t) => t.name);
-    for (const t of listed.tools) {
-      const req = (t.inputSchema as any)?.required;
-      traj.toolRequired[t.name] = Array.isArray(req) ? req : [];
+    // Connect every server, list its tools, and merge into one menu. A tool name
+    // exposed by two servers can't be routed unambiguously — fail fast rather than
+    // silently send the call to the wrong one.
+    const merged: Array<{ name: string; description?: string; inputSchema?: unknown }> = [];
+    for (const { name: serverName, client, transport } of clients) {
+      await client.connect(transport);
+      const listed = await client.listTools();
+      for (const t of listed.tools) {
+        if (toolToClient.has(t.name)) {
+          throw new Error(`tool name collision: "${t.name}" exposed by "${traj.toolServer[t.name]}" and "${serverName}"`);
+        }
+        toolToClient.set(t.name, client);
+        traj.toolServer[t.name] = serverName;
+        traj.toolRequired[t.name] = Array.isArray((t.inputSchema as any)?.required) ? (t.inputSchema as any).required : [];
+        merged.push(t);
+      }
     }
-    const tools = mcpToOllamaTools(listed.tools);
+    traj.toolNames = merged.map((t) => t.name);
+    const tools = mcpToOllamaTools(merged);
 
     for (let i = 0; i < maxIters; i++) {
       const raw = await chat(opts.host, opts.model, messages, tools, numCtx, timeoutMs);
@@ -205,13 +257,19 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
         // the verdict under test, so capture it and feed it back, don't crash.
         let content: string;
         let isError: boolean;
-        try {
-          const result: any = await client.callTool({ name, arguments: args });
-          content = resultText(result?.content);
-          isError = Boolean(result?.isError);
-        } catch (e) {
-          content = `tool call failed: ${e instanceof Error ? e.message : String(e)}`;
+        const owner = toolToClient.get(name);
+        if (!owner) {
+          content = `tool call failed: unknown tool "${name}"`;
           isError = true;
+        } else {
+          try {
+            const result: any = await owner.callTool({ name, arguments: args });
+            content = resultText(result?.content);
+            isError = Boolean(result?.isError);
+          } catch (e) {
+            content = `tool call failed: ${e instanceof Error ? e.message : String(e)}`;
+            isError = true;
+          }
         }
         traj.toolResults.push({ name, content, isError });
         messages.push({ role: 'tool', content, tool_name: name });
@@ -227,6 +285,6 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     traj.error = e instanceof Error ? e.message : String(e);
     return traj;
   } finally {
-    await client.close().catch(() => {});
+    for (const { client } of clients) await client.close().catch(() => {});
   }
 }
