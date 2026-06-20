@@ -78,7 +78,9 @@ jobs:
           fi
 
           # Run models tests
-          npx tsx src/cli.ts run --suite models $ID_FLAG --format json > /tmp/models-results.json || true
+          rc=0
+          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts run --suite models $ID_FLAG --format json > /tmp/models-results.json || rc=$?
+          [ "$rc" -eq 75 ] && exit 1   # overheat → fail the job; any other non-zero stays tolerated (gated by the JSON below)
 
           echo "--- JSON Results ---"
           cat /tmp/models-results.json
