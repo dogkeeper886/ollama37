@@ -59,7 +59,9 @@ jobs:
             echo "Running single test: ${{ inputs.test_id }}"
           fi
 
-          npx tsx src/cli.ts run --suite runtime $ID_FLAG --format json > /tmp/runtime-results.json || true
+          rc=0
+          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts run --suite runtime $ID_FLAG --format json > /tmp/runtime-results.json || rc=$?
+          [ "$rc" -eq 75 ] && exit 1   # overheat → fail the job; any other non-zero stays tolerated (gated by the JSON below)
 
           echo "--- JSON Results ---"
           cat /tmp/runtime-results.json
