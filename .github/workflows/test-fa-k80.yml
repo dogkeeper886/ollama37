@@ -159,7 +159,7 @@ jobs:
 
           # The subcommand emits the benchmark + judge markdown tables on stdout
           # (→ step summary) and writes the JSON report to --output.
-          npx tsx src/cli.ts test-fa "${ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts test-fa "${ARGS[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Restart production ollama37
         if: always()

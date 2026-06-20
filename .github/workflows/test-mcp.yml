@@ -120,7 +120,7 @@ jobs:
           # The subcommand prints a markdown summary to stdout (→ step summary)
           # and writes the JSON report to --output. Exit code gates the job.
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
-          npx tsx src/cli.ts test-mcp $MODELS \
+          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts test-mcp $MODELS \
             --prompt "${{ inputs.prompt || 'List the projects.' }}" \
             --num-ctx "${{ inputs.num_ctx || '8192' }}" \
             --timeout "${{ inputs.timeout || '1800' }}" \

@@ -77,7 +77,7 @@ jobs:
           # The subcommand prints a markdown summary to stdout (→ step summary)
           # and writes the JSON report to --output. Exit code gates the job.
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
-          npx tsx src/cli.ts bench-throughput $MODELS \
+          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts bench-throughput $MODELS \
             --num-predict "${{ inputs.num_predict || '128' }}" \
             --context "${{ inputs.context_size || '2048' }}" \
             --output /tmp/throughput-results.json \
