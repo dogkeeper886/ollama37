@@ -23,8 +23,9 @@ the **test** dimension — the capability ladder rungs — so you can see, per m
 - **T2 — list suites (derived arg):** the model must *derive* `project_id` from a name, so the
   **query** stage does real work — the failure T1 can't catch.
 
-Reading the grid model-first answers "how capable is this model"; reading a column answers "which
-models clear this rung".
+The results table is one row per (model × test): reading a model's rows together answers "how
+capable is this model"; filtering to a test (e.g. all T2 rows) answers "which models clear this
+rung".
 
 ## How to produce a report
 
