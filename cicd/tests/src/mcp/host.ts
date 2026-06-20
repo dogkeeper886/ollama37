@@ -132,6 +132,23 @@ async function chat(host: string, model: string, messages: unknown[], tools: unk
   });
 }
 
+/** Evict a model from Ollama (keep_alive: 0). Best-effort: a benchmark loops over models
+ *  sequentially, so each must be released before the next loads — otherwise Ollama's default
+ *  keep-alive leaves the previous one resident and two models contend for the GPU (skewing
+ *  timings, risking OOM). A failed unload must never fail the test. */
+export async function unloadModel(host: string, model: string): Promise<void> {
+  try {
+    await fetch(`${host}/api/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model, keep_alive: 0 }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 const tps = (tokens: number, durNs: number): number => (durNs > 0 ? round2(tokens / (durNs / 1e9)) : 0);
 

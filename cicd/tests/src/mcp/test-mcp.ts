@@ -12,7 +12,7 @@
  * with --output, a JSON report. Exit code is non-zero if any model fails.
  */
 import { writeFileSync } from 'node:fs';
-import { runMcpHost, type McpServerConfig, type McpTrajectory } from './host.js';
+import { runMcpHost, unloadModel, type McpServerConfig, type McpTrajectory } from './host.js';
 import { AgentJudge, VerifierJudge } from '../judge/index.js';
 import { TestResult, Judgment } from '../types.js';
 
@@ -138,6 +138,8 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
       check: { overall_pass: simple.pass, simple, agent: null },
     });
     process.stderr.write(`  supported=${traj.supported} calls=${traj.toolCalls.length} simple=${simple.pass} · ${traj.outTokens} tok @ ${traj.evalTps} tok/s in ${traj.totalDurationS}s\n`);
+    // Release this model before the next loads, so only one is ever resident (no GPU contention).
+    await unloadModel(opts.host, model);
   }
 
   // Agent-level check, only for models that passed the structural check. Two modes:
