@@ -15,6 +15,8 @@
 set -u
 
 OVERHEAT_RC=75
+MAX_UNREADABLE=3        # consecutive unreadable polls -> abort (a hung driver / GPU off the bus is
+                        # exactly what an overheat causes; blindly continuing defeats the guard)
 threshold="${GPU_TEMP_LIMIT:-80}"
 interval="${GPU_TEMP_INTERVAL:-10}"
 
@@ -24,8 +26,8 @@ usage() {
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --threshold) threshold="$2"; shift 2 ;;
-        --interval)  interval="$2";  shift 2 ;;
+        --threshold) [ $# -ge 2 ] || { echo "gpu-temp-guard: --threshold needs a value" >&2; usage; exit 2; }; threshold="$2"; shift 2 ;;
+        --interval)  [ $# -ge 2 ] || { echo "gpu-temp-guard: --interval needs a value"  >&2; usage; exit 2; }; interval="$2";  shift 2 ;;
         --) shift; break ;;
         -h|--help) usage; exit 0 ;;
         *) echo "gpu-temp-guard: unknown option '$1'" >&2; usage; exit 2 ;;
@@ -61,27 +63,47 @@ cmd_pid=$!
 set +m
 
 peak=0
-overheat=0
+had_reading=0
+unreadable=0
+abort_reason=""
 while kill -0 "$cmd_pid" 2>/dev/null; do
     t="$(max_temp)"
+    t="${t%%.*}"                       # tolerate a decimal reading, e.g. "82.0" -> "82"
     if [[ "$t" =~ ^[0-9]+$ ]]; then
+        had_reading=1
+        unreadable=0
         [ "$t" -gt "$peak" ] && peak="$t"
         if [ "$t" -gt "$threshold" ]; then
-            overheat=1
-            kill -TERM -"$cmd_pid" 2>/dev/null   # negative pid = the whole process group
-            sleep 2
-            kill -KILL -"$cmd_pid" 2>/dev/null
+            abort_reason="OVERHEAT - peak ${peak}°C exceeded ${threshold}°C"
+            break
+        fi
+    else
+        # nvidia-smi gave no usable reading. A few in a row (a hung driver / GPU off the
+        # bus) means we can't verify safety, so fail closed rather than run blind.
+        unreadable=$((unreadable + 1))
+        if [ "$unreadable" -ge "$MAX_UNREADABLE" ]; then
+            abort_reason="temperature UNREADABLE for ${unreadable} polls (nvidia-smi failing) - cannot verify"
             break
         fi
     fi
     sleep "$interval"
 done
+
+if [ -n "$abort_reason" ]; then
+    kill -TERM -"$cmd_pid" 2>/dev/null     # negative pid = the whole process group
+    sleep 2
+    kill -KILL -"$cmd_pid" 2>/dev/null
+fi
 wait "$cmd_pid" 2>/dev/null
 cmd_rc=$?
 
-if [ "$overheat" -eq 1 ]; then
-    note "🌡️ GPU OVERHEAT - peak ${peak}°C exceeded ${threshold}°C; run aborted"
+if [ -n "$abort_reason" ]; then
+    note "🌡️ GPU GUARD ABORT - ${abort_reason}; run killed"
     exit "$OVERHEAT_RC"
 fi
-note "🌡️ Peak GPU temp: ${peak}°C (limit ${threshold}°C)"
+if [ "$had_reading" -eq 0 ]; then
+    note "🌡️ Peak GPU temp: unknown (nvidia-smi returned no valid reading)"
+else
+    note "🌡️ Peak GPU temp: ${peak}°C (limit ${threshold}°C)"
+fi
 exit "$cmd_rc"
