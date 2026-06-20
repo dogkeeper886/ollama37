@@ -64,6 +64,9 @@ export interface McpTrajectory {
   finalAnswer: string;
   /** Ollama generation perf, summed across the chat↔tool rounds. */
   inTokens: number;
+  /** Largest single round's prompt tokens — the value Ollama checks against num_ctx
+   *  (the summed inTokens spans rounds and can't be compared to the window). */
+  maxPromptTokens: number;
   outTokens: number;
   totalDurationS: number;
   evalTps: number;
@@ -143,6 +146,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     toolResults: [],
     finalAnswer: '',
     inTokens: 0,
+    maxPromptTokens: 0,
     outTokens: 0,
     totalDurationS: 0,
     evalTps: 0,
@@ -175,6 +179,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
       }
       // Accumulate generation perf across the rounds (Ollama durations are ns).
       traj.inTokens += raw.prompt_eval_count ?? 0;
+      traj.maxPromptTokens = Math.max(traj.maxPromptTokens, raw.prompt_eval_count ?? 0);
       traj.outTokens += raw.eval_count ?? 0;
       totalDurNs += raw.total_duration ?? 0;
       evalDurNs += raw.eval_duration ?? 0;

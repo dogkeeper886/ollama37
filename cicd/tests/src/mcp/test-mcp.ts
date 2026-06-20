@@ -56,6 +56,8 @@ interface McpModelResult {
   error?: string;
   /** Ollama generation perf for this model. */
   out_tokens: number;
+  /** Largest single round's prompt tokens — compare to num_ctx for truncation headroom. */
+  max_prompt_tokens: number;
   total_duration_s: number;
   eval_tps: number;
   check: { overall_pass: boolean; simple: McpSimpleVerdict; agent: Judgment | null };
@@ -126,6 +128,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
       final_answer_preview: traj.finalAnswer.slice(0, 200),
       error: traj.error,
       out_tokens: traj.outTokens,
+      max_prompt_tokens: traj.maxPromptTokens,
       total_duration_s: traj.totalDurationS,
       eval_tps: traj.evalTps,
       check: { overall_pass: simple.pass, simple, agent: null },
@@ -217,6 +220,10 @@ function evidenceWhy(status: Judgment['evidenceStatus']): string {
 }
 
 const tick = (b: boolean): string => (b ? '✅' : '❌');
+/** Peak single-round prompt tokens vs the context window — ⚠️ within 10% of num_ctx
+ *  (Ollama silently truncates a prompt that crosses it). */
+const peakCtx = (peak: number, numCtx: number): string =>
+  peak > 0 ? `${peak > numCtx * 0.9 ? '⚠️ ' : ''}${peak}/${numCtx}` : '—';
 const judgeLabel = (opts: McpTestOptions): string => (opts.verifyLive ? 'verify-live' : opts.judge ? 'dual' : 'simple');
 /** Escape so model/server-controlled text can't break out of the Markdown/<details>/code block. */
 const mdSafe = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -237,8 +244,8 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   out.push('');
 
   // Scannable table — judge stages + cross-check, no raw JSON in the cells.
-  out.push('| Model | Verdict | Tool call(s) | Judge stages (tool·query·content) | Cross-check | Time (s) | Out tok | tok/s |');
-  out.push('|---|---|---|---|---|--:|--:|--:|');
+  out.push('| Model | Verdict | Tool call(s) | Judge stages (tool·query·content) | Cross-check | Time (s) | Peak in/ctx | Out tok | tok/s |');
+  out.push('|---|---|---|---|---|--:|--:|--:|--:|');
   for (const r of results) {
     const verdict = r.check.overall_pass ? '✅ PASS' : r.supported ? '❌ FAIL' : '⚪ NO TOOL SUPPORT';
     const calls = r.tool_calls.map((c) => c.name).join(', ') || '—';
@@ -246,7 +253,7 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
     const stages = s ? `${tick(s.tool)} · ${tick(s.query)} · ${tick(s.content)}` : '—';
     const cc = r.check.agent?.crossCheckUnsupported;
     const cross = cc === undefined ? '—' : cc.length ? `❌ ${cc.join(', ').slice(0, 60)}` : '✅ grounded';
-    out.push(`| ${r.model} | ${verdict} | ${calls} | ${stages} | ${cross} | ${r.total_duration_s || '—'} | ${r.out_tokens || '—'} | ${r.eval_tps || '—'} |`);
+    out.push(`| ${r.model} | ${verdict} | ${calls} | ${stages} | ${cross} | ${r.total_duration_s || '—'} | ${peakCtx(r.max_prompt_tokens, opts.numCtx)} | ${r.out_tokens || '—'} | ${r.eval_tps || '—'} |`);
   }
 
   // Per-model detail (reasoning + raw evidence) tucked behind a toggle — proof without the clutter.
