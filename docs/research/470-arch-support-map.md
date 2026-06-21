@@ -2,7 +2,7 @@
 
 **Related**: [#223](https://github.com/dogkeeper886/ollama37/issues/223) (K80 + P100 mixed-GPU crash)
 **Date**: 2026-06-21
-**Status**: Research / reference. No code change proposed here — this is the map you consult before any multi-architecture work.
+**Status**: Largely realized. The 9-arch build shipped in [#341](https://github.com/dogkeeper886/ollama37/issues/341) — the `CUDA 11 K80` preset now compiles native cubin for `sm_37`–`sm_86` (Maxwell→Ampere). Only the K80 is hardware-validated; Pascal→Ampere are built-but-unvalidated (tracked in [#342](https://github.com/dogkeeper886/ollama37/issues/342)). This remains the reference map for that work.
 
 ## TL;DR
 
@@ -146,7 +146,7 @@ embedded parts ever come into scope, that exclusion will bite — it looks like 
 
 ## References
 
-- Build presets: `CMakePresets.json` (the `CUDA 11 K80` preset pins `"37"`)
+- Build presets: `CMakePresets.json` (the `CUDA 11 K80` preset compiles `37-real;…;86-real` as of #341)
 - Arch fallback logic: `ml/backend/ggml/ggml/src/ggml-cuda/CMakeLists.txt:8-44`
 - Code gates: `ml/backend/ggml/ggml/src/ggml-cuda/common.cuh:80-85` (thresholds),
   `:250-314` (the feature switches), `:520` (dp4a)

@@ -9,12 +9,12 @@
 ![Ollama37 brings modern LLMs to the Tesla K80](docs/images/readme/concept.png)
 
 > [!IMPORTANT]
-> **The published image runs on the Tesla K80 (compute capability 3.7) only.** It is
-> compiled to native CUBIN for `sm_37` with no PTX fallback, so it will **not** run on
-> any other GPU. To use different hardware, build it yourself — see
-> [Building for other GPUs](#building-for-other-gpus).
-
-![The published image runs on the Tesla K80 only; other GPUs will not load it](docs/images/readme/compatibility.png)
+> **The Tesla K80 (compute capability 3.7) is the only hardware tested here** — it is what
+> the project is built and tuned for. The published image now also compiles native CUBIN
+> for the whole 470-era datacenter range (`sm_37`–`sm_86`, Kepler through Ampere), so a
+> P100, V100, T4, A100 and similar cards *should* load it — but those are **not yet
+> hardware-validated, so treat them as experimental**. Cards outside that range (Ada,
+> Hopper) need a self-build — see [Building for other GPUs](#building-for-other-gpus).
 
 ## Contents
 
@@ -41,7 +41,10 @@ and wrangling end-of-life drivers.
 
 ## Features
 
-- **Tesla K80 support** — full CUDA compute capability 3.7 (`sm_37`).
+- **Tesla K80 support** — full CUDA compute capability 3.7 (`sm_37`), the tested target.
+- **Broader datacenter range (experimental)** — the image also compiles native CUBIN for
+  `sm_50`–`sm_86` (Maxwell through Ampere: P100, V100, T4, A100, …), so they can load it,
+  though only the K80 is hardware-validated.
 - **Fast cold start** — compiled to native CUBIN, so there's no multi-minute PTX JIT on
   container start (a PTX build re-JITs for ~3–4 min on every restart).
 - **Qwen3.5 DeltaNet** — first Ollama fork to support the DeltaNet recurrent architecture.
@@ -49,7 +52,8 @@ and wrangling end-of-life drivers.
 
 ## Requirements
 
-- A **Tesla K80** (or another compute-capability-3.7 GPU).
+- A **Tesla K80** (the tested target), or another NVIDIA datacenter card in the
+  `sm_37`–`sm_86` range (Maxwell→Ampere) — experimental, see the note at the top.
 - **NVIDIA driver 470+** on the host. 470 is the last branch that supports Kepler —
   newer drivers dropped the K80.
 - **Docker** with the **NVIDIA Container Runtime**.
@@ -123,7 +127,7 @@ Ollama37 is split into two Docker images so the thing you run stays small:
 - **`ollama37-builder` (~15 GB)** — the build environment only: CUDA 11.4 toolkit, GCC 10
   and CMake 4 (compiled from source, ~90 min the first time), and Go. It is never shipped.
 - **`ollama37` (~1 GB)** — a multi-stage build. The code is compiled *inside* the builder
-  with the `CUDA 11 K80` preset (`CMAKE_CUDA_ARCHITECTURES=37`, native CUBIN), then only the
+  with the `CUDA 11 K80` preset (native CUBIN for `sm_37`–`sm_86`, the 470 datacenter sweep), then only the
   artifacts — the `ollama` binary, the GGML/CUDA libraries, the bundled CUDA runtime libs
   (cuBLAS, cuBLASLt, cudart), and the GCC 10 runtime libs — are copied onto a slim
   `rockylinux:8-minimal` base. This is the image published to Docker Hub.
@@ -138,11 +142,16 @@ docker compose up -d
 
 ## Building for other GPUs
 
-The published image is K80-only **by design** — that is the hardware this project targets
-and tests. The build system *can* target other architectures if you compile it yourself:
-`CMakePresets.json` ships a `CUDA 11` preset (PTX for `sm_37` through `sm_86`) and `CUDA 12`
-/ `CUDA 13` presets for newer cards. These paths are **unsupported** — they are not built
-or tested here, and you are on your own. See [docker/README.md](docker/README.md).
+The published image now targets the whole 470-era datacenter range (`sm_37` through
+`sm_86`, Kepler through Ampere), but **only the K80 is tested** — the other architectures
+are compiled in and should load, yet are unvalidated, so you are on your own there.
+
+For cards **outside** that range — Ada (RTX 40-series) and Hopper (H100), which need
+CUDA 12+ and a newer driver — you have to build it yourself: `CMakePresets.json` ships
+`CUDA 12` / `CUDA 13` presets for them. Note that moving to a newer CUDA/driver **drops
+K80 support** — the very thing this project pins CUDA 11.4 / driver 470 to keep. See
+[docker/README.md](docker/README.md) and the architecture map in
+[docs/research/470-arch-support-map.md](docs/research/470-arch-support-map.md).
 
 ## Troubleshooting
 

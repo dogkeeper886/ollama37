@@ -2,11 +2,12 @@
 
 **Tesla K80 Compatible Ollama Fork**
 
-Run modern LLMs on NVIDIA Tesla K80 and other CUDA Compute Capability 3.7 GPUs. While official Ollama dropped legacy GPU support, Ollama37 keeps your Tesla K80 hardware functional with the latest models and features.
+Run modern LLMs on the NVIDIA Tesla K80. While official Ollama dropped legacy GPU support, Ollama37 keeps your Tesla K80 hardware functional with the latest models and features. The image now also compiles native CUBIN for the broader 470-era datacenter range (Maxwell through Ampere) — a P100, V100, T4 or A100 can load it too, though only the K80 is hardware-tested (treat the rest as experimental).
 
 ## Key Features
 
-- ⚡ **Tesla K80 Support** - Full compatibility with CUDA Compute Capability 3.7
+- ⚡ **Tesla K80 Support** - Full compatibility with CUDA Compute Capability 3.7 (the tested target)
+- 🖥️ **Broader range (experimental)** - Also builds native CUBIN for `sm_50`–`sm_86` (Maxwell→Ampere: P100, V100, T4, A100); only the K80 is hardware-validated
 - 🛠️ **Optimized Build** - CUDA 11 toolchain with native CUBIN (~30s cold start)
 - 🧠 **Qwen3.5 DeltaNet** - First Ollama fork with DeltaNet recurrent architecture support
 - 🔧 **Tool Calling** - Langchain and API tool calling verified
