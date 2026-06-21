@@ -97,13 +97,15 @@ is present; the support question is whether the project's code handles that cros
 | FP16 tensor cores (`common.cuh:295`) | 7.0 | ✗ | ✗ | ✗ | ✗ | ✅ | ✅ | ✅ |
 | int8 tensor cores (`common.cuh:308`) | 7.5 | ✗ | ✗ | ✗ | ✗ | ✗ | ✅ | ✅ |
 | Ampere MMA / async copy (`common.cuh:312`) | 8.0 | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✅ |
-| Flash attention (`ml/device.go:440`) | 7.0 (not 7.2) **+ K80 special-case** | ✅† | ✗ | ✗ | ✗ | ✅ | ✅ | ✅ |
+| Flash attention (`ml/device.go:440`) | 7.0 (not 7.2) | ✗ | ✗ | ✗ | ✗ | ✅ | ✅ | ✅ |
 
 \* sm_6.1 has FP16 hardware but it's deliberately rate-limited, so upstream excludes it
 from the "fast" path on purpose. Not a bug — a real subtlety to preserve.
 
-† The K80 only passes the flash-attention gate because this fork added a hand-written
-special-case for it (issues #108 / #112). No other sub-7.0 card has that, including the P100.
+The flash-attention gate is now pure-upstream (`cc >= 7.0`, ≠7.2): FA is **off** for the
+K80 and Pascal, **on** for Volta and up. The fork once carried a hand-written K80
+special-case (issues #108 / #112) but it was removed in #350 after a benchmark showed FA
+is a net slowdown on the K80 — so no sub-7.0 card, including the P100, gets FA.
 
 ## What this means in plain terms
 
@@ -115,9 +117,10 @@ The gates sort the cards into three buckets:
   live behind `cc < 7.0` branches.
 
 - **Pascal (6.0 and 6.1) — the real gap.** These switch on FP16 and dp4a code paths that
-  the **K80-only build never even compiles**, so nothing here has run them. And the
-  flash-attention gate has no Pascal entry (that's the missing piece behind the #223 P100
-  crash). This is the bucket that needs careful tracing and a real test on the hardware.
+  the **K80-only build never even compiles**, so nothing here has run them. (The #223 P100
+  crash itself was the build layer — no sm_60 cubin — not a code gate.) Pascal also sits
+  below the pure-upstream FA gate, so it runs FA-off like the K80. This is the bucket that
+  needs careful tracing and a real test on the hardware.
 
 - **Maxwell (5.x) — easy but dull.** It sits below every feature gate, so it rides the
   exact same plain-vanilla code paths the K80 already uses. Low risk, low reward.
