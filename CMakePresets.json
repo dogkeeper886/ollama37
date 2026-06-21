@@ -30,7 +30,7 @@
       "name": "CUDA 11 K80",
       "inherits": ["CUDA"],
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "37",
+        "CMAKE_CUDA_ARCHITECTURES": "37-real;50-real;52-real;60-real;61-real;70-real;75-real;80-real;86-real",
         "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2"
       }
     },

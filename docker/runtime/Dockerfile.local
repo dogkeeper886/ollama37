@@ -27,9 +27,12 @@ ARG GIT_COMMIT=HEAD
 RUN echo "Build commit: ${GIT_COMMIT}" > /tmp/build-commit
 
 # Configure build with CMake
-# Use "CUDA 11 K80" preset: compiles native CUBIN for sm_37 (no PTX JIT needed)
-# The "CUDA 11" preset only embeds PTX (37-virtual), requiring ~3-4 min of JIT
-# compilation on every container restart. Native CUBIN eliminates this entirely.
+# Use "CUDA 11 K80" preset: compiles native CUBIN for the 470-era datacenter sweep
+# (sm_37/50/52/60/61/70/75/80/86 — Kepler through Ampere), all -real so there's no
+# PTX JIT on container restart. Each GPU loads only its own cubin, so the K80 path is
+# byte-identical; the extra cubins are dead weight other cards never touch.
+# The "CUDA 11" preset embeds PTX instead, requiring ~3-4 min of JIT compilation on
+# every container restart. Native CUBIN eliminates that.
 # Set LD_LIBRARY_PATH during build so CMake can locate GCC 10 runtime libraries
 # and properly link against them (required for C++ standard library and atomics)
 RUN bash -c 'LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH \
