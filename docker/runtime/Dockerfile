@@ -1,7 +1,7 @@
 # Ollama37 Runtime Image
 # Multi-stage build: compiles in builder image, copies only runtime artifacts to slim image
 #
-# Image size: ~800 MB - 1.5 GB (vs ~8-12 GB for single-stage builder image)
+# Image size: ~1.9 GB for the 9-arch CUDA sweep (vs ~8-12 GB for single-stage builder image)
 # The runtime image contains only: ollama binary, GGML/CUDA libraries, CUDA runtime
 # libs, and GCC 10 runtime libs. No compilers, build tools, or source code.
 
