@@ -18,10 +18,11 @@ services:
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_DEBUG=${OLLAMA_DEBUG:-}
       # K80 perf defaults — see docker/.env.example to override.
-      # FA is gated off on K80 (sm_37) — it's a net loss there (see #346); the
-      # request is honored only on cc>=7.0 cards in the widened build. With FA
-      # off, q8_0 KV is unavailable (needs FA), so the default cache is f16.
-      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-1}
+      # Flash attention is left unset (not pinned): ollama's hardware gate forces it
+      # off on the K80 (sm_37) anyway — it's a net loss there (see #346) — and we don't
+      # auto-enable it on the experimental cc>=7.0 cards. Set OLLAMA_FLASH_ATTENTION=1
+      # to turn it on where supported. With FA off, q8_0 KV needs FA, so cache is f16.
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-}
       - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-f16}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
