@@ -9,8 +9,8 @@
 ![Ollama37 brings modern LLMs to the Tesla K80](docs/images/readme/concept.png)
 
 > [!IMPORTANT]
-> **The Tesla K80 (compute capability 3.7) is the only hardware tested here** — it is what
-> the project is built and tuned for. The published image now also compiles native CUBIN
+> **The Tesla K80 (compute capability 3.7) is the only tested target** — the hardware this
+> project is built and tuned for. The published image now also compiles native CUBIN
 > for the whole 470-era datacenter range (`sm_37`–`sm_86`, Kepler through Ampere), so a
 > P100, V100, T4, A100 and similar cards *should* load it — but those are **not yet
 > hardware-validated, so treat them as experimental**. Cards outside that range (Ada,
