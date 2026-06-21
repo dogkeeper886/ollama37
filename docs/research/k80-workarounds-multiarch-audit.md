@@ -96,11 +96,11 @@ old 2048px path — it cannot over-reserve or crash.
 
 **Verdict: safe as-is.**
 
-**Follow-up worth considering (enhancement, not a fix):** the 512px vision default now
-applies to *every* architecture, so an FA-capable Ampere box that previously defaulted to
-2048px now defaults to 512px (escapable via `OLLAMA_VISION_MAX_PIXELS`). If big cards
-should keep a higher default, the right gate is **device capability** (max threads/block,
-or cc) rather than the old `flashAttention` flag — and note that after [#350](https://github.com/dogkeeper886/ollama37/issues/350)
+**Follow-up worth considering (enhancement, not a fix — tracked in [#355](https://github.com/dogkeeper886/ollama37/issues/355)):**
+the 512px vision default now applies to *every* architecture, so an FA-capable Ampere box
+that previously defaulted to 2048px now defaults to 512px (escapable via
+`OLLAMA_VISION_MAX_PIXELS`). If big cards should keep a higher default, the right gate is
+**device capability** (max threads/block, or cc) rather than the old `flashAttention` flag — and note that after [#350](https://github.com/dogkeeper886/ollama37/issues/350)
 removed K80 FA, the old `flashAttention`-based gate would no longer have distinguished K80
 from Pascal anyway. Out of scope for this correctness audit.
 
@@ -112,5 +112,6 @@ from Pascal anyway. Out of scope for this correctness audit.
 | VMM granularity (`46213c58`) | reverted; stock upstream per-device query | correct | safe |
 | Ghost-GPU + vision (`695557de`) | per-device memory data; env flag | correct (more conservative) | safe |
 
-No code change required for #343. Two optional follow-ups noted (K80 OOM-guard regression;
-capability-gated vision default) — neither is a non-K80/mixed-box correctness defect.
+No code change required for #343. Two optional follow-ups noted — neither is a
+non-K80/mixed-box correctness defect: the K80 OOM-guard regression (K80-runtime only), and
+the capability-gated vision default (tracked in [#355](https://github.com/dogkeeper886/ollama37/issues/355)).
