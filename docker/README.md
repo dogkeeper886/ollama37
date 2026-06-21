@@ -1,6 +1,6 @@
 # Ollama37 Docker Build System
 
-**Multi-stage Docker build for Ollama with CUDA 11.4 and Compute Capability 3.7 support (Tesla K80)**
+**Multi-stage Docker build for Ollama on CUDA 11.4 — built and tested for the Tesla K80 (compute capability 3.7); the image also compiles native CUBIN for the wider `sm_37`–`sm_86` datacenter range (Kepler→Ampere, experimental).**
 
 ## Overview
 
@@ -143,7 +143,7 @@ docker/
 
 **Build stage** (FROM ollama37-builder):
 1. Clone/copy ollama37 source
-2. Configure with CMake ("CUDA 11 K80" preset — native CUBIN for sm_37, no PTX JIT)
+2. Configure with CMake ("CUDA 11 K80" preset — native CUBIN for sm_37–sm_86, no PTX JIT)
 3. Build C/C++/CUDA libraries (`cmake --build`)
 4. Install artifacts to `dist/` (`cmake --install` with CPU and CUDA components)
    - Automatically bundles CUDA runtime libs (cublas, cublasLt, cudart)
