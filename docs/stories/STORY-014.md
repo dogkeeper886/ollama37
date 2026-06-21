@@ -54,8 +54,7 @@ the higher-arch paths are intact, upstream-maintained code.*
   reporter, a cloud instance, or a CI runner); until then we rely on code-trace + intact
   upstream code.
 - The exact architecture list and how it's expressed in the build (keeping native code,
-  not PTX, so there's no first-run JIT), worked out on the issue against
-  `docs/research/470-arch-support-map.md`.
+  not PTX, so there's no first-run JIT), worked out on the issue.
 - ~~How to extend the flash-attention gate (`ml/device.go`) to the newer cards without
   regressing the K80's existing special-case.~~ Resolved: follow upstream — STORY-014
   leaves the FA gate untouched; the K80 special-case was removed in #350, leaving the

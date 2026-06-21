@@ -150,8 +150,7 @@ For cards **outside** that range — Ada (RTX 40-series) and Hopper (H100), whic
 CUDA 12+ and a newer driver — you have to build it yourself: `CMakePresets.json` ships
 `CUDA 12` / `CUDA 13` presets for them. Note that moving to a newer CUDA/driver **drops
 K80 support** — the very thing this project pins CUDA 11.4 / driver 470 to keep. See
-[docker/README.md](docker/README.md) and the architecture map in
-[docs/research/470-arch-support-map.md](docs/research/470-arch-support-map.md).
+[docker/README.md](docker/README.md).
 
 ## Troubleshooting
 
