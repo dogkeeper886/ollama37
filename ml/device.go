@@ -438,11 +438,6 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			(gpu.Library == "CUDA" && gpu.ComputeMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
-			// ollama37: K80 (compute 3.7) uses fattn-vec, empirically validated
-			// against gemma3:4b in 2026-04 (issue #108). Output bit-exact match
-			// with the non-FA path; unlocks Q8_0 KV cache quant for ~47% memory
-			// reduction.
-			(gpu.Library == "CUDA" && gpu.ComputeMajor == 3 && gpu.ComputeMinor == 7) ||
 			gpu.Library == "ROCm"
 
 		if !supportsFA {
