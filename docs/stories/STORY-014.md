@@ -70,5 +70,5 @@ the higher-arch paths are intact, upstream-maintained code.*
 
 - Created: 2026-06-21
 - Plan: #340
-- Issues: #341 (PR #353, in review), #342, #343, #344
+- Issues: #341 ✅ merged (PR #353) · #343 audit, PR open · #342, #344 open
 - Blocked on: #345 (sync point — K80-FA-removal result must land first)
