@@ -2,7 +2,7 @@ id: TC-BUILD-002
 name: Runtime Image Build
 suite: build
 priority: 2
-timeout: 1800000
+timeout: 3600000
 dependencies:
   - TC-BUILD-001
 intent:
@@ -12,7 +12,7 @@ intent:
 steps:
   - name: Navigate and build runtime image
     command: cd ${OLLAMA37_ROOT}/docker && OLLAMA_VERSION=${OLLAMA_VERSION:-0.0.0} make build-runtime-local-no-cache 2>&1
-    timeout: 1800000
+    timeout: 3600000
     expectPatterns:
       - "Runtime image built successfully"
     rejectPatterns:
@@ -31,6 +31,11 @@ criteria: |
   - Build completes without errors
   - Final message: "Runtime image built successfully!"
   - Runtime image exists (ollama37:latest)
-  - Image size approximately 1.5GB (multi-stage build)
+  - Image size is somewhat larger than the old sm_37-only build (multi-stage build)
+    because the CUDA library now bundles native cubin for the full 470 datacenter
+    sweep (sm_37/50/52/60/61/70/75/80/86)
 
-  Note: Build time is approximately 17-18 minutes for CUDA compilation.
+  Note: CUDA compilation now covers 9 architectures, but nvcc shares the compile
+  front-end across targets, so the build is only modestly slower than the old
+  single-arch ~18 min — measured ~20 min for the full suite on run 27895485876.
+  Timeout is 1 h for margin. Each GPU still loads only its own cubin at runtime.
