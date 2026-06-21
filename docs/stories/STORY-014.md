@@ -70,5 +70,7 @@ the higher-arch paths are intact, upstream-maintained code.*
 
 - Created: 2026-06-21
 - Plan: #340
-- Issues: #341 ✅ merged (PR #353) · #343 audit, PR open · #342, #344 open
-- Blocked on: #345 (sync point — K80-FA-removal result must land first)
+- Issues: #341 ✅ merged (build widened) · #343 ✅ merged (workaround audit) · #344 docs, PR open · #342 open (hardware validation gate)
+- Follow-up: #355 (capability-gated vision default)
+- Related track: #345 (K80 FA/rotation reversion — owned by STORY-015; the hardware FA
+  gate landed in #350, the rotation + #124 model-arch reversion is still pending)
