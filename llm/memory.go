@@ -295,11 +295,9 @@ func estimateGPULayers(gpus []ml.DeviceInfo, f *ggml.GGML, projectors []string, 
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	// Mirrors the gate in llm/server.go: FA is supported if either the legacy
-	// path (head-count check) or the new-engine allowlist (ollama37 #124) accepts.
 	useFlashAttention := envconfig.FlashAttention(f.FlashAttention()) &&
 		ml.FlashAttentionSupported(gpus) &&
-		(f.SupportsFlashAttention() || f.SupportsFlashAttentionInNewEngine())
+		f.SupportsFlashAttention()
 
 	var kvct string
 	if useFlashAttention {

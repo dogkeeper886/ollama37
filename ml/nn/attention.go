@@ -28,25 +28,6 @@ func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache
 func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
 	ctx.Forward(query)
 
-	// Walsh-Hadamard rotation: rotate Q/K/V before the cache write and undo
-	// on the attention output. Math: orthogonal H satisfies (QH)(KH)^T = QK^T
-	// so attention scores are preserved; V·H propagates through the output,
-	// so multiplying out by H restores it (Sylvester H is symmetric ⇒ H·H = I).
-	// See docs/design/kv-rotation.md.
-	//
-	// Always-on when the head dim supports the MVP block-64 layout AND we have
-	// a cache (rotated K/V only makes sense if it lands in the cache). The
-	// transform is exact in fp32; the win comes when the cache is quantized
-	// (q4_0/q8_0), where the rotation smooths per-coordinate distributions
-	// before quant noise hits, recovering most of the fp16 quality gap.
-	rotate := cache != nil && IsHadamardCompatible(query.Dim(0))
-
-	var hadamard ml.Tensor
-	if rotate {
-		hadamard = hadamardTensor(ctx)
-		query = blockRotate(ctx, query, hadamard)
-	}
-
 	if key != nil && value != nil {
 		if query.Dim(0) != key.Dim(0) {
 			panic(fmt.Errorf("d_k in attention operation does not match between query(%v) and key(%v)", query.Dim(0), key.Dim(0)))
@@ -58,11 +39,6 @@ func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scal
 
 		if key.Dim(2) != value.Dim(2) {
 			panic(fmt.Errorf("seq_len_k in attention operation does not match between key(%v) and value(%v)", key.Dim(2), value.Dim(2)))
-		}
-
-		if rotate {
-			key = blockRotate(ctx, key, hadamard)
-			value = blockRotate(ctx, value, hadamard)
 		}
 
 		ctx.Forward(key, value)
@@ -100,10 +76,5 @@ func AttentionWithSinks(ctx ml.Context, query, key, value, sinks ml.Tensor, scal
 		out = kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	}
 
-	if rotate {
-		// V was stored rotated; the attention output picks up that rotation
-		// linearly. Undo with one more H multiply along the head dim.
-		out = blockRotate(ctx, out, hadamard)
-	}
 	return out
 }

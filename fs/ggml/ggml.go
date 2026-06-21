@@ -876,11 +876,9 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
-// SupportsFlashAttention checks the legacy FA gate: passes if the architecture
-// is not in the per-arch deny list (gemma2, qwen35) and head counts match.
-// Most architectures — including new-engine ones like gemma3, gptoss, qwen3vl —
-// pass this gate. Architectures in the deny list can opt into FA via
-// SupportsFlashAttentionInNewEngine after empirical validation.
+// SupportsFlashAttention checks the flash-attention gate (matches upstream
+// ollama): embeddings and a few architectures (gemma2, grok) are excluded, the
+// qwen35 family is allowed, and the rest pass if their head counts match.
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
@@ -888,10 +886,11 @@ func (f GGML) SupportsFlashAttention() bool {
 	}
 
 	arch := f.KV().Architecture()
+	if slices.Contains([]string{"qwen35", "qwen35moe", "qwen3next"}, arch) {
+		return true
+	}
 
-	// qwen35 is hybrid (DeltaNet + attention) and needs the OllamaEngine;
-	// flash attention is handled via SupportsFlashAttentionInNewEngine instead.
-	if slices.Contains([]string{"gemma2", "qwen35", "qwen35moe", "qwen3next"}, arch) {
+	if slices.Contains([]string{"gemma2", "grok"}, arch) {
 		return false
 	}
 
@@ -899,40 +898,6 @@ func (f GGML) SupportsFlashAttention() bool {
 	headCountK := f.KV().EmbeddingHeadCountK()
 	headCountV := f.KV().EmbeddingHeadCountV()
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
-}
-
-// SupportsFlashAttentionInNewEngine returns true for architectures whose
-// new-engine implementation has been empirically validated to produce correct
-// output on K80 (compute 3.7) with flash attention enabled.
-//
-// This is checked alongside SupportsFlashAttention as an OR — i.e., a model is
-// FA-eligible if either gate allows it. The two gates serve different paths:
-//
-//   - SupportsFlashAttention is the legacy llama.cpp engine path (head-count
-//     check + per-arch deny list).
-//   - SupportsFlashAttentionInNewEngine is the new engine's allowlist of
-//     architectures verified via the test-fa-k80.yml workflow per
-//     docs/research/k80-fa-model-coverage.md.
-//
-// Adding new architectures requires empirical validation per the methodology
-// in issue #123 (FA-off baseline vs FA-on output, on the K80 runner).
-func (f GGML) SupportsFlashAttentionInNewEngine() bool {
-	// ollama37 (issue #124, part of #121).
-	return slices.Contains([]string{
-		"gemma3",  // validated #108 (gemma3:4b on PR #117 validation runs)
-		"gptoss",  // validated #123 Phase 2 (gpt-oss:20b run 24978297254)
-		"qwen3vl", // validated #123 Phase 2 (qwen3-vl:8b run 24978521066)
-		// "qwen3vlmoe" — same Go package as qwen3vl; presumed safe but
-		// untested. Add when a qwen3-vl:30b benchmark validates it.
-		"qwen35", // validated #107: qwen3.5:9b run 25799484945 (coherent A/B/C),
-		//            qwen3.5:27b run 25799818450 (bit-identical A/B/C output).
-		//            Hybrid DeltaNet + attention: only attention layers use the
-		//            FA path; recurrent layers are unaffected. The deny in
-		//            SupportsFlashAttention (legacy llama.cpp head-count check)
-		//            still applies — this allowlist bypasses it for the new
-		//            engine only. With FA on, symmetric Q8 KV works on
-		//            attention layers, obsoleting the K-only-quant path in #107.
-	}, f.KV().Architecture())
 }
 
 // FlashAttention checks if the model should enable flash attention
