@@ -61,24 +61,37 @@ collapsing throughput to **0.43 tok/s**. **14b is 100% on GPU** (6.05 tok/s) and
 so at 16k, the per-die over-reservation only bites the 32b's footprint. Calibration target = **32b**;
 **14b = the OOM-guard** (currently healthy at 3.5×, must stay healthy when the multiplier drops).
 
-## AFTER — `OLLAMA_GRAPH_SAFETY_MULTIPLIER` = _&lt;calibrated&gt;_
+## AFTER — `OLLAMA_GRAPH_SAFETY_MULTIPLIER` = **2.5** (calibrated, now the default)
 
 | Model | Check | Gen tok/s | GPU% | VRAM used (MiB) |
 |---|---|---|---|---|
-| `deepseek-r1:1.5b` | _pending run_ | | | |
+| `deepseek-r1:1.5b` | pass | 34.34 | 100% | 2 892 — die0 |
 | `deepseek-r1:7b`   | _not pulled on runner — pending_ | | | |
 | `deepseek-r1:8b`   | _not pulled on runner — pending_ | | | |
-| `deepseek-r1:14b`  | _pending run_ | | | |
-| `deepseek-r1:32b`  | _pending run_ | | | |
+| `deepseek-r1:14b`  | pass | 5.85 | 100% | 17 862 — dies 0–1 |
+| `deepseek-r1:32b`  | pass | **2.77** | **100%** | 34 008 — 4 dies (uses the once-stranded VRAM) |
+
+### The multiplier sweep (32b @ 16k — finding the value)
+
+| Multiplier | 32b GPU% | 32b tok/s | verdict |
+|---|---|---|---|
+| 3.5 (original) | 93% | 0.43 | broken — #352 |
+| 3.0 | 99% | 1.40 | nearly — 1 layer on CPU still tanks it |
+| **2.5 (chosen)** | **100%** | **2.77** | **fixed — highest value with full GPU placement** |
+| 2.0 | 100% | 2.79 | fixed (less OOM margin) |
 
 ## Analysis
 
-_Filled once both passes are in:_
-- Which sizes offloaded BEFORE (low GPU%/tok/s with free VRAM) and recovered AFTER.
-- OOM check: did 14b / 32b load without `failed to allocate compute buffers` at the AFTER value?
-- Whether a **single** multiplier satisfies all sizes, or the data shows a single constant can't
-  (large wants it low, the OOM-guard wants it high) → conditional fix needed.
-- **Chosen value:** the lowest multiplier keeping large models on GPU without OOM.
+- **BEFORE:** only `deepseek-r1:32b` reproduced #352 — 93% GPU / 0.43 tok/s with ~15.9 GB free.
+  `14b` and `1.5b` were already 100% on GPU. The bug needs the 32b's multi-die footprint.
+- **AFTER @ 2.5:** 32b → **100% GPU, 2.77 tok/s** (6.4× faster), now using all four dies. `14b`
+  stays 100% on GPU with **no `failed to allocate compute buffers`** — the OOM-guard passes.
+- **A single constant suffices** here — no conditional fix needed. 2.5 satisfies both the fit (32b)
+  and the OOM-guard (14b).
+- **Why 2.5, not 2.0:** the failure modes are asymmetric — too high merely offloads (slow but
+  works), too low fails to allocate (won't load). So we pick the **highest** value that still puts
+  32b 100% on GPU, maximizing the margin against the OOM the multiplier guards. 2.5 is that value
+  (3.0 already drops to 99%); 2.0 also works but sits further from the safety margin.
 
 ## How to reproduce
 
