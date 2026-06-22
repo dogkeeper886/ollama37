@@ -44,6 +44,7 @@ import {
 import type { McpServerConfig } from '../mcp/host.js';
 import type { Judgment } from '../types.js';
 import { CONFIG } from '../config.js';
+import { extractJson } from './extract-json.js';
 
 /** VERIFY_DEBUG=1 → reveal every ACP event (sessionUpdate kinds, tool calls, permission/trust
  *  requests) so nothing the adapter emits is swallowed silently. */
@@ -433,31 +434,6 @@ export class VerifierJudge {
     }, null, 2);
   }
 
-  private extractJson(text: string): string | null {
-    const start = text.indexOf('{');
-    if (start === -1) return null;
-    // Scan from the first '{' tracking string state to find the matching close. The
-    // ACP agent sometimes ends a turn one token short of its trailing '}' (or the final
-    // streamed chunk isn't captured), so a complete-but-unclosed object would otherwise
-    // be discarded — flipping a genuine verdict to a "No JSON" FAIL. Tolerate that by
-    // appending the missing closers, but only when the truncation is OUTSIDE a string
-    // (a value cut mid-string is genuinely unrecoverable → null).
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-    for (let i = start; i < text.length; i++) {
-      const c = text[i];
-      if (inStr) {
-        if (esc) esc = false;
-        else if (c === '\\') esc = true;
-        else if (c === '"') inStr = false;
-      } else if (c === '"') inStr = true;
-      else if (c === '{') depth++;
-      else if (c === '}' && --depth === 0) return text.substring(start, i + 1);
-    }
-    return depth > 0 && !inStr ? text.substring(start) + '}'.repeat(depth) : null;
-  }
-
   private async promptAgent(prompt: string): Promise<string> {
     this.turnText = '';
     this.toolEvidence = '';
@@ -484,7 +460,7 @@ export class VerifierJudge {
     if (!responseText) {
       return { testId: t.testId, pass: false, reason: 'Verifier returned empty response', evidenceStatus };
     }
-    const json = this.extractJson(responseText);
+    const json = extractJson(responseText);
     if (!json) {
       return { testId: t.testId, pass: false, reason: `No JSON in verifier response: ${responseText.substring(0, 200)}`, evidenceStatus };
     }
