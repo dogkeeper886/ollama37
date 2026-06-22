@@ -50,7 +50,6 @@ workflows cover the common cases:
 |---|---|
 | `test-throughput.yml` | generation tok/s at a chosen `context_size` (`bench-throughput`) |
 | `test-mcp.yml` | long-context / tool-use decode over a large merged tool menu |
-| `test-fa-k80.yml` | flash-attention regression + benchmark |
 
 FA and KV-cache type are server-global env vars set in `docker/docker-compose.yml`
 (`OLLAMA_FLASH_ATTENTION`, `OLLAMA_KV_CACHE_TYPE`), overridable via `docker/.env`. To A/B a

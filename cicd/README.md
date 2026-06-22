@@ -75,12 +75,11 @@ These workflows execute the YAML test suites via the TypeScript runner with the 
 
 ### Perf / experiment workflows (the unified test-workflow pattern)
 
-These run via the TypeScript runner's perf subcommands (`cli.ts bench-throughput`, `cli.ts test-fa`, `cli.ts test-mcp`), which capture metrics or a capability verdict and judge output through the same agent judge, emitting a JSON report plus a markdown summary. Full bullet list in [`docs/CICD.md`](docs/CICD.md) → "Perf / experiment workflows".
+These run via the TypeScript runner's perf subcommands (`cli.ts bench-throughput`, `cli.ts test-mcp`), which capture metrics or a capability verdict and judge output through the same agent judge, emitting a JSON report plus a markdown summary. Full bullet list in [`docs/CICD.md`](docs/CICD.md) → "Perf / experiment workflows".
 
 | Workflow | Script | Description |
 |----------|--------|-------------|
 | `test-throughput.yml` | `cli.ts bench-throughput` | Per-model tok/s benchmark with simple + optional agent-judge output check |
-| `test-fa-k80.yml` | `cli.ts test-fa` | K80 flash-attention regression + benchmark (FA off/on × KV cache type) |
 | `test-mcp.yml` | `cli.ts test-mcp` | Probe whether a model can drive a real MCP server's tools — server-agnostic (default `testlink-mcp`, override via `--mcp-command`/`--mcp-args`); structural check + optional agent judge; per-model verdict (PASS / FAIL / NO TOOL SUPPORT) |
 
 ### Release workflow

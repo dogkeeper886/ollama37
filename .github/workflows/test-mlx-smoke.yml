@@ -79,7 +79,7 @@ jobs:
           docker rm -f ollama37-mlx-smoke 2>/dev/null || true
 
           # Poll until VRAM drops below 1 GiB on GPU 0 (where qwen_smoke runs)
-          # or 30s timeout. Matches the test-fa-k80 stop pattern.
+          # or 30s timeout.
           for i in $(seq 1 30); do
             USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1 | tr -d ' ')
             if [ "$USED" -lt 1024 ]; then

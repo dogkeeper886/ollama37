@@ -9,9 +9,8 @@
  *
  * What's being tested is the MODEL: given a real menu, does it pick the right
  * tool with valid args and use the result? A model whose template lacks tool
- * support is reported `supported:false` — a clean verdict, not a crash (mirrors
- * the catch-returns-FAIL shape in perf/fa.ts). The server choice + its
- * credentials are config, not code.
+ * support is reported `supported:false` — a clean verdict, not a crash. The
+ * server choice + its credentials are config, not code.
  */
 import http from 'node:http';
 import https from 'node:https';
@@ -301,7 +300,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     return traj;
   } catch (e) {
     // Connect/list/transport failure or an Ollama HTTP/JSON failure: return a
-    // trajectory carrying the error rather than throwing (mirrors perf/fa.ts).
+    // trajectory carrying the error rather than throwing.
     traj.error = e instanceof Error ? e.message : String(e);
     return traj;
   } finally {
