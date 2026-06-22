@@ -29,6 +29,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import { TestResult, Judgment } from '../types.js';
 import { CONFIG } from '../config.js';
+import { extractJson } from './extract-json.js';
 
 export class AgentJudge {
   private agentCmd: string;
@@ -248,13 +249,6 @@ export class AgentJudge {
    * Extract the first JSON object from a model response, tolerating prose or
    * markdown fences around it.
    */
-  private extractJson(text: string): string | null {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start === -1 || end === -1 || end < start) return null;
-    return text.substring(start, end + 1);
-  }
-
   /**
    * Run one prompt turn through the agent and return its raw reply text.
    * Bounded by CONFIG.judge.timeout. On timeout/failure the turn isn't actually
@@ -297,7 +291,7 @@ export class AgentJudge {
 
     process.stderr.write(`  [judge] Raw response for ${testId} (${responseText.length} chars): ${responseText.substring(0, 500)}\n`);
 
-    const json = this.extractJson(responseText);
+    const json = extractJson(responseText);
     if (!json) {
       process.stderr.write(`  [judge] WARNING: No JSON object in response for ${testId}\n`);
       return {
