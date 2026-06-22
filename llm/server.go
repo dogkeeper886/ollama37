@@ -250,11 +250,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		fa = false
 	}
 
-	// FA-eligible if either gate accepts: legacy llama.cpp head-count check OR
-	// new-engine empirical allowlist (ollama37 #124). Models like qwen35 that
-	// the deny list explicitly rejects can still enable FA via the new engine
-	// once empirically validated and added to SupportsFlashAttentionInNewEngine.
-	if fa && !f.SupportsFlashAttention() && !f.SupportsFlashAttentionInNewEngine() {
+	if fa && !f.SupportsFlashAttention() {
 		slog.Warn("flash attention enabled but not supported by model")
 		fa = false
 	}
