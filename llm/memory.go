@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -384,14 +385,26 @@ func estimateGPULayers(gpus []ml.DeviceInfo, f *ggml.GGML, projectors []string, 
 	// - Grouped-query attention (GQA): Complex attention patterns need more workspace
 	// - MoE architectures: Multiple expert activations need simultaneous storage
 	//
-	// SOLUTION: Apply 3.5× conservative safety margin to prevent allocation failures.
+	// SOLUTION: Apply a conservative safety margin to prevent allocation failures.
 	// This ensures GPU selection uses realistic memory requirements, enabling proper
 	// multi-GPU distribution when needed.
 	//
-	// TRADE-OFF: May cause some models to use 2 GPUs when 1 GPU might suffice,
-	// but prevents catastrophic allocation failures. Future improvement: implement
-	// measurement-based approach using llama_measure_memory_requirements() API.
-	graphSafetyMultiplier := 3.5
+	// TRADE-OFF: too high over-reserves — on the K80's small 12 GB dies the original
+	// 3.5× reserved so much graph per die that large models (deepseek-r1:32b) offloaded
+	// to CPU with VRAM free (#352); too low risks the allocation failures this guards.
+	// The two failure modes are asymmetric (too high → slow CPU offload; too low → won't
+	// load), so we bias toward the margin. 2.5 was calibrated on the K80: the highest
+	// value that keeps deepseek-r1:32b 100% on GPU at 16k (0.43→2.77 tok/s) while
+	// deepseek-r1:14b still fits without OOM — see
+	// docs/reports/deepseek-r1-k80-vram-throughput.md. Tunable via the env var below.
+	// Future fix: measurement-based estimate (upstream's BackendMemory), which the fork
+	// can't adopt without breaking the CUDA-11.4 / sm_37 pin.
+	graphSafetyMultiplier := 2.5
+	if v := os.Getenv("OLLAMA_GRAPH_SAFETY_MULTIPLIER"); v != "" {
+		if m, err := strconv.ParseFloat(v, 64); err == nil && m > 0 {
+			graphSafetyMultiplier = m
+		}
+	}
 	graphPartialOffload = uint64(float64(graphPartialOffload) * graphSafetyMultiplier)
 	graphFullOffload = uint64(float64(graphFullOffload) * graphSafetyMultiplier)
 

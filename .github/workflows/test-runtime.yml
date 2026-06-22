@@ -12,6 +12,10 @@ on:
         required: false
         default: false
         type: boolean
+      graph_safety_multiplier:
+        description: "Override OLLAMA_GRAPH_SAFETY_MULTIPLIER (#352 graph-buffer margin). Empty = built-in 2.5"
+        required: false
+        type: string
   workflow_call:
     inputs:
       debug:
@@ -32,6 +36,7 @@ jobs:
     env:
       OLLAMA37_ROOT: ${{ github.workspace }}
       OLLAMA_DEBUG: ${{ inputs.debug && '1' || '' }}
+      OLLAMA_GRAPH_SAFETY_MULTIPLIER: ${{ inputs.graph_safety_multiplier }}
     outputs:
       result: ${{ steps.runtime-tests.outcome }}
 
