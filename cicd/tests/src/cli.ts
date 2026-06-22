@@ -18,7 +18,6 @@ import { JsonReporter, ConsoleReporter } from './reporter/index.js';
 import { RunConfig } from './types.js';
 import { CONFIG, pickEnv } from './config.js';
 import { runThroughput } from './perf/throughput.js';
-import { runFa } from './perf/fa.js';
 import { runMcpTest } from './mcp/test-mcp.js';
 
 const program = new Command();
@@ -249,40 +248,6 @@ program
     });
     // Flush stdout before forcing exit — the markdown summary is piped to tee
     // in CI, and process.exit() can truncate buffered pipe output.
-    await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
-    process.exit(code);
-  });
-
-/**
- * test-fa — K80 flash-attention regression + benchmark.
- *
- * Ports test-fa-k80.sh: boots a fresh container per FA/KV config, runs a
- * deterministic inference, captures VRAM/KV/tok-s, and judges coherence with
- * the keyless agent judge. Needs exclusive use of port 11434 — the caller (the
- * workflow) stops/starts production ollama37 around it.
- */
-program
-  .command('test-fa')
-  .description('K80 flash-attention regression + benchmark')
-  .option('--model <model>', 'Model to test', 'gemma3:4b')
-  .option('--prompt <text>', 'Inference prompt (deterministic; temp=0)', 'Write a detailed multi-paragraph explanation of how large language models work. Cover tokenization, attention mechanisms, training procedures, and inference. Be thorough.')
-  .option('-n, --num-predict <n>', 'Tokens to generate', '256')
-  .option('-c, --num-ctx <n>', 'Context window size', '4096')
-  .option('--benchmark', 'Run all three configs (off-f16, on-f16, on-q8_0)', false)
-  .option('--kv-cache-type <type>', '(single mode) OLLAMA_KV_CACHE_TYPE (empty = f16)', '')
-  .option('--baseline-compare', '(single mode) run an FA-off baseline first', false)
-  .option('-o, --output <file>', 'Write the JSON report to this file')
-  .action(async (options) => {
-    const code = await runFa({
-      model: options.model,
-      prompt: options.prompt,
-      numPredict: Number(options.numPredict),
-      numCtx: Number(options.numCtx),
-      benchmark: options.benchmark,
-      kvCacheType: options.kvCacheType,
-      baselineCompare: options.baselineCompare,
-      output: options.output,
-    });
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
     process.exit(code);
   });

@@ -32,8 +32,7 @@ Performance and capability experiments run via the runner's perf subcommands, se
 suite workflows:
 
 ```
-├── test-throughput.yml   # cli.ts bench-throughput — per-model tok/s + output check
-└── test-fa-k80.yml       # cli.ts test-fa — flash-attention regression + benchmark
+└── test-throughput.yml   # cli.ts bench-throughput — per-model tok/s + output check
 ```
 
 (`cli.ts test-mcp` — MCP tool-call capability — is a subcommand with no workflow yet.)
