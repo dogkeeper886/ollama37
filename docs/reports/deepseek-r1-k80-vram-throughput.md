@@ -47,8 +47,8 @@ free pooled memory.
 | Model | Check | Gen tok/s | GPU% | VRAM used (MiB) |
 |---|---|---|---|---|
 | `deepseek-r1:1.5b` | pass | 34.37 | 100% | 2 892 — die0 only |
-| `deepseek-r1:7b`   | _not pulled on runner — pending_ | | | |
-| `deepseek-r1:8b`   | _not pulled on runner — pending_ | | | |
+| `deepseek-r1:7b`   | pass | 11.32 | 100% | 8 270 — die0 |
+| `deepseek-r1:8b`   | pass | 11.33 | 100% | 8 399 — die0 |
 | `deepseek-r1:14b`  | pass | 6.05 | 100% | 19 838 — dies 0–2 |
 | `deepseek-r1:32b`  | pass | **0.43** | **93%** | 29 868 — 4 dies, **~15.9 GB free** |
 
@@ -66,8 +66,8 @@ so at 16k, the per-die over-reservation only bites the 32b's footprint. Calibrat
 | Model | Check | Gen tok/s | GPU% | VRAM used (MiB) |
 |---|---|---|---|---|
 | `deepseek-r1:1.5b` | pass | 34.34 | 100% | 2 892 — die0 |
-| `deepseek-r1:7b`   | _not pulled on runner — pending_ | | | |
-| `deepseek-r1:8b`   | _not pulled on runner — pending_ | | | |
+| `deepseek-r1:7b`   | pass | 11.34 | 100% | 8 270 — die0 |
+| `deepseek-r1:8b`   | pass | 11.37 | 100% | 8 399 — die0 |
 | `deepseek-r1:14b`  | pass | 5.85 | 100% | 17 862 — dies 0–1 |
 | `deepseek-r1:32b`  | pass | **2.77** | **100%** | 34 008 — 4 dies (uses the once-stranded VRAM) |
 
@@ -83,7 +83,9 @@ so at 16k, the per-die over-reservation only bites the 32b's footprint. Calibrat
 ## Analysis
 
 - **BEFORE:** only `deepseek-r1:32b` reproduced #352 — 93% GPU / 0.43 tok/s with ~15.9 GB free.
-  `14b` and `1.5b` were already 100% on GPU. The bug needs the 32b's multi-die footprint.
+  `14b`, `8b`, `7b`, and `1.5b` were already 100% on GPU. The bug needs the 32b's multi-die footprint.
+- **Small models are multiplier-neutral:** `7b`/`8b` (single-die) read **100% GPU at both 3.5 and
+  2.5** (~11.3 tok/s, flat) — the fix changes nothing for models that already fit one die.
 - **AFTER @ 2.5:** 32b → **100% GPU, 2.77 tok/s** (6.4× faster), now using all four dies. `14b`
   stays 100% on GPU with **no `failed to allocate compute buffers`** — the OOM-guard passes.
 - **A single constant suffices** here — no conditional fix needed. 2.5 satisfies both the fit (32b)
