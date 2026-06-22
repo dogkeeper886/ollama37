@@ -401,8 +401,8 @@ func estimateGPULayers(gpus []ml.DeviceInfo, f *ggml.GGML, projectors []string, 
 	// can't adopt without breaking the CUDA-11.4 / sm_37 pin.
 	graphSafetyMultiplier := 2.5
 	if v := os.Getenv("OLLAMA_GRAPH_SAFETY_MULTIPLIER"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
-			graphSafetyMultiplier = f
+		if m, err := strconv.ParseFloat(v, 64); err == nil && m > 0 {
+			graphSafetyMultiplier = m
 		}
 	}
 	graphPartialOffload = uint64(float64(graphPartialOffload) * graphSafetyMultiplier)

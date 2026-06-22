@@ -13,7 +13,7 @@ on:
         default: false
         type: boolean
       graph_safety_multiplier:
-        description: "Override OLLAMA_GRAPH_SAFETY_MULTIPLIER (#352 graph-buffer margin). Empty = built-in 3.5"
+        description: "Override OLLAMA_GRAPH_SAFETY_MULTIPLIER (#352 graph-buffer margin). Empty = built-in 2.5"
         required: false
         type: string
   workflow_call:
