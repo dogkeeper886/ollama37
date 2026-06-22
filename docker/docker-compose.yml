@@ -24,6 +24,11 @@ services:
       # to turn it on where supported. With FA off, q8_0 KV needs FA, so cache is f16.
       - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-}
       - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-f16}
+      # Compute-buffer safety margin (#352). Default 3.5 over-reserves on the K80's
+      # small dies, offloading large models to CPU. Lower it (e.g. 1.5-2.0) to keep
+      # large models on GPU — but not so low it trips "failed to allocate compute
+      # buffers". Unset = use the built-in 3.5 default.
+      - OLLAMA_GRAPH_SAFETY_MULTIPLIER=${OLLAMA_GRAPH_SAFETY_MULTIPLIER:-}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     restart: unless-stopped
