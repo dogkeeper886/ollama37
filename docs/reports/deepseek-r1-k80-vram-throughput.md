@@ -24,7 +24,7 @@ onto the K80's GPUs** — *without* breaking small models or reintroducing the
 | Flash attention | off (forced off on sm_37) |
 | KV cache | f16 |
 | Context (`num_ctx`) | **16384** (the #352 repro — where the graph reservation is largest) |
-| `num_predict` | 128 |
+| `num_predict` | 16 — low on purpose: the broken (CPU-offloaded) 32b runs at ~0.3 tok/s, so 128 tokens exceeds the HTTP timeout. 16 lets it finish; offload%/VRAM are exact, tok/s is directional. Same value used for AFTER (apples-to-apples). |
 | Judge | simple |
 | **Only variable between BEFORE/AFTER** | `OLLAMA_GRAPH_SAFETY_MULTIPLIER` |
 
@@ -46,21 +46,30 @@ free pooled memory.
 
 | Model | Check | Gen tok/s | GPU% | VRAM used (MiB) |
 |---|---|---|---|---|
-| `deepseek-r1:1.5b` | _pending_ | | | |
-| `deepseek-r1:7b`   | _pending_ | | | |
-| `deepseek-r1:8b`   | _pending_ | | | |
-| `deepseek-r1:14b`  | _pending_ | | | |
-| `deepseek-r1:32b`  | _pending_ | | | |
+| `deepseek-r1:1.5b` | pass | 34.37 | 100% | 2 892 — die0 only |
+| `deepseek-r1:7b`   | _not pulled on runner — pending_ | | | |
+| `deepseek-r1:8b`   | _not pulled on runner — pending_ | | | |
+| `deepseek-r1:14b`  | pass | 6.05 | 100% | 19 838 — dies 0–2 |
+| `deepseek-r1:32b`  | pass | **0.43** | **93%** | 29 868 — 4 dies, **~15.9 GB free** |
+
+_Run [27952933017](https://github.com/dogkeeper886/ollama37/actions/runs/27952933017), git `f86abb1`,
+`num_predict=16`, `num_ctx=16384`. (`Check=pass` only means the response was non-empty — 32b
+"passes" but at 0.43 tok/s it is effectively unusable.)_
+
+**Headline:** only **32b** reproduces #352 — 7% of layers stranded on CPU with **~15.9 GB VRAM free**,
+collapsing throughput to **0.43 tok/s**. **14b is 100% on GPU** (6.05 tok/s) and 1.5b trivially so —
+so at 16k, the per-die over-reservation only bites the 32b's footprint. Calibration target = **32b**;
+**14b = the OOM-guard** (currently healthy at 3.5×, must stay healthy when the multiplier drops).
 
 ## AFTER — `OLLAMA_GRAPH_SAFETY_MULTIPLIER` = _&lt;calibrated&gt;_
 
 | Model | Check | Gen tok/s | GPU% | VRAM used (MiB) |
 |---|---|---|---|---|
-| `deepseek-r1:1.5b` | _pending_ | | | |
-| `deepseek-r1:7b`   | _pending_ | | | |
-| `deepseek-r1:8b`   | _pending_ | | | |
-| `deepseek-r1:14b`  | _pending_ | | | |
-| `deepseek-r1:32b`  | _pending_ | | | |
+| `deepseek-r1:1.5b` | _pending run_ | | | |
+| `deepseek-r1:7b`   | _not pulled on runner — pending_ | | | |
+| `deepseek-r1:8b`   | _not pulled on runner — pending_ | | | |
+| `deepseek-r1:14b`  | _pending run_ | | | |
+| `deepseek-r1:32b`  | _pending run_ | | | |
 
 ## Analysis
 
