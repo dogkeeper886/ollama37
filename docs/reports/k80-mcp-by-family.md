@@ -36,13 +36,15 @@ GPU% in the VRAM report is a speed/timeout artifact, not a capability gap.
 
 | Model | ctx | T1 | T2 | Peak/ctx | Time(s) | tok/s | Notes |
 |---|---|:--:|:--:|--:|--:|--:|---|
-| `gemma4:e2b` | — | ⏳ not on host | | | | | |
+| `gemma4:e2b` | 8k  | ❌ | ❌ | 6150/8192 | 104.3 | 15.71 | calls the tool but answer fails validation; T2 calls `list_test_suites` without deriving `project_id` |
+|              | 16k | ❌ | ❌ | 6150/16384 | 104.8 | 15.86 |  |
 | `gemma4:e4b` | 8k  | ✅ | ❌ | 6150/8192 | 134.78 | 10.64 | T2 ❌ — same guessed-arg miss |
 |              | 16k | ✅ | ❌ | 6150/16384 | 135.68 | 10.65 | T2 ❌ — called `list_test_suites` without first deriving `project_id` (guessed arg) |
-| `gemma4:12b` | — | ⏳ not on host | | | | | |
+| `gemma4:12b` | — | — | — | — | — | — | fails to load — text-only gemma4 falls back to the legacy engine ([#367](https://github.com/dogkeeper886/ollama37/issues/367)) |
 | `gemma4:26b` | 8k  | ✅ | ✅ | 7103/8192 | 184.51 | 8.81 |  |
 |              | 16k | ✅ | ✅ | 7103/16384 | 186.42 | 8.79 | 100% GPU on 2.5 image → 8.8 tok/s (the 2026-06-20 1.2 tok/s was pre-#352 CPU offload) |
-| `gemma4:31b` | — | ⏳ not on host | | | | | |
+| `gemma4:31b` | 8k  | ✅ | ✅ | 7103/8192 | 478.2 | 2.0 | drives the full derived-arg chain; slowest gemma (~2 tok/s) |
+|              | 16k | ✅ | ✅ | 7103/16384 | 479.1 | 1.99 |  |
 
 ---
 
