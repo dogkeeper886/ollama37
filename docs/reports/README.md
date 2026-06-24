@@ -1,84 +1,36 @@
-# `docs/reports/` — the MCP capability matrix
+# `docs/reports/` — K80 fleet characterization
 
-A structured record of MCP capability-test results: each model run against each test on the
-multi-server menu, captured as a **model × test matrix** with per-cell verdict, three-stage
-rubric, context headroom, and perf. One run = one report (a snapshot).
+Measured reports on how models behave on the 4 × Tesla K80, grouped by model family and swept over
+context length. Two paired axes plus the kept #352 baseline.
 
-## Files
+## Reports
 
 | File | What it is |
 |---|---|
-| [`TEMPLATE.md`](./TEMPLATE.md) | The blank form. Copy it to start a new report. |
-| [`mcp-capability-matrix-2026-06-20.md`](./mcp-capability-matrix-2026-06-20.md) | A worked example, filled with real data. |
-| `README.md` | This file — the format and how to produce it. |
+| [`k80-vram-by-family.md`](./k80-vram-by-family.md) | **Speed/fit axis** — per-die VRAM, GPU vs CPU placement, throughput, swept 2k/4k/8k/16k. |
+| [`k80-mcp-by-family.md`](./k80-mcp-by-family.md) | **Capability axis** — MCP tool-call verdicts (tool·query·content stages), swept 8k/16k. |
+| [`deepseek-r1-k80-vram-throughput.md`](./deepseek-r1-k80-vram-throughput.md) | The #352 baseline — DeepSeek-R1 VRAM/throughput before/after the `graphSafetyMultiplier` change. Cited by `llm/memory.go`. |
 
-New reports are dated snapshots: `mcp-capability-matrix-YYYY-MM-DD.md`.
+The two family reports are meant to be **read together**: an MCP fail at high ctx while GPU% is 100%
+in the VRAM report is a capability/truncation result, not a speed/offload artifact.
 
-## Why a matrix
+## How they're produced
 
-The single-run report (`cli.ts test-mcp` stdout) covers one prompt across models. The matrix adds
-the **test** dimension — the capability ladder rungs — so you can see, per model, both:
+Both are filled from CI workflow runs (one model per run, via the GPU temp guard):
 
-- **T1 — list projects:** the model picks the right tool from the merged menu (tool selection).
-- **T2 — list suites (derived arg):** the model must *derive* `project_id` from a name, so the
-  **query** stage does real work — the failure T1 can't catch.
+```
+# VRAM / throughput
+gh workflow run test-throughput.yml -f models=<model> -f num_predict=16 -f context_size=<2048|4096|8192|16384>
 
-The results table is one row per (model × test): reading a model's rows together answers "how
-capable is this model"; filtering to a test (e.g. all T2 rows) answers "which models clear this
-rung".
-
-## How to produce a report
-
-Run each test on the distractor menu with `--output`, then fill `TEMPLATE.md` from the JSON. From
-`cicd/tests/`:
-
-```bash
-# T1 — list projects
-npx tsx src/cli.ts test-mcp <models> \
-  --verify-live --verify-allow list_projects --verify-server-name testlink \
-  --distractor-command npx --distractor-args "@playwright/mcp@latest" \
-  --prompt "List the projects." --output t1.json
-
-# T2 — list suites (derived arg)
-npx tsx src/cli.ts test-mcp <models> \
-  --verify-live --verify-allow list_projects,list_test_suites --verify-server-name testlink \
-  --distractor-command npx --distractor-args "@playwright/mcp@latest" \
-  --prompt "List the test suites in the ollama37 project." --output t2.json
+# MCP tool-call capability (verify-live, testlink + playwright menu)
+gh workflow run test-mcp.yml -f models=<model> -f num_ctx=<8192|16384> -f judge_mode=verify-live \
+  -f verify_allow="list_projects,list_test_suites"
 ```
 
-`num_ctx` (8192) and `timeout` (1800s) default to the multi-server values; raise `--num-ctx` to
-12288–16384 for the chained T2 case on models that already sit near 8k on T1.
+Each run's JSON artifact fills one row; markers are defined in each report's own legend.
 
-## Field map (JSON → cell)
+## Related
 
-Each `results[]` entry in the `--output` JSON (`McpModelResult` / `Judgment` in
-`cicd/tests/src/mcp/test-mcp.ts`) fills one cell:
-
-| Column | JSON field |
-|---|---|
-| verdict | `check.overall_pass` → ✅/❌; `supported === false` → ⚪ |
-| stages (tool·query·content) | `check.agent.stages.{tool,query,content}` (verify-live/dual only; else `—`) |
-| cross-check | `check.agent.crossCheckUnsupported` (empty → grounded) |
-| peak/ctx | `max_prompt_tokens` / the run's `num_ctx` (⚠️ when >90%, ✂️ when ==) |
-| time | `total_duration_s` |
-| tok/s | `eval_tps` |
-| tools | `tool_calls[].name` |
-| detail: reason / evidence | `check.agent.reason` / `check.agent.evidence` (+ `evidenceStatus`) |
-
-## Markers
-
-| Mark | Meaning |
-|---|---|
-| ✅ | pass |
-| ❌ | fail |
-| ⚪ | no tool support (model template can't do tools — not a harness failure) |
-| ⚠️ | peak prompt > 90% of `num_ctx` (near truncation) |
-| ✂️ | truncated (peak == `num_ctx` — the menu didn't fit) |
-| ⏳ | not run |
-| — | not graded (e.g. simple mode has no rubric stages) |
-
-## Future
-
-A small `merge-mcp-tests t1.json:T1 t2.json:T2` aggregator would read the per-test JSONs and emit
-the matrix automatically (markdown + a machine-readable twin). Not built yet — reports are filled
-from the template by hand for now.
+K80 deep-dive audits live in [`../research/`](../research/): flash-attention coverage
+(`k80-fa-model-coverage.md`), kernel fusion (`k80-fusion-audit.md`), quantization defaults
+(`k80-quant-audit.md`), and the multi-arch workarounds audit (`k80-workarounds-multiarch-audit.md`).
