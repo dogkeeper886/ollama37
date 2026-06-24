@@ -59,13 +59,20 @@ GPU% in the VRAM report is a speed/timeout artifact, not a capability gap.
 
 ## deepseek-r1
 
-| Model | ctx | T1 | T2 | Peak/ctx | Time(s) | tok/s | Notes |
+**Stock** deepseek-r1 distills ship with no `.Tools` template → `🚫` no tool support, all sizes.
+With a **custom `.Tools` template** ([#366](https://github.com/dogkeeper886/ollama37/issues/366)) the
+gate opens (`-tools` variants below, 16k). The capability is real but the *quality* is not: only the
+32b clears even T1, and **none** drive the T2 derived-arg chain.
+
+| Model (custom `-tools`) | ctx | T1 | T2 | Peak/ctx | Time(s) | tok/s | Notes |
 |---|---|:--:|:--:|--:|--:|--:|---|
-| `deepseek-r1:1.5b` | all | 🚫 | 🚫 | — | — | — | no tool-calling support (deepseek-r1 distill template) |
-| `deepseek-r1:7b` | all | 🚫 | 🚫 | — | — | — | no tool-calling support (deepseek-r1 distill template) |
-| `deepseek-r1:8b` | all | 🚫 | 🚫 | — | — | — | no tool-calling support (deepseek-r1 distill template) |
-| `deepseek-r1:14b` | all | 🚫 | 🚫 | — | — | — | no tool-calling support (deepseek-r1 distill template) |
-| `deepseek-r1:32b` | all | 🚫 | 🚫 | — | — | — | no tool-calling support (deepseek-r1 distill template) |
+| `deepseek-r1:1.5b-tools` | 16k | ❌ | ❌ | 5319/16384 | 54.7 | 15.78 | emits no tool call |
+| `deepseek-r1:7b-tools` | 16k | ❌ | ❌ | 5319/16384 | 124.0 | 6.17 | emits no tool call |
+| `deepseek-r1:8b-tools` | 16k | ❌ | ❌ | 5343/16384 | 374.7 | 5.07 | T1 calls `list_projects` but dumps raw tool JSON → cross-check fail; T2 no chain |
+| `deepseek-r1:14b-tools` | 16k | ❌ | ❌ | 5319/16384 | 249.6 | 2.91 | T1 loops `list_projects` ×3 (tool stage ❌); T2 no call |
+| `deepseek-r1:32b-tools` | 16k | ✅ | ❌ | 5355/16384 | 949.8 | 1.52 | T1 ✅ grounded; T2 calls `list_test_suites` without deriving `project_id` |
+
+_Stock (no-template) verdict for all five sizes: `🚫`._
 
 ---
 
