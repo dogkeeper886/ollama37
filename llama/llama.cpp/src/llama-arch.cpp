@@ -1093,6 +1093,7 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
             { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
             { LLM_TENSOR_FFN_POST_NORM,   "blk.%d.post_ffw_norm" },
             { LLM_TENSOR_LAYER_OUT_SCALE, "blk.%d.layer_output_scale" },
+            { LLM_TENSOR_ROPE_FREQS,      "rope_freqs" },
         },
     },
     {
