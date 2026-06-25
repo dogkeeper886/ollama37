@@ -1196,6 +1196,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     ? 1.0f / std::sqrt(float(hparams.n_embd / hparams.n_head(0)))
                     : 1.0f / std::sqrt(float(hparams.n_embd_head_k));
             } break;
+        case LLM_ARCH_GEMMA4: // gemma4:12b is dense + SWA, reuse the gemma3 path (text)
         case LLM_ARCH_GEMMA3:
             {
                 hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
@@ -3804,6 +3805,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
                     }
                 } break;
+            case LLM_ARCH_GEMMA4:
             case LLM_ARCH_GEMMA3:
             case LLM_ARCH_GEMMA_EMBEDDING:
                 {
@@ -20540,6 +20542,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
             {
                 llm = std::make_unique<llm_build_gemma2_iswa>(*this, params);
             } break;
+        case LLM_ARCH_GEMMA4: // dense 12b reuses the gemma3 SWA build graph
         case LLM_ARCH_GEMMA3:
             {
                 llm = std::make_unique<llm_build_gemma3_iswa>(*this, params);
@@ -20978,6 +20981,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_GEMMA2:
         case LLM_ARCH_GEMMA3:
         case LLM_ARCH_GEMMA3N:
+        case LLM_ARCH_GEMMA4:
         case LLM_ARCH_GEMMA_EMBEDDING:
         case LLM_ARCH_STARCODER2:
         case LLM_ARCH_OPENELM:
