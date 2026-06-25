@@ -192,3 +192,15 @@ Every case runs the same four steps unless noted:
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
+
+### TC-15: gemma4:12b (text-only gemma4)
+
+- **Objective:** gemma4:12b — the only **text-only** gemma4 (no vision tower) — loads on the **new engine** and runs on K80 compute 3.7. Regression for [#367](https://github.com/dogkeeper886/ollama37/issues/367): today it falls back to the legacy llama.cpp runner (`unknown model architecture: 'gemma4'`); green once [#370](https://github.com/dogkeeper886/ollama37/issues/370) routes a text-only gemma4 to the new engine. Step 1 is the acceptance gate — the GPU-free `NewTextProcessor` unit test is a diagnostic only, not this case.
+- **Script:** cicd/tests/testcases/models/TC-MODELS-016.yml
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | Test inference | returns a `response`; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
+| 2 | Check GPU memory | reports non-zero `MiB` in use |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 4 | Unload model | `Model unloaded` |
