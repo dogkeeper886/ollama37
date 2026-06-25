@@ -46,6 +46,8 @@ struct llama_hparams {
     uint32_t n_rot;
     uint32_t n_embd_head_k; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v; // dimension of values (d_v) aka n_embd_head
+    uint32_t n_embd_head_k_swa = 0; // gemma4: key head dim on SWA layers (0 = same as full layers)
+    uint32_t n_embd_head_v_swa = 0; // gemma4: value head dim on SWA layers (0 = same as full layers)
     uint32_t n_expert = 0;
     uint32_t n_expert_used = 0;
     uint32_t n_rel_attn_bkts = 0;
@@ -223,6 +225,14 @@ struct llama_hparams {
     uint32_t n_ff(uint32_t il = 0) const;
 
     uint32_t n_gqa(uint32_t il = 0) const;
+
+    // per-layer key/value head dim (gemma4: SWA layers use a smaller head dim)
+    uint32_t n_embd_head_k_l(uint32_t il) const {
+        return (n_embd_head_k_swa && is_swa(il)) ? n_embd_head_k_swa : n_embd_head_k;
+    }
+    uint32_t n_embd_head_v_l(uint32_t il) const {
+        return (n_embd_head_v_swa && is_swa(il)) ? n_embd_head_v_swa : n_embd_head_v;
+    }
 
     // dimension of key embeddings across all k-v heads
     uint32_t n_embd_k_gqa(uint32_t il = 0) const;
