@@ -193,9 +193,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-15: gemma4:12b (text-only gemma4)
+### TC-15: gemma4:12b (split-vision gemma4)
 
-- **Objective:** gemma4:12b — the only **text-only** gemma4 (no vision tower) — loads on the **new engine** and runs on K80 compute 3.7. Regression for [#367](https://github.com/dogkeeper886/ollama37/issues/367): today it falls back to the legacy llama.cpp runner (`unknown model architecture: 'gemma4'`); green once [#370](https://github.com/dogkeeper886/ollama37/issues/370) routes a text-only gemma4 to the new engine. Step 1 is the acceptance gate — the GPU-free `NewTextProcessor` unit test is a diagnostic only, not this case.
+- **Objective:** gemma4:12b — the only gemma4 packaged as a **split-vision** model (a separate `projector` blob, vs the embedded projector in e4b/26b) — loads on the **new engine** and runs on K80 compute 3.7. Regression for [#367](https://github.com/dogkeeper886/ollama37/issues/367): today the fork's `NewLlamaServer` refuses split-vision models (`reason="split vision models aren't supported"`) and dead-ends in legacy llama.cpp (`unknown model architecture: 'gemma4'`); green once [#370](https://github.com/dogkeeper886/ollama37/issues/370) lets a new-engine arch with a projector use the new engine (upstream already dropped this limitation). Step 1 is the acceptance gate.
 - **Script:** cicd/tests/testcases/models/TC-MODELS-016.yml
 
 | # | Action | Expected Result |
