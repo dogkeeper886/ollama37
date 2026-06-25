@@ -3861,6 +3861,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
                         layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head_k_il}, 0);
                         layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head_k_il}, 0);
+                        layer.out_scale      = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), {1}, TENSOR_NOT_REQUIRED); // gemma4 (absent for gemma3)
 
                         layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
                         layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
@@ -10820,6 +10821,12 @@ struct llm_build_gemma : public llm_graph_context {
 
             cur = ggml_add(ctx0, cur, sa_out);
 
+            // gemma4: per-layer output scale (no-op for other archs; out_scale stays null)
+            if (model.layers[il].out_scale) {
+                cur = ggml_mul(ctx0, cur, model.layers[il].out_scale);
+                cb(cur, "out_scaled", il);
+            }
+
             cur = build_cvec(cur, il);
             cb(cur, "l_out", il);
 
@@ -10944,6 +10951,12 @@ struct llm_build_gemma2_iswa : public llm_graph_context {
             cb(cur, "ffn_post_norm", -1);
 
             cur = ggml_add(ctx0, cur, sa_out);
+
+            // gemma4: per-layer output scale (no-op for other archs; out_scale stays null)
+            if (model.layers[il].out_scale) {
+                cur = ggml_mul(ctx0, cur, model.layers[il].out_scale);
+                cb(cur, "out_scaled", il);
+            }
 
             cur = build_cvec(cur, il);
             cb(cur, "l_out", il);
@@ -11087,6 +11100,12 @@ struct llm_build_gemma3_iswa : public llm_graph_context {
 
             cur = ggml_add(ctx0, cur, sa_out);
 
+            // gemma4: per-layer output scale (no-op for other archs; out_scale stays null)
+            if (model.layers[il].out_scale) {
+                cur = ggml_mul(ctx0, cur, model.layers[il].out_scale);
+                cb(cur, "out_scaled", il);
+            }
+
             cur = build_cvec(cur, il);
             cb(cur, "l_out", il);
 
@@ -11226,6 +11245,12 @@ struct llm_build_gemma4_iswa : public llm_graph_context {
             cb(cur, "ffn_post_norm", -1);
 
             cur = ggml_add(ctx0, cur, sa_out);
+
+            // gemma4: per-layer output scale (no-op for other archs; out_scale stays null)
+            if (model.layers[il].out_scale) {
+                cur = ggml_mul(ctx0, cur, model.layers[il].out_scale);
+                cb(cur, "out_scaled", il);
+            }
 
             cur = build_cvec(cur, il);
             cb(cur, "l_out", il);
@@ -11782,6 +11807,12 @@ struct llm_build_gemma_embedding_iswa : public llm_graph_context {
             cb(cur, "ffn_post_norm", -1);
 
             cur = ggml_add(ctx0, cur, sa_out);
+
+            // gemma4: per-layer output scale (no-op for other archs; out_scale stays null)
+            if (model.layers[il].out_scale) {
+                cur = ggml_mul(ctx0, cur, model.layers[il].out_scale);
+                cb(cur, "out_scaled", il);
+            }
 
             cur = build_cvec(cur, il);
             cb(cur, "l_out", il);
