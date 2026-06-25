@@ -3853,7 +3853,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         const int64_t n_embd_head_k_il = hparams.n_embd_head_k_l(i);
                         layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k_il * n_head}, 0);
                         layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, (int64_t) hparams.n_embd_k_gqa(i)}, 0);
-                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, (int64_t) hparams.n_embd_v_gqa(i)}, 0);
+                        // gemma4 full-attention layers omit the V projection (reuse K as V)
+                        const int gemma4_wv_flags = (arch == LLM_ARCH_GEMMA4) ? TENSOR_NOT_REQUIRED : 0;
+                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, (int64_t) hparams.n_embd_v_gqa(i)}, gemma4_wv_flags);
                         layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k_il * n_head, n_embd}, 0);
 
                         layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
@@ -11151,12 +11153,16 @@ struct llm_build_gemma4_iswa : public llm_graph_context {
                 ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur);
                 cb(Kcur, "Kcur", il);
 
-                ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
+                // gemma4: full-attention layers omit the V projection -> reuse K as V
+                ggml_tensor * Vcur = model.layers[il].wv
+                                        ? build_lora_mm(model.layers[il].wv, cur)
+                                        : Kcur;
                 cb(Vcur, "Vcur", il);
 
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,       n_tokens);
                 Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv_il, n_tokens);
                 Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv_il, n_tokens);
+                Vcur = ggml_rms_norm(ctx0, Vcur, hparams.f_norm_rms_eps); // gemma4 normalizes V
 
                 Qcur = build_norm(Qcur, model.layers[il].attn_q_norm, NULL, LLM_NORM_RMS, il);
                 cb(Qcur, "Qcur_normed", il);
