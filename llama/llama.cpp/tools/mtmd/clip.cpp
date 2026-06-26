@@ -3045,14 +3045,20 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
         }
 
         if (loader.has_audio) {
-            ctx_audio = new clip_ctx(ctx_params);
-            loader.load_hparams(ctx_audio->model, CLIP_MODALITY_AUDIO);
-            if (ctx_audio->model.proj_type == PROJECTOR_TYPE_GEMMA4UA) {
-                // gemma4 audio encoder (gemma4ua / conformer) is not yet implemented — load vision only
+            // Peek the audio projector type from the GGUF without building a context. gemma4ua
+            // (conformer audio) is not implemented yet, and creating then deleting a partially
+            // loaded clip_ctx (load_hparams only, no tensors) is unsafe. Skip cleanly so the
+            // vision-only model still loads.
+            std::string a_proj;
+            const int a_kid = gguf_find_key(loader.ctx_gguf.get(), "clip.audio.projector_type");
+            if (a_kid >= 0) {
+                a_proj = gguf_get_val_str(loader.ctx_gguf.get(), a_kid);
+            }
+            if (clip_projector_type_from_string(a_proj) == PROJECTOR_TYPE_GEMMA4UA) {
                 LOG_WRN("%s: gemma4 audio (gemma4ua) not yet supported; loading vision only\n", __func__);
-                delete ctx_audio;
-                ctx_audio = nullptr;
             } else {
+                ctx_audio = new clip_ctx(ctx_params);
+                loader.load_hparams(ctx_audio->model, CLIP_MODALITY_AUDIO);
                 loader.load_tensors(*ctx_audio);
                 loader.alloc_compute_meta(*ctx_audio);
             }
