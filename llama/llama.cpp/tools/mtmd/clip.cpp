@@ -586,14 +586,21 @@ struct clip_graph {
     ggml_cgraph * build_gemma4uv() {
         const float ln_eps = 1e-5f; // pytorch LayerNorm default
 
+        // gemma4 merges scale*scale patches per token: the patch projection consumes a
+        // (patch_size*scale) x (patch_size*scale) pixel block. hparams.patch_size is the base
+        // patch (e.g. 16); scale = proj_scale_factor (e.g. 3) -> effective patch 48.
+        const int     scale     = hparams.proj_scale_factor > 0 ? hparams.proj_scale_factor : 1;
+        const int     eff_patch = patch_size * scale;
+        const int64_t eff_np    = (int64_t)(n_patches_x / scale) * (int64_t)(n_patches_y / scale);
+
         ggml_tensor * inp_raw = build_inp_raw();
 
         ggml_tensor * inp = nullptr;
         {
             // im2col so the per-patch LayerNorm runs before the patch projection
             const int64_t c = inp_raw->ne[2];
-            ggml_tensor * kernel = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, patch_size, patch_size, c);
-            inp = ggml_im2col(ctx0, kernel, inp_raw, patch_size, patch_size, 0, 0, 1, 1, true, inp_raw->type);
+            ggml_tensor * kernel = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, eff_patch, eff_patch, c);
+            inp = ggml_im2col(ctx0, kernel, inp_raw, eff_patch, eff_patch, 0, 0, 1, 1, true, inp_raw->type);
             inp = ggml_reshape_2d(ctx0, inp, inp->ne[0], inp->ne[1] * inp->ne[2] * inp->ne[3]);
             inp = build_norm(inp, model.patch_norm_1_w, model.patch_norm_1_b, NORM_TYPE_NORMAL, ln_eps, -1);
             inp = ggml_mul_mat(ctx0, model.patch_embeddings_0, inp);
@@ -602,10 +609,10 @@ struct clip_graph {
         }
 
         // 2D positional embeddings (separate x/y lookup tables packed in one tensor)
-        ggml_tensor * pos_x = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_patches);
+        ggml_tensor * pos_x = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, eff_np);
         ggml_set_name(pos_x, "pos_x");
         ggml_set_input(pos_x);
-        ggml_tensor * pos_y = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_patches);
+        ggml_tensor * pos_y = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, eff_np);
         ggml_set_name(pos_y, "pos_y");
         ggml_set_input(pos_y);
         {
@@ -2468,6 +2475,13 @@ struct clip_model_loader {
                         // test model (tinygemma3) has a different value, we optionally read it
                         get_u32(KEY_PROJ_SCALE_FACTOR, hparams.proj_scale_factor, false);
                     } break;
+                case PROJECTOR_TYPE_GEMMA4UV:
+                    {
+                        // gemma4 unified vision: the patch projection takes (patch_size*scale_factor)^2
+                        // pixels per token (scale_factor merges patch_size patches per side).
+                        hparams.proj_scale_factor = 3;
+                        get_u32(KEY_PROJ_SCALE_FACTOR, hparams.proj_scale_factor, false);
+                    } break;
                 case PROJECTOR_TYPE_QWEN2VL:
                     {
                         // max image size = sqrt(max_pixels) = 3584
@@ -4004,8 +4018,13 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
                 }
             } break;
         case PROJECTOR_TYPE_GEMMA4UV:
-            // gemma4 unified vision: one token per patch, no pooling
-            break;
+            {
+                // gemma4 merges scale*scale base patches into one token
+                int scale = ctx->model.hparams.proj_scale_factor;
+                if (scale > 0) {
+                    n_patches = (img->nx / (patch_size * scale)) * (img->ny / (patch_size * scale));
+                }
+            } break;
         default:
             GGML_ABORT("unsupported projector type");
     }
@@ -4435,8 +4454,10 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             } break;
         case PROJECTOR_TYPE_GEMMA4UV:
             {
-                // 2D patch grid positions (x = column, y = row), no CLS token
-                const int n_patches_per_row = image_size_width / patch_size;
+                // 2D patch grid positions (x = column, y = row), no CLS token.
+                // gemma4 merges scale base patches per side, so the grid uses the effective patch.
+                const int scale = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
+                const int n_patches_per_row = image_size_width / (patch_size * scale);
                 std::vector<int> pos_x(num_patches), pos_y(num_patches);
                 for (int i = 0; i < num_patches; i++) {
                     pos_x[i] = i % n_patches_per_row;
