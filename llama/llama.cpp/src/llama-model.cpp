@@ -11165,9 +11165,7 @@ struct llm_build_gemma4_iswa : public llm_graph_context {
             const int64_t n_embd_head  = hparams.n_embd_head_k_l(il);
             const int64_t n_head_kv_il = hparams.n_head_kv(il);
             // gemma4: full-attention layers use rope_freqs for proportional rope; SWA layers don't.
-            // TEMP disabled: rope_freqs->data is null at warmup -> SIGSEGV in the rope. Diagnosing the
-            // control-token output separately before re-enabling.
-            ggml_tensor * freq_factors = nullptr;
+            ggml_tensor * freq_factors = hparams.is_swa(il) ? nullptr : model.layers[il].rope_freqs;
 
             // norm
             cur = build_norm(inpL, model.layers[il].attn_norm, NULL, LLM_NORM_RMS, il);
