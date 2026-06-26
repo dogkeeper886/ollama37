@@ -1399,7 +1399,6 @@ ggml_cgraph * llama_kv_cache::build_graph_shift(llm_graph_result * res, llama_co
     auto * ctx = res->get_ctx();
     auto * gf  = res->get_gf();
 
-    const auto & n_embd_head_k = hparams.n_embd_head_k;
   //const auto & n_embd_head_v = hparams.n_embd_head_v;
 
     auto inp = std::make_unique<llm_graph_input_k_shift>(this);
@@ -1412,8 +1411,9 @@ ggml_cgraph * llama_kv_cache::build_graph_shift(llm_graph_result * res, llama_co
     for (const auto & layer : layers) {
         const uint32_t il = layer.il;
 
-        const int64_t n_head_kv    = hparams.n_head_kv(il);
-        const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
+        const int64_t n_head_kv     = hparams.n_head_kv(il);
+        const int64_t n_embd_k_gqa  = hparams.n_embd_k_gqa(il);
+        const int64_t n_embd_head_k = hparams.n_embd_head_k_l(il); // per-layer (gemma4 SWA); identity otherwise
 
         const float freq_base_l  = model.get_rope_freq_base (cparams, il);
         const float freq_scale_l = model.get_rope_freq_scale(cparams, il);

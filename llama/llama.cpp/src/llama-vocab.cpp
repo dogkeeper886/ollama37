@@ -3080,9 +3080,10 @@ int32_t llama_vocab::impl::token_to_piece(llama_token token, char * buf, int32_t
                     return _try_copy(token_text.data(), token_text.size());
                 }
                 if (attr & LLAMA_TOKEN_ATTR_NORMAL) {
-                    if (escape_whitespaces) {
+                    if (pre_type == LLAMA_VOCAB_PRE_TYPE_GEMMA4) {
                         // SPM-style BPE (gemma4): tokens carry the U+2581 whitespace marker, not
-                        // GPT-2 byte encoding. Undo ▁->space instead of byte-decoding.
+                        // GPT-2 byte encoding. Undo ▁->space instead of byte-decoding. Keyed on the
+                        // gemma4 pre-type specifically (escape_whitespaces defaults true for all BPE).
                         std::string result = token_text;
                         llama_unescape_whitespace(result);
                         return _try_copy(result.data(), result.size());
