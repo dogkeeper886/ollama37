@@ -4461,13 +4461,17 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         case PROJECTOR_TYPE_GEMMA4UV:
             {
                 // 2D patch grid positions (x = column, y = row), no CLS token.
-                // gemma4 merges scale base patches per side, so the grid uses the effective patch.
+                // gemma4 merges `scale` base patches per side, so the pos tensors are the EFFECTIVE
+                // (pooled) grid: (image_size/patch_size)/scale per side — matching build_gemma4uv's
+                // eff_np. num_patches here is the full base-patch count and must NOT be used.
                 const int scale = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
-                const int n_patches_per_row = image_size_width / (patch_size * scale);
-                std::vector<int> pos_x(num_patches), pos_y(num_patches);
-                for (int i = 0; i < num_patches; i++) {
-                    pos_x[i] = i % n_patches_per_row;
-                    pos_y[i] = i / n_patches_per_row;
+                const int npx    = (image_size_width  / patch_size) / scale;
+                const int npy    = (image_size_height / patch_size) / scale;
+                const int eff_np = npx * npy;
+                std::vector<int> pos_x(eff_np), pos_y(eff_np);
+                for (int i = 0; i < eff_np; i++) {
+                    pos_x[i] = i % npx;
+                    pos_y[i] = i / npx;
                 }
                 set_input_i32("pos_x", pos_x);
                 set_input_i32("pos_y", pos_y);
