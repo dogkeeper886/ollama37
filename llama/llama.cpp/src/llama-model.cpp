@@ -3843,7 +3843,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     dense_2_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_2_OUT, "weight"), {n_embd, hparams.dense_2_feat_out}, TENSOR_NOT_REQUIRED);
                     dense_3_out_layers = create_tensor(tn(LLM_TENSOR_DENSE_3_OUT, "weight"), {hparams.dense_3_feat_in, n_embd}, TENSOR_NOT_REQUIRED);
 
-                    bool rope_freqs_loaded = false; // gemma4: rope_freqs lives on full-attention layers only
+                    ggml_tensor * gemma4_rope_freqs = nullptr; // gemma4: one shared rope_freqs tensor (no DUPLICATED)
 
                     for (int i = 0; i < n_layer; ++i) {
                         auto & layer = layers[i];
@@ -3863,11 +3863,14 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head_k_il}, 0);
                         layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), {n_embd_head_k_il}, 0);
                         layer.out_scale      = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), {1}, TENSOR_NOT_REQUIRED); // gemma4 (absent for gemma3)
-                        // gemma4: rope_freqs (proportional rope) is created on each full-attention layer so it is
-                        // replicated to every device under tensor-split; SWA layers don't use it.
+                        // gemma4: rope_freqs (proportional rope) is a single global tensor loaded once and
+                        // shared by every full-attention layer. Per-layer TENSOR_DUPLICATED copies left
+                        // src->data null at compute time (SIGSEGV in the rope). SWA layers don't use it.
                         if (arch == LLM_ARCH_GEMMA4 && !hparams.is_swa(i)) {
-                            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_rot/2}, TENSOR_NOT_REQUIRED | (rope_freqs_loaded ? TENSOR_DUPLICATED : 0));
-                            rope_freqs_loaded = true;
+                            if (gemma4_rope_freqs == nullptr) {
+                                gemma4_rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_rot/2}, TENSOR_NOT_REQUIRED);
+                            }
+                            layer.rope_freqs = gemma4_rope_freqs;
                         }
 
                         layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
