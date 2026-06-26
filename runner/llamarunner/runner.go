@@ -549,6 +549,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		token := seq.samplingCtx.Sample(s.lc, seq.iBatch)
 		seq.samplingCtx.Accept(token, true)
 		piece := s.model.TokenToPiece(token)
+		slog.Info("DEBUG sampled token", "id", token, "piece", piece, "n", seq.numPredicted)
 
 		seq.numPredicted++
 
