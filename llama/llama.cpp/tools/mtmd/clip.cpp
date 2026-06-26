@@ -266,6 +266,14 @@ struct clip_model {
     ggml_tensor * patch_bias = nullptr;
     ggml_tensor * position_embeddings = nullptr;
 
+    // gemma4uv: three patch layer-norms (pre-embed, post-embed, post-pos)
+    ggml_tensor * patch_norm_1_w = nullptr;
+    ggml_tensor * patch_norm_1_b = nullptr;
+    ggml_tensor * patch_norm_2_w = nullptr;
+    ggml_tensor * patch_norm_2_b = nullptr;
+    ggml_tensor * patch_norm_3_w = nullptr;
+    ggml_tensor * patch_norm_3_b = nullptr;
+
     ggml_tensor * pre_ln_w = nullptr;
     ggml_tensor * pre_ln_b = nullptr;
 
@@ -570,6 +578,52 @@ struct clip_graph {
         // build the graph
         ggml_build_forward_expand(gf, cur);
 
+        return gf;
+    }
+
+    // gemma4 unified vision embedder: patch embed -> 2D position embed -> projection.
+    // No transformer encoder (the LLM does the visual reasoning). Uses pytorch LayerNorm.
+    ggml_cgraph * build_gemma4uv() {
+        const float ln_eps = 1e-5f; // pytorch LayerNorm default
+
+        ggml_tensor * inp_raw = build_inp_raw();
+
+        ggml_tensor * inp = nullptr;
+        {
+            // im2col so the per-patch LayerNorm runs before the patch projection
+            const int64_t c = inp_raw->ne[2];
+            ggml_tensor * kernel = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, patch_size, patch_size, c);
+            inp = ggml_im2col(ctx0, kernel, inp_raw, patch_size, patch_size, 0, 0, 1, 1, true, inp_raw->type);
+            inp = ggml_reshape_2d(ctx0, inp, inp->ne[0], inp->ne[1] * inp->ne[2] * inp->ne[3]);
+            inp = build_norm(inp, model.patch_norm_1_w, model.patch_norm_1_b, NORM_TYPE_NORMAL, ln_eps, -1);
+            inp = ggml_mul_mat(ctx0, model.patch_embeddings_0, inp);
+            inp = ggml_add(ctx0, inp, model.patch_bias);
+            inp = build_norm(inp, model.patch_norm_2_w, model.patch_norm_2_b, NORM_TYPE_NORMAL, ln_eps, -1);
+        }
+
+        // 2D positional embeddings (separate x/y lookup tables packed in one tensor)
+        ggml_tensor * pos_x = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_patches);
+        ggml_set_name(pos_x, "pos_x");
+        ggml_set_input(pos_x);
+        ggml_tensor * pos_y = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_patches);
+        ggml_set_name(pos_y, "pos_y");
+        ggml_set_input(pos_y);
+        {
+            const int64_t pos_size = model.position_embeddings->ne[1];
+            const size_t  nb1      = ggml_row_size(model.position_embeddings->type, n_embd);
+            ggml_tensor * tbl_x = ggml_view_2d(ctx0, model.position_embeddings, n_embd, pos_size, nb1, 0);
+            ggml_tensor * tbl_y = ggml_view_2d(ctx0, model.position_embeddings, n_embd, pos_size, nb1, pos_size * nb1);
+            inp = ggml_add(ctx0, inp, ggml_get_rows(ctx0, tbl_x, pos_x));
+            inp = ggml_add(ctx0, inp, ggml_get_rows(ctx0, tbl_y, pos_y));
+            inp = build_norm(inp, model.patch_norm_3_w, model.patch_norm_3_b, NORM_TYPE_NORMAL, ln_eps, -1);
+        }
+
+        // unified multimodal embedder: pre-projection RMSNorm + linear projection
+        ggml_tensor * cur = ggml_rms_norm(ctx0, inp, eps);
+        cur = ggml_mul_mat(ctx0, model.mm_input_proj_w, cur);
+        cb(cur, "projected", -1);
+
+        ggml_build_forward_expand(gf, cur);
         return gf;
     }
 
@@ -2107,6 +2161,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
             {
                 res = graph.build_siglip();
             } break;
+        case PROJECTOR_TYPE_GEMMA4UV:
+            {
+                res = graph.build_gemma4uv();
+            } break;
         case PROJECTOR_TYPE_PIXTRAL:
             {
                 res = graph.build_pixtral();
@@ -2235,6 +2293,13 @@ struct clip_model_loader {
         std::string proj_type;
         {
             get_string(KEY_PROJ_TYPE, proj_type, false);
+            if (proj_type.empty()) {
+                // newer multimodal projectors (e.g. gemma4) store the type per modality
+                get_string(modality == CLIP_MODALITY_AUDIO
+                               ? "clip.audio.projector_type"
+                               : "clip.vision.projector_type",
+                           proj_type, false);
+            }
             if (!proj_type.empty()) {
                 model.proj_type = clip_projector_type_from_string(proj_type);
             }
@@ -2697,6 +2762,16 @@ struct clip_model_loader {
                     model.mm_input_proj_w = get_tensor(TN_MM_INP_PROJ);
                     model.mm_soft_emb_norm_w = get_tensor(TN_MM_SOFT_EMB_N);
                 } break;
+            case PROJECTOR_TYPE_GEMMA4UV:
+                {
+                    model.patch_norm_1_w = get_tensor(string_format(TN_PATCH_NORM, 0, "weight"));
+                    model.patch_norm_1_b = get_tensor(string_format(TN_PATCH_NORM, 0, "bias"));
+                    model.patch_norm_2_w = get_tensor(string_format(TN_PATCH_NORM, 1, "weight"));
+                    model.patch_norm_2_b = get_tensor(string_format(TN_PATCH_NORM, 1, "bias"));
+                    model.patch_norm_3_w = get_tensor(string_format(TN_PATCH_NORM, 2, "weight"));
+                    model.patch_norm_3_b = get_tensor(string_format(TN_PATCH_NORM, 2, "bias"));
+                    model.mm_input_proj_w = get_tensor(TN_MM_INP_PROJ);
+                } break;
             case PROJECTOR_TYPE_IDEFICS3:
                 {
                     model.projection = get_tensor(TN_MM_PROJECTOR);
@@ -2958,8 +3033,15 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
         if (loader.has_audio) {
             ctx_audio = new clip_ctx(ctx_params);
             loader.load_hparams(ctx_audio->model, CLIP_MODALITY_AUDIO);
-            loader.load_tensors(*ctx_audio);
-            loader.alloc_compute_meta(*ctx_audio);
+            if (ctx_audio->model.proj_type == PROJECTOR_TYPE_GEMMA4UA) {
+                // gemma4 audio encoder (gemma4ua / conformer) is not yet implemented — load vision only
+                LOG_WRN("%s: gemma4 audio (gemma4ua) not yet supported; loading vision only\n", __func__);
+                delete ctx_audio;
+                ctx_audio = nullptr;
+            } else {
+                loader.load_tensors(*ctx_audio);
+                loader.alloc_compute_meta(*ctx_audio);
+            }
         }
 
     } catch (const std::exception & e) {
@@ -3638,6 +3720,7 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         return true;
     } else if (ctx->proj_type() == PROJECTOR_TYPE_GLM_EDGE
             || ctx->proj_type() == PROJECTOR_TYPE_GEMMA3
+            || ctx->proj_type() == PROJECTOR_TYPE_GEMMA4UV
             || ctx->proj_type() == PROJECTOR_TYPE_INTERNVL // TODO @ngxson : support dynamic resolution
     ) {
         clip_image_u8 resized_image;
@@ -3920,6 +4003,9 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
                     n_patches /= 2;
                 }
             } break;
+        case PROJECTOR_TYPE_GEMMA4UV:
+            // gemma4 unified vision: one token per patch, no pooling
+            break;
         default:
             GGML_ABORT("unsupported projector type");
     }
@@ -4347,6 +4433,18 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                 }
                 set_input_i32("pos_w", pos_data);
             } break;
+        case PROJECTOR_TYPE_GEMMA4UV:
+            {
+                // 2D patch grid positions (x = column, y = row), no CLS token
+                const int n_patches_per_row = image_size_width / patch_size;
+                std::vector<int> pos_x(num_patches), pos_y(num_patches);
+                for (int i = 0; i < num_patches; i++) {
+                    pos_x[i] = i % n_patches_per_row;
+                    pos_y[i] = i / n_patches_per_row;
+                }
+                set_input_i32("pos_x", pos_x);
+                set_input_i32("pos_y", pos_y);
+            } break;
         default:
             GGML_ABORT("Unknown projector type");
     }
@@ -4415,6 +4513,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_QWEN25VL:
             return ctx->model.mm_1_b->ne[0];
         case PROJECTOR_TYPE_GEMMA3:
+        case PROJECTOR_TYPE_GEMMA4UV:
             return ctx->model.mm_input_proj_w->ne[0];
         case PROJECTOR_TYPE_IDEFICS3:
             return ctx->model.projection->ne[1];
