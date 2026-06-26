@@ -11160,6 +11160,8 @@ struct llm_build_gemma4_iswa : public llm_graph_context {
 
             const int64_t n_embd_head  = hparams.n_embd_head_k_l(il);
             const int64_t n_head_kv_il = hparams.n_head_kv(il);
+            // gemma4: full-attention layers use rope_freqs for proportional rope; SWA layers don't
+            ggml_tensor * freq_factors = hparams.is_swa(il) ? nullptr : model.layers[il].rope_freqs;
 
             // norm
             cur = build_norm(inpL, model.layers[il].attn_norm, NULL, LLM_NORM_RMS, il);
@@ -11188,7 +11190,7 @@ struct llm_build_gemma4_iswa : public llm_graph_context {
                 cb(Qcur, "Qcur_normed", il);
 
                 Qcur = ggml_rope_ext(
-                        ctx0, Qcur, inp_pos, nullptr,
+                        ctx0, Qcur, inp_pos, freq_factors,
                         n_embd_head, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                         ext_factor, attn_factor, beta_fast, beta_slow);
 
@@ -11196,7 +11198,7 @@ struct llm_build_gemma4_iswa : public llm_graph_context {
                 cb(Kcur, "Kcur_normed", il);
 
                 Kcur = ggml_rope_ext(
-                        ctx0, Kcur, inp_pos, nullptr,
+                        ctx0, Kcur, inp_pos, freq_factors,
                         n_embd_head, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                         ext_factor, attn_factor, beta_fast, beta_slow);
 
