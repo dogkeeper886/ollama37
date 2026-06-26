@@ -497,10 +497,10 @@ struct clip_graph {
             n_patches(n_patches_x * n_patches_y),
             n_embd(hparams.n_embd),
             n_head(hparams.n_head),
-            d_head(n_embd / n_head),
+            d_head(n_head > 0 ? n_embd / n_head : 0), // gemma4uv has no attention (n_head == 0)
             n_layer(hparams.n_layer),
             eps(hparams.eps),
-            kq_scale(1.0f / sqrtf((float)d_head)) {
+            kq_scale(d_head > 0 ? 1.0f / sqrtf((float)d_head) : 0.0f) {
         struct ggml_init_params params = {
             /*.mem_size   =*/ ctx->buf_compute_meta.size(),
             /*.mem_buffer =*/ ctx->buf_compute_meta.data(),
