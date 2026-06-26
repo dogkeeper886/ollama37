@@ -2764,12 +2764,12 @@ struct clip_model_loader {
                 } break;
             case PROJECTOR_TYPE_GEMMA4UV:
                 {
-                    model.patch_norm_1_w = get_tensor(string_format(TN_PATCH_NORM, 0, "weight"));
-                    model.patch_norm_1_b = get_tensor(string_format(TN_PATCH_NORM, 0, "bias"));
-                    model.patch_norm_2_w = get_tensor(string_format(TN_PATCH_NORM, 1, "weight"));
-                    model.patch_norm_2_b = get_tensor(string_format(TN_PATCH_NORM, 1, "bias"));
-                    model.patch_norm_3_w = get_tensor(string_format(TN_PATCH_NORM, 2, "weight"));
-                    model.patch_norm_3_b = get_tensor(string_format(TN_PATCH_NORM, 2, "bias"));
+                    model.patch_norm_1_w = get_tensor(string_format(TN_PATCH_NORM, 1, "weight"));
+                    model.patch_norm_1_b = get_tensor(string_format(TN_PATCH_NORM, 1, "bias"));
+                    model.patch_norm_2_w = get_tensor(string_format(TN_PATCH_NORM, 2, "weight"));
+                    model.patch_norm_2_b = get_tensor(string_format(TN_PATCH_NORM, 2, "bias"));
+                    model.patch_norm_3_w = get_tensor(string_format(TN_PATCH_NORM, 3, "weight"));
+                    model.patch_norm_3_b = get_tensor(string_format(TN_PATCH_NORM, 3, "bias"));
                     model.mm_input_proj_w = get_tensor(TN_MM_INP_PROJ);
                 } break;
             case PROJECTOR_TYPE_IDEFICS3:
