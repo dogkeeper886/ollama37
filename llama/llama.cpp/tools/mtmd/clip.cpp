@@ -3757,22 +3757,14 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         res_imgs->grid_y = instructions.grid_size.height;
         return true;
     } else if (ctx->proj_type() == PROJECTOR_TYPE_GEMMA4UV) {
-        // gemma4: ollama smartResize (model/models/gemma4/process_image.go) — aspect-preserving,
-        // scale to fill maxPixels (280 pooled tokens), floor each side to a (patch_size*scale)=48
-        // multiple; normalize to [-1,1] (pack: 2*v/255 - 1).
-        const int scale     = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
-        const int align     = params.patch_size * scale;                  // 48
-        const int max_pixels = 280 * params.patch_size * params.patch_size * scale * scale;
-        const int ow = original_size.width;
-        const int oh = original_size.height;
-        int tw = align, th = align;
-        if (ow > 0 && oh > 0) {
-            const double factor = std::sqrt((double) max_pixels / ((double) ow * oh));
-            tw = std::max(align, (int) (std::floor(factor * ow / align) * align));
-            th = std::max(align, (int) (std::floor(factor * oh / align) * align));
-        }
+        // gemma4: fixed square resize, normalized to [-1,1] (ollama pack: 2*v/255 - 1).
+        // NOTE(#374): embedder is rewritten + correctly scaled (1/sqrt(n_embd)), but a remaining
+        // patch-extraction CONTENT bug means the image isn't perceived ("no image" @16 tok;
+        // smartResize @266 tok degenerates). Fixed-square is the coherent checkpoint; the next
+        // step needs reference embeddings from ollama's Go model_vision.go to fix the conv layout.
         clip_image_u8 resized_image;
-        image_manipulation::bilinear_resize(*img, resized_image, tw, th);
+        const int sz = params.image_size;
+        image_manipulation::resize_and_pad_image(*img, resized_image, {sz, sz});
         clip_image_f32_ptr img_f32(clip_image_f32_init());
         const float mean_std[3] = {0.5f, 0.5f, 0.5f};
         normalize_image_u8_to_f32(resized_image, *img_f32, mean_std, mean_std);
