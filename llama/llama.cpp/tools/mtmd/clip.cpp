@@ -641,6 +641,11 @@ struct clip_graph {
         // unified multimodal embedder: linear projection, then post-projection RMSNorm (no weight)
         cur = ggml_mul_mat(ctx0, model.mm_input_proj_w, cur);
         cur = ggml_rms_norm(ctx0, cur, eps);
+        // The legacy gemma4 text graph scales the WHOLE input embedding (incl. the spliced image
+        // embd) by sqrt(n_embd); ollama injects the vision embeddings AFTER that scale (unscaled,
+        // RMS~1). Pre-divide by sqrt(n_embd) so after the graph's x sqrt(n_embd) the image tokens
+        // land at RMS~1, matching the text token magnitude instead of being ~sqrt(n_embd)x too big.
+        cur = ggml_scale(ctx0, cur, 1.0f / sqrtf((float) n_embd));
         cb(cur, "projected", -1);
 
         ggml_build_forward_expand(gf, cur);
