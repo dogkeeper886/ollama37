@@ -3738,32 +3738,12 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         res_imgs->grid_x = instructions.grid_size.width;
         res_imgs->grid_y = instructions.grid_size.height;
         return true;
-    } else if (ctx->proj_type() == PROJECTOR_TYPE_GEMMA4UV) {
-        // gemma4: aspect-preserving resize aligned to (patch_size * scale_factor). Match ollama's
-        // smartResize (model/models/gemma4/process_image.go): scale to fill maxPixels (280 pooled
-        // tokens), floor each side to an align multiple. NOTE: normalization is the GGUF
-        // image_mean/image_std for now — the model degenerates with the [-1,1] (0.5/0.5) norm at
-        // this resolution; isolating norm vs resolution as the cause (#374).
-        const int scale     = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
-        const int align     = params.patch_size * scale;                  // 48
-        const int max_pixels = 280 * params.patch_size * params.patch_size * scale * scale;
-        const int ow = original_size.width;
-        const int oh = original_size.height;
-        int tw = align, th = align;
-        if (ow > 0 && oh > 0) {
-            const double factor = std::sqrt((double) max_pixels / ((double) ow * oh));
-            tw = std::max(align, (int) (std::floor(factor * ow / align) * align));
-            th = std::max(align, (int) (std::floor(factor * oh / align) * align));
-        }
-        clip_image_u8 resized_image;
-        image_manipulation::bilinear_resize(*img, resized_image, tw, th);
-        clip_image_f32_ptr img_f32(clip_image_f32_init());
-        normalize_image_u8_to_f32(resized_image, *img_f32, params.image_mean, params.image_std);
-        res_imgs->entries.push_back(std::move(img_f32));
-        return true;
-
     } else if (ctx->proj_type() == PROJECTOR_TYPE_GLM_EDGE
             || ctx->proj_type() == PROJECTOR_TYPE_GEMMA3
+            || ctx->proj_type() == PROJECTOR_TYPE_GEMMA4UV // FIXME(#374): fixed-square gives coherent
+                                                           // but low-fidelity vision; smartResize at
+                                                           // higher/non-square res degenerates the
+                                                           // model -> build_gemma4uv embedder bug.
             || ctx->proj_type() == PROJECTOR_TYPE_INTERNVL // TODO @ngxson : support dynamic resolution
     ) {
         clip_image_u8 resized_image;
