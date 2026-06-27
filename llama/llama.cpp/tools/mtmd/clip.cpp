@@ -3051,7 +3051,7 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
             // vision-only model still loads.
             std::string a_proj;
             const int a_kid = gguf_find_key(loader.ctx_gguf.get(), "clip.audio.projector_type");
-            if (a_kid >= 0) {
+            if (a_kid >= 0 && gguf_get_kv_type(loader.ctx_gguf.get(), a_kid) == GGUF_TYPE_STRING) {
                 a_proj = gguf_get_val_str(loader.ctx_gguf.get(), a_kid);
             }
             if (clip_projector_type_from_string(a_proj) == PROJECTOR_TYPE_GEMMA4UA) {
@@ -3738,9 +3738,33 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         res_imgs->grid_x = instructions.grid_size.width;
         res_imgs->grid_y = instructions.grid_size.height;
         return true;
+    } else if (ctx->proj_type() == PROJECTOR_TYPE_GEMMA4UV) {
+        // gemma4: aspect-preserving resize aligned to (patch_size * scale_factor), normalized to
+        // [-1, 1]. The projector GGUF ships image_mean=0/image_std=1 (a no-op), but gemma4 expects
+        // [-1, 1], and the base 224px square yields only ~16 tokens. Match ollama's smartResize
+        // (model/models/gemma4/process_image.go): scale to fill maxPixels (280 pooled tokens),
+        // floor each side to an align multiple, then mean=std=0.5.
+        const int scale     = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
+        const int align     = params.patch_size * scale;                  // 48
+        const int max_pixels = 280 * params.patch_size * params.patch_size * scale * scale;
+        const int ow = original_size.width;
+        const int oh = original_size.height;
+        int tw = align, th = align;
+        if (ow > 0 && oh > 0) {
+            const double factor = std::sqrt((double) max_pixels / ((double) ow * oh));
+            tw = std::max(align, (int) (std::floor(factor * ow / align) * align));
+            th = std::max(align, (int) (std::floor(factor * oh / align) * align));
+        }
+        clip_image_u8 resized_image;
+        image_manipulation::bilinear_resize(*img, resized_image, tw, th);
+        clip_image_f32_ptr img_f32(clip_image_f32_init());
+        const float mean_std[3] = {0.5f, 0.5f, 0.5f};
+        normalize_image_u8_to_f32(resized_image, *img_f32, mean_std, mean_std);
+        res_imgs->entries.push_back(std::move(img_f32));
+        return true;
+
     } else if (ctx->proj_type() == PROJECTOR_TYPE_GLM_EDGE
             || ctx->proj_type() == PROJECTOR_TYPE_GEMMA3
-            || ctx->proj_type() == PROJECTOR_TYPE_GEMMA4UV
             || ctx->proj_type() == PROJECTOR_TYPE_INTERNVL // TODO @ngxson : support dynamic resolution
     ) {
         clip_image_u8 resized_image;
