@@ -586,26 +586,25 @@ struct clip_graph {
     ggml_cgraph * build_gemma4uv() {
         const float ln_eps = 1e-5f; // pytorch LayerNorm default
 
-        // gemma4 unified vision embedder — matches ollama model/models/gemma4 (VisionModel.Forward
-        // + visionPoolAndProject) for the shallow gemma4uv projector (no transformer layers):
-        //   patch conv (eff_patch=patch_size*scale kernel, patch_size stride, pad -> FINE
-        //   n_patches grid) -> per-patch LayerNorms -> 2D position add -> AvgPool2D(scale) merge
-        //   -> linear projection -> post-projection RMSNorm (no learned weight).
-        // The [-1,1] scale by sqrt(n_embd) in the reference is a no-op here (no std bias, and the
-        // final RMSNorm is scale-invariant), so it is omitted.
+        // gemma4 unified vision embedder for the ollama gemma4uv projector blob. Its patch_embd
+        // weight is [eff_patch^2 * 3, n_embd] = [6912, 3840]: the scale*scale (3x3) patch MERGE is
+        // BAKED INTO the patch projection. So each token is ONE non-overlapping eff_patch (48x48)
+        // block projected directly — there is NO separate AvgPool2D (ollama's model_vision.go,
+        // which 16-patches + AvgPool2D, is for a different unified GGUF and never runs for this
+        // split-projector model). Matches mainline tools/mtmd/models/gemma4uv.cpp on the 48 kernel.
         const int scale     = hparams.proj_scale_factor > 0 ? hparams.proj_scale_factor : 1; // 3
-        const int eff_patch = patch_size * scale;            // 48 (conv kernel)
-        const int pad       = (eff_patch - patch_size) / 2;  // 16 -> fine grid == img/patch_size
+        const int eff_patch = patch_size * scale;            // 48 (merged-patch kernel)
+        const int64_t eff_np = (int64_t)(n_patches_x / scale) * (int64_t)(n_patches_y / scale);
 
         ggml_tensor * inp_raw = build_inp_raw();
 
         ggml_tensor * inp = nullptr;
         {
-            // im2col (kernel eff_patch, stride patch_size, pad) so the per-patch LayerNorm runs
-            // before the patch projection; output grid is the fine n_patches_x x n_patches_y.
+            // im2col: non-overlapping 48x48 patches so the per-patch LayerNorm runs before the
+            // projection -> [eff_patch^2 * c, eff_np]
             const int64_t c = inp_raw->ne[2];
             ggml_tensor * kernel = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, eff_patch, eff_patch, c);
-            inp = ggml_im2col(ctx0, kernel, inp_raw, patch_size, patch_size, pad, pad, 1, 1, true, inp_raw->type);
+            inp = ggml_im2col(ctx0, kernel, inp_raw, eff_patch, eff_patch, 0, 0, 1, 1, true, inp_raw->type);
             inp = ggml_reshape_2d(ctx0, inp, inp->ne[0], inp->ne[1] * inp->ne[2] * inp->ne[3]);
             inp = build_norm(inp, model.patch_norm_1_w, model.patch_norm_1_b, NORM_TYPE_NORMAL, ln_eps, -1);
             inp = ggml_mul_mat(ctx0, model.patch_embeddings_0, inp);
@@ -613,11 +612,11 @@ struct clip_graph {
             inp = build_norm(inp, model.patch_norm_2_w, model.patch_norm_2_b, NORM_TYPE_NORMAL, ln_eps, -1);
         }
 
-        // 2D positional embeddings on the FINE grid (separate x/y tables packed in one tensor)
-        ggml_tensor * pos_x = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_patches);
+        // 2D positional embeddings on the merged (eff_np) grid
+        ggml_tensor * pos_x = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, eff_np);
         ggml_set_name(pos_x, "pos_x");
         ggml_set_input(pos_x);
-        ggml_tensor * pos_y = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_patches);
+        ggml_tensor * pos_y = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, eff_np);
         ggml_set_name(pos_y, "pos_y");
         ggml_set_input(pos_y);
         {
@@ -630,22 +629,9 @@ struct clip_graph {
             inp = build_norm(inp, model.patch_norm_3_w, model.patch_norm_3_b, NORM_TYPE_NORMAL, ln_eps, -1);
         }
 
-        // AvgPool2D over a scale x scale window: [n_embd, nx*ny] -> [n_embd, (nx/scale)*(ny/scale)]
-        ggml_tensor * cur = ggml_reshape_3d(ctx0, inp, n_embd, n_patches_x, n_patches_y); // [n_embd, nx, ny]
-        cur = ggml_cont(ctx0, ggml_permute(ctx0, cur, 2, 0, 1, 3));                        // [nx, ny, n_embd]
-        cur = ggml_pool_2d(ctx0, cur, GGML_OP_POOL_AVG, scale, scale, scale, scale, 0, 0); // [nx/s, ny/s, n_embd]
-        const int64_t mx = cur->ne[0], my = cur->ne[1];
-        cur = ggml_cont(ctx0, ggml_permute(ctx0, cur, 1, 2, 0, 3));                        // [n_embd, mx, my]
-        cur = ggml_reshape_2d(ctx0, cur, n_embd, mx * my);                                 // [n_embd, mx*my]
-
-        // unified multimodal embedder: linear projection, then post-projection RMSNorm (no weight)
+        // multimodal projection: pre-projection RMSNorm then linear (mainline gemma4uv order)
+        ggml_tensor * cur = ggml_rms_norm(ctx0, inp, eps);
         cur = ggml_mul_mat(ctx0, model.mm_input_proj_w, cur);
-        cur = ggml_rms_norm(ctx0, cur, eps);
-        // The legacy gemma4 text graph scales the WHOLE input embedding (incl. the spliced image
-        // embd) by sqrt(n_embd); ollama injects the vision embeddings AFTER that scale (unscaled,
-        // RMS~1). Pre-divide by sqrt(n_embd) so after the graph's x sqrt(n_embd) the image tokens
-        // land at RMS~1, matching the text token magnitude instead of being ~sqrt(n_embd)x too big.
-        cur = ggml_scale(ctx0, cur, 1.0f / sqrtf((float) n_embd));
         cb(cur, "projected", -1);
 
         ggml_build_forward_expand(gf, cur);
@@ -4493,10 +4479,11 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         case PROJECTOR_TYPE_GEMMA4UV:
             {
                 // 2D patch grid positions (x = column, y = row), no CLS token. Positions are on the
-                // FINE patch grid (image_size/patch_size per side) — they are added BEFORE the
-                // AvgPool2D merge in build_gemma4uv, so the count is the full base-patch count.
-                const int npx = image_size_width  / patch_size;
-                const int npy = image_size_height / patch_size;
+                // MERGED grid (image_size/(patch_size*scale) per side) — one position per
+                // non-overlapping 48x48 patch, matching build_gemma4uv's eff_np tokens.
+                const int scale = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
+                const int npx = (image_size_width  / patch_size) / scale;
+                const int npy = (image_size_height / patch_size) / scale;
                 const int np  = npx * npy;
                 std::vector<int> pos_x(np), pos_y(np);
                 for (int i = 0; i < np; i++) {
