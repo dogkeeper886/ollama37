@@ -2378,7 +2378,9 @@ struct clip_model_loader {
                     }
                 }
             } else if (is_audio) {
-                get_u32(KEY_A_NUM_MEL_BINS, hparams.n_mel_bins, false); // absent for encoder-free gemma4ua
+                // required for whisper-family audio; absent for encoder-free gemma4ua (which sets
+                // n_mel_bins as a frame size in the projector switch below)
+                get_u32(KEY_A_NUM_MEL_BINS, hparams.n_mel_bins, model.proj_type != PROJECTOR_TYPE_GEMMA4UA);
 
             } else {
                 GGML_ASSERT(false && "unknown modality");

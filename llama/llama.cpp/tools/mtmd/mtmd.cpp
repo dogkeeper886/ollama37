@@ -643,10 +643,20 @@ struct mtmd_tokenizer {
             if (clip_get_projector_type(ctx->ctx_a) == PROJECTOR_TYPE_GEMMA4UA) {
                 // gemma4ua is encoder-free: chunk the raw 16 kHz waveform into 640-sample (40 ms)
                 // frames (1 frame = 1 token), zero-padding the last frame. No FFT/mel/filterbank.
-                const int     frame_size = 640;
-                const float * samples    = (const float *)bitmap->data.data();
-                const size_t  n_samples  = bitmap->data.size() / sizeof(float);
-                const int     n_frames   = (int)((n_samples + frame_size - 1) / frame_size);
+                const int     frame_size   = 640;
+                const float * samples      = (const float *)bitmap->data.data();
+                size_t        n_samples    = bitmap->data.size() / sizeof(float);
+                int           n_frames     = (int)((n_samples + frame_size - 1) / frame_size);
+
+                // cap very long audio: this path emits one chunk for the whole clip (no chunking),
+                // so an uncapped multi-minute WAV would blow the compute graph / context window.
+                const int max_frames = 3000; // ~120 s at 40 ms/frame
+                if (n_frames > max_frames) {
+                    LOG_WRN("%s: gemma4ua audio is %d frames (~%d s); truncating to %d frames (~120 s)\n",
+                            __func__, n_frames, n_frames * frame_size / 16000, max_frames);
+                    n_frames  = max_frames;
+                    n_samples = (size_t) max_frames * frame_size;
+                }
 
                 clip_image_f32_ptr mel_f32(clip_image_f32_init());
                 mel_f32->nx = n_frames;    // tokens
