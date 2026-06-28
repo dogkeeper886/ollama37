@@ -2211,6 +2211,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                         || t.first == "<|im_end|>"
                         || t.first == "<|end|>"
                         || t.first == "<end_of_turn>"
+                        || t.first == "<turn|>" // gemma4 end-of-turn
                         || t.first == "<|endoftext|>"
                         || t.first == "<|end_of_text|>" // granite
                         || t.first == "<EOT>"
@@ -2376,6 +2377,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                     || t.first == "<|return|>" // o200k_harmony
                     || t.first == "<|call|>"   // o200k_harmony
                     || t.first == "<end_of_turn>"
+                    || t.first == "<turn|>" // gemma4 end-of-turn
                     || t.first == "<|endoftext|>"
                     || t.first == "<|eom_id|>"
                     || t.first == "<EOT>"
