@@ -1691,6 +1691,19 @@ struct clip_graph {
         return gf;
     }
 
+    // gemma4 unified audio: encoder-free. Raw 16 kHz waveform pre-chunked into 640-sample
+    // (40 ms = 1 token) frames; pre-projection RMSNorm then linear projection. No encoder.
+    ggml_cgraph * build_gemma4ua() {
+        ggml_tensor * inp = build_inp_raw(1); // [n_frames, 640, 1]
+        // -> [640, n_frames]: one 640-sample vector per token, so the norm is over the frame
+        ggml_tensor * cur = ggml_cont(ctx0, ggml_permute(ctx0, inp, 1, 0, 2, 3));
+        cur = ggml_rms_norm(ctx0, cur, eps);                  // embedding_pre_projection_norm (eps=1e-6)
+        cur = ggml_mul_mat(ctx0, model.mm_input_proj_w, cur); // [n_embd, n_frames]
+        cb(cur, "projected", -1);
+        ggml_build_forward_expand(gf, cur);
+        return gf;
+    }
+
 private:
     //
     // utility functions
@@ -2203,6 +2216,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
             {
                 res = graph.build_whisper_enc();
             } break;
+        case PROJECTOR_TYPE_GEMMA4UA:
+            {
+                res = graph.build_gemma4ua();
+            } break;
         case PROJECTOR_TYPE_KIMIVL:
             {
                 res = graph.build_kimivl();
@@ -2361,7 +2378,7 @@ struct clip_model_loader {
                     }
                 }
             } else if (is_audio) {
-                get_u32(KEY_A_NUM_MEL_BINS, hparams.n_mel_bins);
+                get_u32(KEY_A_NUM_MEL_BINS, hparams.n_mel_bins, false); // absent for encoder-free gemma4ua
 
             } else {
                 GGML_ASSERT(false && "unknown modality");
@@ -2523,6 +2540,13 @@ struct clip_model_loader {
                         }
                         hparams.ffn_op = FFN_GELU_ERF;
                         log_ffn_op = "gelu_erf"; // temporary solution for logging
+                    } break;
+                case PROJECTOR_TYPE_GEMMA4UA:
+                    {
+                        // encoder-free: raw 16 kHz waveform chunked into 640-sample (40 ms) frames;
+                        // n_mel_bins is reused as the frame size, not a mel-bin count.
+                        hparams.eps        = 1e-6f;
+                        hparams.n_mel_bins = 640;
                     } break;
                 default:
                     break;
@@ -2790,6 +2814,11 @@ struct clip_model_loader {
                     model.patch_norm_3_b = get_tensor(string_format(TN_PATCH_NORM, 3, "bias"));
                     model.mm_input_proj_w = get_tensor(TN_MM_INP_PROJ);
                 } break;
+            case PROJECTOR_TYPE_GEMMA4UA:
+                {
+                    // encoder-free unified audio: only the input projection [640, n_embd]
+                    model.mm_input_proj_w = get_tensor(TN_A_MM_INP_PROJ);
+                } break;
             case PROJECTOR_TYPE_IDEFICS3:
                 {
                     model.projection = get_tensor(TN_MM_PROJECTOR);
@@ -3049,23 +3078,10 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
         }
 
         if (loader.has_audio) {
-            // Peek the audio projector type from the GGUF without building a context. gemma4ua
-            // (conformer audio) is not implemented yet, and creating then deleting a partially
-            // loaded clip_ctx (load_hparams only, no tensors) is unsafe. Skip cleanly so the
-            // vision-only model still loads.
-            std::string a_proj;
-            const int a_kid = gguf_find_key(loader.ctx_gguf.get(), "clip.audio.projector_type");
-            if (a_kid >= 0 && gguf_get_kv_type(loader.ctx_gguf.get(), a_kid) == GGUF_TYPE_STRING) {
-                a_proj = gguf_get_val_str(loader.ctx_gguf.get(), a_kid);
-            }
-            if (clip_projector_type_from_string(a_proj) == PROJECTOR_TYPE_GEMMA4UA) {
-                LOG_WRN("%s: gemma4 audio (gemma4ua) not yet supported; loading vision only\n", __func__);
-            } else {
-                ctx_audio = new clip_ctx(ctx_params);
-                loader.load_hparams(ctx_audio->model, CLIP_MODALITY_AUDIO);
-                loader.load_tensors(*ctx_audio);
-                loader.alloc_compute_meta(*ctx_audio);
-            }
+            ctx_audio = new clip_ctx(ctx_params);
+            loader.load_hparams(ctx_audio->model, CLIP_MODALITY_AUDIO);
+            loader.load_tensors(*ctx_audio);
+            loader.alloc_compute_meta(*ctx_audio);
         }
 
     } catch (const std::exception & e) {
@@ -4050,6 +4066,10 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
                     n_patches /= 2;
                 }
             } break;
+        case PROJECTOR_TYPE_GEMMA4UA:
+            {
+                n_patches = img->nx; // one token per raw-waveform frame, no downsampling
+            } break;
         case PROJECTOR_TYPE_GEMMA4UV:
             {
                 // gemma4 merges scale*scale base patches into one token
@@ -4465,8 +4485,9 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         case PROJECTOR_TYPE_ULTRAVOX:
         case PROJECTOR_TYPE_LFM2:
         case PROJECTOR_TYPE_VOXTRAL:
+        case PROJECTOR_TYPE_GEMMA4UA:
             {
-                // do nothing
+                // do nothing (gemma4ua audio is encoder-free; no positions/aux inputs)
             } break;
         case PROJECTOR_TYPE_LLAMA4:
             {
@@ -4592,6 +4613,9 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_GEMMA3:
         case PROJECTOR_TYPE_GEMMA4UV:
             return ctx->model.mm_input_proj_w->ne[0];
+        case PROJECTOR_TYPE_GEMMA4UA:
+            // audio projection is [640, n_embd]; the embedding dim is ne[1]
+            return ctx->model.mm_input_proj_w->ne[1];
         case PROJECTOR_TYPE_IDEFICS3:
             return ctx->model.projection->ne[1];
         case PROJECTOR_TYPE_ULTRAVOX:

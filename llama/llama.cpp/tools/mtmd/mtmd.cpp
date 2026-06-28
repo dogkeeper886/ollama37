@@ -315,6 +315,11 @@ struct mtmd_context {
             // [BEGIN_AUDIO] ... (embeddings) ...
             aud_beg = "[BEGIN_AUDIO]";
 
+        } else if (proj == PROJECTOR_TYPE_GEMMA4UA) {
+            // <|audio> ... (embeddings) ... <audio|>  (gemma4 <|x>...<x|> style)
+            aud_beg = "<|audio>";
+            aud_end = "<audio|>";
+
         }
     }
 
@@ -635,6 +640,44 @@ struct mtmd_tokenizer {
                 add_text(ctx->aud_beg, true); // add audio begin token
             }
 
+            if (clip_get_projector_type(ctx->ctx_a) == PROJECTOR_TYPE_GEMMA4UA) {
+                // gemma4ua is encoder-free: chunk the raw 16 kHz waveform into 640-sample (40 ms)
+                // frames (1 frame = 1 token), zero-padding the last frame. No FFT/mel/filterbank.
+                const int     frame_size = 640;
+                const float * samples    = (const float *)bitmap->data.data();
+                const size_t  n_samples  = bitmap->data.size() / sizeof(float);
+                const int     n_frames   = (int)((n_samples + frame_size - 1) / frame_size);
+
+                clip_image_f32_ptr mel_f32(clip_image_f32_init());
+                mel_f32->nx = n_frames;    // tokens
+                mel_f32->ny = frame_size;  // 640
+                // feature-major so it loads as inp_raw[n_frames, 640]: buf[f*n_frames + t]
+                mel_f32->buf.assign((size_t)n_frames * frame_size, 0.0f);
+                for (int t = 0; t < n_frames; t++) {
+                    for (int f = 0; f < frame_size; f++) {
+                        const size_t src = (size_t)t * frame_size + f;
+                        if (src < n_samples) {
+                            mel_f32->buf[(size_t)f * n_frames + t] = samples[src];
+                        }
+                    }
+                }
+                size_t n_tokens = clip_n_output_tokens(ctx->ctx_a, mel_f32.get());
+
+                clip_image_f32_batch batch_f32;
+                batch_f32.is_audio = true;
+                batch_f32.entries.push_back(std::move(mel_f32));
+
+                mtmd_audio_tokens_ptr audio_tokens(new mtmd_audio_tokens);
+                audio_tokens->n_tokens  = n_tokens;
+                audio_tokens->batch_f32 = std::move(batch_f32);
+                audio_tokens->id        = bitmap->id;
+
+                mtmd_input_chunk chunk{
+                    MTMD_INPUT_CHUNK_TYPE_AUDIO, {}, nullptr, std::move(audio_tokens),
+                };
+                cur.entries.emplace_back(std::move(chunk));
+
+            } else {
             // preprocess audio
             GGML_ASSERT(ctx->w_filters.n_mel); // make sure we have filter preloaded
             std::vector<whisper_preprocessor::whisper_mel> mel_spec_chunks;
@@ -673,6 +716,7 @@ struct mtmd_tokenizer {
                     std::move(audio_tokens),
                 };
                 cur.entries.emplace_back(std::move(chunk));
+            }
             }
 
             if (!ctx->aud_end.empty()) {
