@@ -165,12 +165,15 @@ func stripThinking(text string) string {
 // When trim is true, leading/trailing whitespace is stripped (matching the Jinja2
 // template's | trim filter applied to non-model content).
 func (r *Gemma4Renderer) renderContent(sb *strings.Builder, msg api.Message, imageOffset *int, trim bool) {
+	if len(msg.Images) > 0 && r.useImgTags {
+		for range msg.Images {
+			sb.WriteString(fmt.Sprintf("[img-%d]", *imageOffset))
+			*imageOffset++
+		}
+	}
 	content := msg.Content
 	if trim {
 		content = strings.TrimSpace(content)
-	}
-	if len(msg.Images) > 0 && r.useImgTags {
-		content, *imageOffset = renderContentWithImageTags(content, len(msg.Images), *imageOffset)
 	}
 	sb.WriteString(content)
 }
@@ -223,7 +226,7 @@ func (r *Gemma4Renderer) renderToolDeclaration(tool api.Tool) string {
 
 		needsComma := false
 
-		if fn.Parameters.Properties != nil && fn.Parameters.Properties.Len() > 0 {
+		if fn.Parameters.Properties != nil && len(fn.Parameters.Properties) > 0 {
 			sb.WriteString("properties:{")
 			r.writeTypedProperties(&sb, fn.Parameters.Properties)
 			sb.WriteString("}")
@@ -259,17 +262,17 @@ func (r *Gemma4Renderer) renderToolDeclaration(tool api.Tool) string {
 	return sb.String()
 }
 
-func (r *Gemma4Renderer) writeTypedProperties(sb *strings.Builder, props *api.ToolPropertiesMap) {
-	if props == nil || props.Len() == 0 {
+func (r *Gemma4Renderer) writeTypedProperties(sb *strings.Builder, props map[string]api.ToolProperty) {
+	if props == nil || len(props) == 0 {
 		return
 	}
 
 	r.writeSchemaProperties(sb, typedSchemaPropertiesMap(props))
 }
 
-func typedSchemaPropertiesMap(props *api.ToolPropertiesMap) map[string]any {
-	out := make(map[string]any, props.Len())
-	for key, prop := range props.All() {
+func typedSchemaPropertiesMap(props map[string]api.ToolProperty) map[string]any {
+	out := make(map[string]any, len(props))
+	for key, prop := range props {
 		out[key] = topLevelTypedSchemaValueFromToolProperty(prop)
 	}
 	return out
@@ -470,12 +473,12 @@ func (r *Gemma4Renderer) asSchemaMap(value any) (map[string]any, bool) {
 	switch v := value.(type) {
 	case map[string]any:
 		return v, true
-	case *api.ToolPropertiesMap:
+	case map[string]api.ToolProperty:
 		if v == nil {
 			return nil, false
 		}
-		out := make(map[string]any, v.Len())
-		for key, prop := range v.All() {
+		out := make(map[string]any, len(v))
+		for key, prop := range v {
 			out[key] = schemaValueFromToolProperty(prop)
 		}
 		return out, true
@@ -673,15 +676,15 @@ func (r *Gemma4Renderer) formatToolCall(tc api.ToolCall) string {
 	var sb strings.Builder
 	sb.WriteString("<|tool_call>call:" + tc.Function.Name + "{")
 
-	keys := make([]string, 0, tc.Function.Arguments.Len())
-	for k := range tc.Function.Arguments.All() {
+	keys := make([]string, 0, len(tc.Function.Arguments))
+	for k := range tc.Function.Arguments {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	first := true
 	for _, key := range keys {
-		value, _ := tc.Function.Arguments.Get(key)
+		value := tc.Function.Arguments[key]
 		if !first {
 			sb.WriteString(",")
 		}
