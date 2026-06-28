@@ -154,6 +154,13 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 
+	// Size the SWA (sliding-window) KV cache to the window, not the full context.
+	// llama.cpp defaults swa_full=true (a conservative correctness choice for context
+	// reprocessing); for autoregressive generation the windowed cache is correct, and on
+	// the memory-constrained K80 the full-size cache is wasteful (e.g. gemma4:12b @16k: a
+	// 40-layer SWA cache at full context is ~5.1 GiB vs ~0.6 GiB windowed).
+	params.swa_full = C.bool(false)
+
 	return ContextParams{c: params}
 }
 
