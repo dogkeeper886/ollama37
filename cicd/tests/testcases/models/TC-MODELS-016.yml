@@ -23,6 +23,23 @@ intent:
     Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
 
 steps:
+  - name: Warm up (tolerate transient cold-load retry under suite GPU pressure)
+    command: |
+      # ~10GB split across 2 K80 dies; under back-to-back-model GPU pressure the first cold load
+      # can crash ("llama runner terminated") and ollama auto-retries. Absorb that here so the
+      # real assertions below run against the loaded model.
+      for i in 1 2 3 4 5; do
+        r=$(curl -s http://localhost:11434/api/generate \
+          -d '{"model":"gemma4:12b","prompt":"hi","stream":false,"options":{"num_predict":1}}')
+        echo "$r" | grep -q '"response"' && { echo "WARM_OK"; break; }
+        echo "warm attempt $i: $(echo "$r" | head -c 120)"; sleep 8
+      done
+    expectPatterns:
+      - "WARM_OK"
+    rejectPatterns:
+      - "CUBLAS_STATUS"
+      - "CUDA error"
+
   - name: Text inference
     command: |
       curl -s http://localhost:11434/api/generate \
