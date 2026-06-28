@@ -824,8 +824,13 @@ float * mtmd_get_output_embd(mtmd_context * ctx) {
 }
 
 bool mtmd_decode_use_non_causal(mtmd_context * ctx) {
-    if (ctx->ctx_v && clip_get_projector_type(ctx->ctx_v) == PROJECTOR_TYPE_GEMMA3) {
-        return true;
+    if (ctx->ctx_v) {
+        const projector_type pt = clip_get_projector_type(ctx->ctx_v);
+        // gemma3 and gemma4 attend to image tokens bidirectionally (the gemma4 Go reference exempts
+        // the image-token positions from causal masking: model_text.go SetCausal{Except: ...}).
+        if (pt == PROJECTOR_TYPE_GEMMA3 || pt == PROJECTOR_TYPE_GEMMA4UV) {
+            return true;
+        }
     }
     return false;
 }
