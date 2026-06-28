@@ -256,6 +256,12 @@ struct mtmd_context {
             img_beg = "<start_of_image>";
             img_end = "<end_of_image>";
 
+        } else if (proj == PROJECTOR_TYPE_GEMMA4UV) {
+            // <|image> ... (image embeddings) ... <image|>  (gemma4 uses the <|x> ... <x|> style;
+            // without these begin/end-of-image markers the model never registers the image)
+            img_beg = "<|image>";
+            img_end = "<image|>";
+
         } else if (proj == PROJECTOR_TYPE_IDEFICS3) {
             // https://github.com/huggingface/transformers/blob/a42ba80fa520c784c8f11a973ca9034e5f859b79/src/transformers/models/idefics3/processing_idefics3.py#L192-L215
             slice_tmpl         = MTMD_SLICE_TMPL_IDEFICS3;
