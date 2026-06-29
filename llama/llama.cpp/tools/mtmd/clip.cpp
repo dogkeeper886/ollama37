@@ -4571,26 +4571,6 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     // copy the embeddings to the location passed by the user
     ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));
 
-    // DEBUG(#374): stats of the final image embeddings, to diagnose the gemma4uv perception bug
-    if (ctx->debug_graph) {
-        const int64_t n = (int64_t) ggml_nelements(embeddings);
-        const float * f = (const float *) vec;
-        float mn = f[0], mx = f[0];
-        double sum = 0.0, sumsq = 0.0;
-        int n_nan = 0;
-        for (int64_t i = 0; i < n; i++) {
-            const float v = f[i];
-            if (v != v || v > 3.4e38f || v < -3.4e38f) { n_nan++; continue; }
-            if (v < mn) mn = v;
-            if (v > mx) mx = v;
-            sum += v;
-            sumsq += (double) v * v;
-        }
-        LOG_INF("%s: gemma4uv embd stats: n=%lld tokens=%d min=%.4f max=%.4f mean=%.4f rms=%.4f n_nan=%d first=[%.4f %.4f %.4f]\n",
-                __func__, (long long) n, n_tokens_out, mn, mx, sum / (double) n,
-                std::sqrt(sumsq / (double) n), n_nan, f[0], f[1], f[2]);
-    }
-
     return true;
 }
 
