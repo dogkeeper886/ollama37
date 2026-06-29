@@ -676,7 +676,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 			// vocab graph
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)
-	case "gemma", "gemma2", "gemma3", "gemma3n":
+	case "gemma", "gemma2", "gemma3", "gemma3n", "gemma4":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
 			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),

@@ -1,0 +1,158 @@
+name: Report Sweep (Throughput + MCP)
+
+# Fills the docs/reports/k80-*-by-family.md tables in one run. This is a MEASUREMENT
+# sweep, NOT a correctness gate — MCP T2 legitimately fails for weaker models, so this is
+# deliberately kept OUT of test-pipeline.yml (which must stay a fast pass/fail gate).
+# Loops every model x context serially on the single K80, thermal-guarded, and emits a
+# TSV + ready-to-paste report-row markdown as an artifact for a human to commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "What to sweep"
+        type: choice
+        options: ["both", "throughput", "mcp"]
+        default: "both"
+      throughput_models:
+        description: "Throughput models (space-separated)"
+        type: string
+        default: "deepseek-r1:1.5b deepseek-r1:7b deepseek-r1:8b deepseek-r1:14b deepseek-r1:32b gemma4:e2b gemma4:e4b gemma4:12b gemma4:26b gemma4:31b gpt-oss:20b qwen3.6:27b qwen3.6:35b"
+      mcp_models:
+        description: "MCP models (deepseek uses -tools variants)"
+        type: string
+        default: "deepseek-r1:1.5b-tools deepseek-r1:7b-tools deepseek-r1:8b-tools deepseek-r1:14b-tools deepseek-r1:32b-tools gemma4:e2b gemma4:e4b gemma4:12b gemma4:26b gemma4:31b gpt-oss:20b qwen3.6:27b qwen3.6:35b"
+      throughput_contexts:
+        description: "Throughput context sizes (space-separated)"
+        type: string
+        default: "2048 4096 8192 16384"
+      mcp_contexts:
+        description: "MCP context sizes (space-separated)"
+        type: string
+        default: "8192 16384"
+      mcp_tests:
+        description: "MCP tests to run (T1=list projects, T2=list test suites w/ derived project_id)"
+        type: string
+        default: "T1 T2"
+      num_predict:
+        description: "Throughput tokens to generate"
+        type: string
+        default: "16"
+      distractor_command:
+        description: "MCP distractor server command (raises tool-menu difficulty; empty = none)"
+        type: string
+        default: "npx"
+      distractor_args:
+        description: "MCP distractor server args"
+        type: string
+        default: "@playwright/mcp@latest"
+
+env:
+  OLLAMA_HOST: http://localhost:11434
+
+jobs:
+  sweep:
+    name: Report Sweep
+    runs-on: self-hosted
+    environment: cicd-1
+    timeout-minutes: 660 # ~11h: a full 13-model x (4 ctx tp + 4 mcp) sweep is long
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate model inputs
+        env:
+          TP_MODELS: ${{ inputs.throughput_models }}
+          MCP_MODELS: ${{ inputs.mcp_models }}
+        run: |
+          for v in "$TP_MODELS" "$MCP_MODELS"; do
+            if ! echo "$v" | grep -qE '^[a-zA-Z0-9:._/ -]+$'; then
+              echo "ERROR: invalid characters in model list: $v" >&2; exit 1
+            fi
+          done
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install test runner dependencies
+        run: cd cicd/tests && npm ci
+
+      - name: Throughput sweep
+        if: ${{ inputs.suite == 'both' || inputs.suite == 'throughput' }}
+        env:
+          MODELS: ${{ inputs.throughput_models }}
+        run: |
+          set -o pipefail
+          cd cicd/tests
+          mkdir -p /tmp/sweep-out
+          for CTX in ${{ inputs.throughput_contexts }}; do
+            echo "::group::throughput @ ctx=$CTX"
+            # one bench-throughput call measures ALL models at this context; a failure of one
+            # cell shouldn't abort the sweep, so tolerate non-zero and keep the partial JSON.
+            bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts bench-throughput $MODELS \
+              --num-predict "${{ inputs.num_predict }}" \
+              --context "$CTX" \
+              --output "/tmp/sweep-out/tp_${CTX}.json" \
+              | tee -a "$GITHUB_STEP_SUMMARY" || echo "throughput ctx=$CTX returned non-zero (partial results kept)"
+            echo "::endgroup::"
+          done
+
+      - name: MCP sweep
+        if: ${{ inputs.suite == 'both' || inputs.suite == 'mcp' }}
+        env:
+          MODELS: ${{ inputs.mcp_models }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TESTLINK_URL: ${{ secrets.TESTLINK_URL }}
+          TESTLINK_API_KEY: ${{ secrets.TESTLINK_API_KEY }}
+        run: |
+          set -o pipefail
+          cd cicd/tests
+          mkdir -p /tmp/sweep-out
+          for TEST in ${{ inputs.mcp_tests }}; do
+            case "$TEST" in
+              T1) PROMPT="List the projects."; ALLOW="list_projects" ;;
+              T2) PROMPT="List the test suites in the ollama37 project."; ALLOW="list_projects,list_test_suites" ;;
+              *) echo "unknown mcp test '$TEST' — skipping"; continue ;;
+            esac
+            for CTX in ${{ inputs.mcp_contexts }}; do
+              echo "::group::mcp $TEST @ ctx=$CTX"
+              bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts test-mcp $MODELS \
+                --prompt "$PROMPT" \
+                --num-ctx "$CTX" \
+                --timeout "3600" \
+                --mcp-command "docker" \
+                --mcp-args "run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest" \
+                --mcp-env "TESTLINK_URL,TESTLINK_API_KEY" \
+                --distractor-command "${{ inputs.distractor_command }}" \
+                --distractor-args "${{ inputs.distractor_args }}" \
+                --verify-live --verify-allow "$ALLOW" --verify-server-name "testlink" \
+                --output "/tmp/sweep-out/mcp_${TEST}_${CTX}.json" \
+                | tee -a "$GITHUB_STEP_SUMMARY" || echo "mcp $TEST ctx=$CTX returned non-zero (partial results kept)"
+              echo "::endgroup::"
+            done
+          done
+
+      - name: Unload models
+        if: always()
+        env:
+          ALL_MODELS: ${{ inputs.throughput_models }} ${{ inputs.mcp_models }}
+        run: |
+          for M in $ALL_MODELS; do
+            curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${M}\",\"keep_alive\":0}" || true
+          done
+
+      - name: Aggregate → TSV + report-row markdown
+        if: always()
+        run: |
+          python3 cicd/scripts/aggregate-sweep.py /tmp/sweep-out /tmp/sweep-out/SUMMARY.md /tmp/sweep-out/results.tsv || \
+            echo "aggregation skipped/failed — raw JSONs are still uploaded"
+
+      - name: Upload sweep results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-sweep-results
+          path: /tmp/sweep-out

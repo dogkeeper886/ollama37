@@ -266,6 +266,14 @@ struct clip_model {
     ggml_tensor * patch_bias = nullptr;
     ggml_tensor * position_embeddings = nullptr;
 
+    // gemma4uv: three patch layer-norms (pre-embed, post-embed, post-pos)
+    ggml_tensor * patch_norm_1_w = nullptr;
+    ggml_tensor * patch_norm_1_b = nullptr;
+    ggml_tensor * patch_norm_2_w = nullptr;
+    ggml_tensor * patch_norm_2_b = nullptr;
+    ggml_tensor * patch_norm_3_w = nullptr;
+    ggml_tensor * patch_norm_3_b = nullptr;
+
     ggml_tensor * pre_ln_w = nullptr;
     ggml_tensor * pre_ln_b = nullptr;
 
@@ -489,10 +497,10 @@ struct clip_graph {
             n_patches(n_patches_x * n_patches_y),
             n_embd(hparams.n_embd),
             n_head(hparams.n_head),
-            d_head(n_embd / n_head),
+            d_head(n_head > 0 ? n_embd / n_head : 0), // gemma4uv has no attention (n_head == 0)
             n_layer(hparams.n_layer),
             eps(hparams.eps),
-            kq_scale(1.0f / sqrtf((float)d_head)) {
+            kq_scale(d_head > 0 ? 1.0f / sqrtf((float)d_head) : 0.0f) {
         struct ggml_init_params params = {
             /*.mem_size   =*/ ctx->buf_compute_meta.size(),
             /*.mem_buffer =*/ ctx->buf_compute_meta.data(),
@@ -570,6 +578,63 @@ struct clip_graph {
         // build the graph
         ggml_build_forward_expand(gf, cur);
 
+        return gf;
+    }
+
+    // gemma4 unified vision embedder: patch embed -> 2D position embed -> projection.
+    // No transformer encoder (the LLM does the visual reasoning). Uses pytorch LayerNorm.
+    ggml_cgraph * build_gemma4uv() {
+        const float ln_eps = 1e-5f; // pytorch LayerNorm default
+
+        // gemma4 unified vision embedder for the ollama gemma4uv projector blob. Its patch_embd
+        // weight is [eff_patch^2 * 3, n_embd] = [6912, 3840]: the scale*scale (3x3) patch MERGE is
+        // BAKED INTO the patch projection. So each token is ONE non-overlapping eff_patch (48x48)
+        // block projected directly — there is NO separate AvgPool2D (ollama's model_vision.go,
+        // which 16-patches + AvgPool2D, is for a different unified GGUF and never runs for this
+        // split-projector model). Matches mainline tools/mtmd/models/gemma4uv.cpp on the 48 kernel.
+        const int scale     = hparams.proj_scale_factor > 0 ? hparams.proj_scale_factor : 1; // 3
+        const int eff_patch = patch_size * scale;            // 48 (merged-patch kernel)
+        const int64_t eff_np = (int64_t)(n_patches_x / scale) * (int64_t)(n_patches_y / scale);
+
+        ggml_tensor * inp_raw = build_inp_raw();
+
+        ggml_tensor * inp = nullptr;
+        {
+            // im2col: non-overlapping 48x48 patches so the per-patch LayerNorm runs before the
+            // projection -> [eff_patch^2 * c, eff_np]
+            const int64_t c = inp_raw->ne[2];
+            ggml_tensor * kernel = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, eff_patch, eff_patch, c);
+            inp = ggml_im2col(ctx0, kernel, inp_raw, eff_patch, eff_patch, 0, 0, 1, 1, true, inp_raw->type);
+            inp = ggml_reshape_2d(ctx0, inp, inp->ne[0], inp->ne[1] * inp->ne[2] * inp->ne[3]);
+            inp = build_norm(inp, model.patch_norm_1_w, model.patch_norm_1_b, NORM_TYPE_NORMAL, ln_eps, -1);
+            inp = ggml_mul_mat(ctx0, model.patch_embeddings_0, inp);
+            inp = ggml_add(ctx0, inp, model.patch_bias);
+            inp = build_norm(inp, model.patch_norm_2_w, model.patch_norm_2_b, NORM_TYPE_NORMAL, ln_eps, -1);
+        }
+
+        // 2D positional embeddings on the merged (eff_np) grid
+        ggml_tensor * pos_x = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, eff_np);
+        ggml_set_name(pos_x, "pos_x");
+        ggml_set_input(pos_x);
+        ggml_tensor * pos_y = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, eff_np);
+        ggml_set_name(pos_y, "pos_y");
+        ggml_set_input(pos_y);
+        {
+            const int64_t pos_size = model.position_embeddings->ne[1];
+            const size_t  nb1      = ggml_row_size(model.position_embeddings->type, n_embd);
+            ggml_tensor * tbl_x = ggml_view_2d(ctx0, model.position_embeddings, n_embd, pos_size, nb1, 0);
+            ggml_tensor * tbl_y = ggml_view_2d(ctx0, model.position_embeddings, n_embd, pos_size, nb1, pos_size * nb1);
+            inp = ggml_add(ctx0, inp, ggml_get_rows(ctx0, tbl_x, pos_x));
+            inp = ggml_add(ctx0, inp, ggml_get_rows(ctx0, tbl_y, pos_y));
+            inp = build_norm(inp, model.patch_norm_3_w, model.patch_norm_3_b, NORM_TYPE_NORMAL, ln_eps, -1);
+        }
+
+        // multimodal projection: pre-projection RMSNorm then linear (mainline gemma4uv order)
+        ggml_tensor * cur = ggml_rms_norm(ctx0, inp, eps);
+        cur = ggml_mul_mat(ctx0, model.mm_input_proj_w, cur);
+        cb(cur, "projected", -1);
+
+        ggml_build_forward_expand(gf, cur);
         return gf;
     }
 
@@ -1626,6 +1691,19 @@ struct clip_graph {
         return gf;
     }
 
+    // gemma4 unified audio: encoder-free. Raw 16 kHz waveform pre-chunked into 640-sample
+    // (40 ms = 1 token) frames; pre-projection RMSNorm then linear projection. No encoder.
+    ggml_cgraph * build_gemma4ua() {
+        ggml_tensor * inp = build_inp_raw(1); // [n_frames, 640, 1]
+        // -> [640, n_frames]: one 640-sample vector per token, so the norm is over the frame
+        ggml_tensor * cur = ggml_cont(ctx0, ggml_permute(ctx0, inp, 1, 0, 2, 3));
+        cur = ggml_rms_norm(ctx0, cur, eps);                  // embedding_pre_projection_norm (eps=1e-6)
+        cur = ggml_mul_mat(ctx0, model.mm_input_proj_w, cur); // [n_embd, n_frames]
+        cb(cur, "projected", -1);
+        ggml_build_forward_expand(gf, cur);
+        return gf;
+    }
+
 private:
     //
     // utility functions
@@ -2107,6 +2185,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
             {
                 res = graph.build_siglip();
             } break;
+        case PROJECTOR_TYPE_GEMMA4UV:
+            {
+                res = graph.build_gemma4uv();
+            } break;
         case PROJECTOR_TYPE_PIXTRAL:
             {
                 res = graph.build_pixtral();
@@ -2133,6 +2215,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
         case PROJECTOR_TYPE_QWEN2A:
             {
                 res = graph.build_whisper_enc();
+            } break;
+        case PROJECTOR_TYPE_GEMMA4UA:
+            {
+                res = graph.build_gemma4ua();
             } break;
         case PROJECTOR_TYPE_KIMIVL:
             {
@@ -2235,6 +2321,13 @@ struct clip_model_loader {
         std::string proj_type;
         {
             get_string(KEY_PROJ_TYPE, proj_type, false);
+            if (proj_type.empty()) {
+                // newer multimodal projectors (e.g. gemma4) store the type per modality
+                get_string(modality == CLIP_MODALITY_AUDIO
+                               ? "clip.audio.projector_type"
+                               : "clip.vision.projector_type",
+                           proj_type, false);
+            }
             if (!proj_type.empty()) {
                 model.proj_type = clip_projector_type_from_string(proj_type);
             }
@@ -2285,7 +2378,9 @@ struct clip_model_loader {
                     }
                 }
             } else if (is_audio) {
-                get_u32(KEY_A_NUM_MEL_BINS, hparams.n_mel_bins);
+                // required for whisper-family audio; absent for encoder-free gemma4ua (which sets
+                // n_mel_bins as a frame size in the projector switch below)
+                get_u32(KEY_A_NUM_MEL_BINS, hparams.n_mel_bins, model.proj_type != PROJECTOR_TYPE_GEMMA4UA);
 
             } else {
                 GGML_ASSERT(false && "unknown modality");
@@ -2403,6 +2498,13 @@ struct clip_model_loader {
                         // test model (tinygemma3) has a different value, we optionally read it
                         get_u32(KEY_PROJ_SCALE_FACTOR, hparams.proj_scale_factor, false);
                     } break;
+                case PROJECTOR_TYPE_GEMMA4UV:
+                    {
+                        // gemma4 unified vision: the patch projection takes (patch_size*scale_factor)^2
+                        // pixels per token (scale_factor merges patch_size patches per side).
+                        hparams.proj_scale_factor = 3;
+                        get_u32(KEY_PROJ_SCALE_FACTOR, hparams.proj_scale_factor, false);
+                    } break;
                 case PROJECTOR_TYPE_QWEN2VL:
                     {
                         // max image size = sqrt(max_pixels) = 3584
@@ -2440,6 +2542,13 @@ struct clip_model_loader {
                         }
                         hparams.ffn_op = FFN_GELU_ERF;
                         log_ffn_op = "gelu_erf"; // temporary solution for logging
+                    } break;
+                case PROJECTOR_TYPE_GEMMA4UA:
+                    {
+                        // encoder-free: raw 16 kHz waveform chunked into 640-sample (40 ms) frames;
+                        // n_mel_bins is reused as the frame size, not a mel-bin count.
+                        hparams.eps        = 1e-6f;
+                        hparams.n_mel_bins = 640;
                     } break;
                 default:
                     break;
@@ -2696,6 +2805,21 @@ struct clip_model_loader {
                 {
                     model.mm_input_proj_w = get_tensor(TN_MM_INP_PROJ);
                     model.mm_soft_emb_norm_w = get_tensor(TN_MM_SOFT_EMB_N);
+                } break;
+            case PROJECTOR_TYPE_GEMMA4UV:
+                {
+                    model.patch_norm_1_w = get_tensor(string_format(TN_PATCH_NORM, 1, "weight"));
+                    model.patch_norm_1_b = get_tensor(string_format(TN_PATCH_NORM, 1, "bias"));
+                    model.patch_norm_2_w = get_tensor(string_format(TN_PATCH_NORM, 2, "weight"));
+                    model.patch_norm_2_b = get_tensor(string_format(TN_PATCH_NORM, 2, "bias"));
+                    model.patch_norm_3_w = get_tensor(string_format(TN_PATCH_NORM, 3, "weight"));
+                    model.patch_norm_3_b = get_tensor(string_format(TN_PATCH_NORM, 3, "bias"));
+                    model.mm_input_proj_w = get_tensor(TN_MM_INP_PROJ);
+                } break;
+            case PROJECTOR_TYPE_GEMMA4UA:
+                {
+                    // encoder-free unified audio: only the input projection [640, n_embd]
+                    model.mm_input_proj_w = get_tensor(TN_A_MM_INP_PROJ);
                 } break;
             case PROJECTOR_TYPE_IDEFICS3:
                 {
@@ -3636,6 +3760,30 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         res_imgs->grid_x = instructions.grid_size.width;
         res_imgs->grid_y = instructions.grid_size.height;
         return true;
+    } else if (ctx->proj_type() == PROJECTOR_TYPE_GEMMA4UV) {
+        // gemma4: ollama smartResize (model/models/gemma4/process_image.go) — aspect-preserving,
+        // scale to fill maxPixels (280 pooled tokens), floor each side to a (patch_size*scale)=48
+        // multiple; normalize to [-1,1] (pack: 2*v/255 - 1). Higher resolution than the fixed
+        // square so fine detail (small subjects, text) survives.
+        const int scale     = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
+        const int align     = params.patch_size * scale;                  // 48
+        const int max_pixels = 280 * params.patch_size * params.patch_size * scale * scale;
+        const int ow = original_size.width;
+        const int oh = original_size.height;
+        int tw = align, th = align;
+        if (ow > 0 && oh > 0) {
+            const double factor = std::sqrt((double) max_pixels / ((double) ow * oh));
+            tw = std::max(align, (int) (std::floor(factor * ow / align) * align));
+            th = std::max(align, (int) (std::floor(factor * oh / align) * align));
+        }
+        clip_image_u8 resized_image;
+        image_manipulation::bilinear_resize(*img, resized_image, tw, th);
+        clip_image_f32_ptr img_f32(clip_image_f32_init());
+        const float mean_std[3] = {0.5f, 0.5f, 0.5f};
+        normalize_image_u8_to_f32(resized_image, *img_f32, mean_std, mean_std);
+        res_imgs->entries.push_back(std::move(img_f32));
+        return true;
+
     } else if (ctx->proj_type() == PROJECTOR_TYPE_GLM_EDGE
             || ctx->proj_type() == PROJECTOR_TYPE_GEMMA3
             || ctx->proj_type() == PROJECTOR_TYPE_INTERNVL // TODO @ngxson : support dynamic resolution
@@ -3918,6 +4066,18 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
                 if (ctx->model.audio_has_avgpool()) {
                     // divide by 2 because of nn.AvgPool1d(2, stride=2)
                     n_patches /= 2;
+                }
+            } break;
+        case PROJECTOR_TYPE_GEMMA4UA:
+            {
+                n_patches = img->nx; // one token per raw-waveform frame, no downsampling
+            } break;
+        case PROJECTOR_TYPE_GEMMA4UV:
+            {
+                // gemma4 merges scale*scale base patches into one token
+                int scale = ctx->model.hparams.proj_scale_factor;
+                if (scale > 0) {
+                    n_patches = (img->nx / (patch_size * scale)) * (img->ny / (patch_size * scale));
                 }
             } break;
         default:
@@ -4327,8 +4487,9 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         case PROJECTOR_TYPE_ULTRAVOX:
         case PROJECTOR_TYPE_LFM2:
         case PROJECTOR_TYPE_VOXTRAL:
+        case PROJECTOR_TYPE_GEMMA4UA:
             {
-                // do nothing
+                // do nothing (gemma4ua audio is encoder-free; no positions/aux inputs)
             } break;
         case PROJECTOR_TYPE_LLAMA4:
             {
@@ -4346,6 +4507,23 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                     pos_data[i] = (i % n_patches_per_col) + 1;
                 }
                 set_input_i32("pos_w", pos_data);
+            } break;
+        case PROJECTOR_TYPE_GEMMA4UV:
+            {
+                // 2D patch grid positions (x = column, y = row), no CLS token. Positions are on the
+                // MERGED grid (image_size/(patch_size*scale) per side) — one position per
+                // non-overlapping 48x48 patch, matching build_gemma4uv's eff_np tokens.
+                const int scale = ctx->model.hparams.proj_scale_factor > 0 ? ctx->model.hparams.proj_scale_factor : 1;
+                const int npx = (image_size_width  / patch_size) / scale;
+                const int npy = (image_size_height / patch_size) / scale;
+                const int np  = npx * npy;
+                std::vector<int> pos_x(np), pos_y(np);
+                for (int i = 0; i < np; i++) {
+                    pos_x[i] = i % npx;
+                    pos_y[i] = i / npx;
+                }
+                set_input_i32("pos_x", pos_x);
+                set_input_i32("pos_y", pos_y);
             } break;
         default:
             GGML_ABORT("Unknown projector type");
@@ -4415,7 +4593,11 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_QWEN25VL:
             return ctx->model.mm_1_b->ne[0];
         case PROJECTOR_TYPE_GEMMA3:
+        case PROJECTOR_TYPE_GEMMA4UV:
             return ctx->model.mm_input_proj_w->ne[0];
+        case PROJECTOR_TYPE_GEMMA4UA:
+            // audio projection is [640, n_embd]; the embedding dim is ne[1]
+            return ctx->model.mm_input_proj_w->ne[1];
         case PROJECTOR_TYPE_IDEFICS3:
             return ctx->model.projection->ne[1];
         case PROJECTOR_TYPE_ULTRAVOX:

@@ -256,6 +256,12 @@ struct mtmd_context {
             img_beg = "<start_of_image>";
             img_end = "<end_of_image>";
 
+        } else if (proj == PROJECTOR_TYPE_GEMMA4UV) {
+            // <|image> ... (image embeddings) ... <image|>  (gemma4 uses the <|x> ... <x|> style;
+            // without these begin/end-of-image markers the model never registers the image)
+            img_beg = "<|image>";
+            img_end = "<image|>";
+
         } else if (proj == PROJECTOR_TYPE_IDEFICS3) {
             // https://github.com/huggingface/transformers/blob/a42ba80fa520c784c8f11a973ca9034e5f859b79/src/transformers/models/idefics3/processing_idefics3.py#L192-L215
             slice_tmpl         = MTMD_SLICE_TMPL_IDEFICS3;
@@ -308,6 +314,11 @@ struct mtmd_context {
         } else if (proj == PROJECTOR_TYPE_ULTRAVOX) {
             // [BEGIN_AUDIO] ... (embeddings) ...
             aud_beg = "[BEGIN_AUDIO]";
+
+        } else if (proj == PROJECTOR_TYPE_GEMMA4UA) {
+            // <|audio> ... (embeddings) ... <audio|>  (gemma4 <|x>...<x|> style)
+            aud_beg = "<|audio>";
+            aud_end = "<audio|>";
 
         }
     }
@@ -629,6 +640,54 @@ struct mtmd_tokenizer {
                 add_text(ctx->aud_beg, true); // add audio begin token
             }
 
+            if (clip_get_projector_type(ctx->ctx_a) == PROJECTOR_TYPE_GEMMA4UA) {
+                // gemma4ua is encoder-free: chunk the raw 16 kHz waveform into 640-sample (40 ms)
+                // frames (1 frame = 1 token), zero-padding the last frame. No FFT/mel/filterbank.
+                const int     frame_size   = 640;
+                const float * samples      = (const float *)bitmap->data.data();
+                size_t        n_samples    = bitmap->data.size() / sizeof(float);
+                int           n_frames     = (int)((n_samples + frame_size - 1) / frame_size);
+
+                // cap very long audio: this path emits one chunk for the whole clip (no chunking),
+                // so an uncapped multi-minute WAV would blow the compute graph / context window.
+                const int max_frames = 3000; // ~120 s at 40 ms/frame
+                if (n_frames > max_frames) {
+                    LOG_WRN("%s: gemma4ua audio is %d frames (~%d s); truncating to %d frames (~120 s)\n",
+                            __func__, n_frames, n_frames * frame_size / 16000, max_frames);
+                    n_frames  = max_frames;
+                    n_samples = (size_t) max_frames * frame_size;
+                }
+
+                clip_image_f32_ptr mel_f32(clip_image_f32_init());
+                mel_f32->nx = n_frames;    // tokens
+                mel_f32->ny = frame_size;  // 640
+                // feature-major so it loads as inp_raw[n_frames, 640]: buf[f*n_frames + t]
+                mel_f32->buf.assign((size_t)n_frames * frame_size, 0.0f);
+                for (int t = 0; t < n_frames; t++) {
+                    for (int f = 0; f < frame_size; f++) {
+                        const size_t src = (size_t)t * frame_size + f;
+                        if (src < n_samples) {
+                            mel_f32->buf[(size_t)f * n_frames + t] = samples[src];
+                        }
+                    }
+                }
+                size_t n_tokens = clip_n_output_tokens(ctx->ctx_a, mel_f32.get());
+
+                clip_image_f32_batch batch_f32;
+                batch_f32.is_audio = true;
+                batch_f32.entries.push_back(std::move(mel_f32));
+
+                mtmd_audio_tokens_ptr audio_tokens(new mtmd_audio_tokens);
+                audio_tokens->n_tokens  = n_tokens;
+                audio_tokens->batch_f32 = std::move(batch_f32);
+                audio_tokens->id        = bitmap->id;
+
+                mtmd_input_chunk chunk{
+                    MTMD_INPUT_CHUNK_TYPE_AUDIO, {}, nullptr, std::move(audio_tokens),
+                };
+                cur.entries.emplace_back(std::move(chunk));
+
+            } else {
             // preprocess audio
             GGML_ASSERT(ctx->w_filters.n_mel); // make sure we have filter preloaded
             std::vector<whisper_preprocessor::whisper_mel> mel_spec_chunks;
@@ -667,6 +726,7 @@ struct mtmd_tokenizer {
                     std::move(audio_tokens),
                 };
                 cur.entries.emplace_back(std::move(chunk));
+            }
             }
 
             if (!ctx->aud_end.empty()) {
@@ -818,8 +878,13 @@ float * mtmd_get_output_embd(mtmd_context * ctx) {
 }
 
 bool mtmd_decode_use_non_causal(mtmd_context * ctx) {
-    if (ctx->ctx_v && clip_get_projector_type(ctx->ctx_v) == PROJECTOR_TYPE_GEMMA3) {
-        return true;
+    if (ctx->ctx_v) {
+        const projector_type pt = clip_get_projector_type(ctx->ctx_v);
+        // gemma3 and gemma4 attend to image tokens bidirectionally (the gemma4 Go reference exempts
+        // the image-token positions from causal masking: model_text.go SetCausal{Except: ...}).
+        if (pt == PROJECTOR_TYPE_GEMMA3 || pt == PROJECTOR_TYPE_GEMMA4UV) {
+            return true;
+        }
     }
     return false;
 }

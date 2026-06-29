@@ -61,8 +61,10 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
-	case "gemma4":
+	case "gemma4", "gemma4-small":
 		return &Gemma4Renderer{useImgTags: RenderImgTags}
+	case "gemma4-large":
+		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true}
 	default:
 		return nil
 	}

@@ -192,3 +192,15 @@ Every case runs the same four steps unless noted:
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
+
+### TC-15: gemma4:12b (split-vision gemma4)
+
+- **Objective:** gemma4:12b — the only gemma4 packaged as a **split-vision** model (a separate `projector` blob, vs the embedded projector in e4b/26b) — loads on the **new engine** and runs on K80 compute 3.7. Regression for [#367](https://github.com/dogkeeper886/ollama37/issues/367): today the fork's `NewLlamaServer` refuses split-vision models (`reason="split vision models aren't supported"`) and dead-ends in legacy llama.cpp (`unknown model architecture: 'gemma4'`); green once [#370](https://github.com/dogkeeper886/ollama37/issues/370) lets a new-engine arch with a projector use the new engine (upstream already dropped this limitation). Step 1 is the acceptance gate.
+- **Script:** cicd/tests/testcases/models/TC-MODELS-016.yml
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | Test inference | returns a `response`; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
+| 2 | Check GPU memory | reports non-zero `MiB` in use |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 4 | Unload model | `Model unloaded` |

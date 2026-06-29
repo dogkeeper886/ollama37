@@ -906,7 +906,7 @@ func (s *Server) loadModel(
 		slog.Info("loadModel: LoRA adapters applied", "count", len(lpath), "duration_sec", time.Since(loraStart).Seconds())
 	}
 
-	if ppath != "" {
+	if ppath != "" && os.Getenv("OLLAMA_SKIP_PROJECTOR") == "" {
 		projectorStart := time.Now()
 		var err error
 		s.image, err = NewImageContext(s.lc, ppath)
