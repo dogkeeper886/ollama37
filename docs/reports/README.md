@@ -27,7 +27,8 @@ place or mixed across builds; the pre-versioning (mixed-build) reports live in g
 
 | Snapshot | Build | Swept | Notes |
 |---|---|---|---|
-| _(pending)_ | `c282ba37` | 2026-06-29 | T1 sweep in progress; snapshot lands when complete. |
+| [`…-2026-06-29-c282ba37.md`](./k80-mcp-by-family-2026-06-29-c282ba37.md) | `c282ba37` | 2026-06-29 | **T1 only.** gemma4:12b: fails-to-load (main) → loads + 16k T1 ✅ (8k over-explores the menu). 0 verdict changes vs main; 15/26 PASS. |
+| [`k80-mcp-by-family.md`](./k80-mcp-by-family.md) | pre-versioning (mixed) | 2026-06-23 era | The older T1+**T2** report (gemma4:12b shown as fails-to-load). Kept for T2 until a clean T1+T2 re-sweep produces a versioned snapshot. |
 
 The two family axes are meant to be **read together**: an MCP fail at high ctx while GPU% is 100% in
 the VRAM report is a capability/truncation result, not a speed/offload artifact.
