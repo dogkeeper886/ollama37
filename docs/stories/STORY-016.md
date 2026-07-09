@@ -3,7 +3,7 @@
 ## User Story
 
 As a maintainer running models on the Tesla K80,
-I want lfm2.5:8b-a1b to run coherently and make real tool calls on the K80, and to be
+I want lfm2.5:8b to run coherently and make real tool calls on the K80, and to be
 exercised by the model, throughput, and MCP CI suites on the self-hosted runner,
 So that the fork gains a fast on-device MoE with verified tool-calling, regression-guarded
 like every other supported model.
@@ -26,13 +26,13 @@ the tool-calling and throughput behaviour should be measured on the real K80 run
 than assumed. A reviewed test doc should drive that coverage before the implementation is
 accepted.
 
-Scope is the text lfm2.5:8b-a1b (text + tools + thinking). The vision variant is a separate
+Scope is the text lfm2.5:8b (text + tools + thinking). The vision variant is a separate
 model (lfm2.5-vl) with its own converter, and there is no audio variant in upstream code —
 both are out of scope here.
 
 ## Success Looks Like
 
-- `ollama run lfm2.5:8b-a1b` produces coherent output on the K80 — no CUDA/CUBLAS errors,
+- `ollama run lfm2.5:8b` produces coherent output on the K80 — no CUDA/CUBLAS errors,
   no garbage — and the model fits within a single K80 GPU.
 - lfm2.5 makes **real, grounded tool calls**: the MCP tool-call test passes on the
   self-hosted runner — the model calls a real tool and its final answer is grounded in the
@@ -51,7 +51,7 @@ both are out of scope here.
 - How much of upstream's lfm2 surface actually needs porting: are the parser and renderer
   enough (they are required for tool-calling), or is `convert/convert_lfm2.go` also needed
   — i.e. does pulling the prebuilt library GGUF avoid the import/convert path entirely?
-- Does the "thinking" variant matter for lfm2.5:8b-a1b, or is the non-thinking renderer/parser
+- Does the "thinking" variant matter for lfm2.5:8b, or is the non-thinking renderer/parser
   enough? (Upstream registers both `lfm2` and `lfm2-thinking`.)
 - Does lfm2's short-convolution (LIV) path hit any K80 op that is missing or slow on
   compute 3.7 (as happened with the gemma4 / DeltaNet ports), or does the already-vendored

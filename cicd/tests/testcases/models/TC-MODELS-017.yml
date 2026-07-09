@@ -1,17 +1,17 @@
 id: TC-MODELS-017
-name: lfm2.5:8b-a1b Inference
+name: lfm2.5:8b Inference
 suite: models
 priority: 17
 timeout: 900000
 dependencies: []
 intent:
   user_story: |
-    Validate lfm2.5:8b-a1b (Liquid LFM2 MoE, 8B total / ~1B active, ~5.2 GB) runs on
+    Validate lfm2.5:8b (Liquid LFM2 MoE, 8B total / ~1B active, ~5.2 GB) runs on
     K80 compute 3.7 (single GPU). Acceptance for STORY-016: the fork already vendors the
     lfm2/lfm2moe llama.cpp arch, so this gates that the GGUF loads and generates coherently
     once the Go parser/renderer port lands — red until then.
   notes: |
-    Prerequisite: lfm2.5:8b-a1b pre-pulled on the runner. The request pins "think": false
+    Prerequisite: lfm2.5:8b pre-pulled on the runner. The request pins "think": false
     so the answer isn't buried inside a <think> span (lfm2.5 has a thinking mode).
     Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
 
@@ -19,7 +19,7 @@ steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"lfm2.5:8b-a1b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
+        -d '{"model":"lfm2.5:8b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -54,13 +54,13 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"lfm2.5:8b-a1b","keep_alive":0}'
+        -d '{"model":"lfm2.5:8b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate lfm2.5:8b-a1b (Liquid LFM2 MoE, ~5.2 GB VRAM) runs on K80 (compute 3.7).
+  Validate lfm2.5:8b (Liquid LFM2 MoE, ~5.2 GB VRAM) runs on K80 (compute 3.7).
   Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:
