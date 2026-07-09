@@ -65,4 +65,5 @@ both are out of scope here.
 
 - Created: 2026-07-09
 - Docs PR: #377 (story + TS-04 TC-16 + TC-MODELS-017.yml)
-- Issues: none — port issue to follow via `dw-plan`
+- Plan: #378
+- Issues: #379 (renderer + parser port), #380 (convert), #381 (K80 verify)

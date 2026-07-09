@@ -57,6 +57,10 @@ func ParserForName(name string) Parser {
 		return &Gemma4Parser{hasThinkingSupport: true}
 	case "gemma4-no-thinking":
 		return &Gemma4Parser{hasThinkingSupport: false}
+	case "lfm2":
+		return &LFM2Parser{hasThinkingSupport: false}
+	case "lfm2-thinking":
+		return &LFM2Parser{hasThinkingSupport: true}
 	case "passthrough":
 		return &PassthroughParser{}
 	case "harmony":
