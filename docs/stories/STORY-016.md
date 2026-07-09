@@ -67,3 +67,5 @@ both are out of scope here.
 - Docs PR: #377 (story + TS-04 TC-16 + TC-MODELS-017.yml)
 - Plan: #378
 - Issues: #379 (renderer + parser port), #380 (convert), #381 (K80 verify)
+- Evidence (K80 CI, branch `story-016-lfm2`): Build + Runtime green; Models TC-MODELS-017 ✅; **MCP verify-live ✅ — grounded, live-verified `list_projects` call (the hard bar)**; Throughput ~31 tok/s (single K80, 100% offload).
+- Honesty notes: (1) lfm2.5 is a thinking model — the throughput `/api/generate` coherence judge rejects its leaked chain-of-thought; coherence is proven via `/api/chat` (TC-16 + the grounded MCP answer), and tok/s is the throughput deliverable. (2) Tool-calling with **typed arguments** is blocked by a pre-existing, model-agnostic server bug (#382) — no-arg tools (the hard bar) work; our renderer/parser are proven clean.
