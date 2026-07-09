@@ -64,4 +64,5 @@ both are out of scope here.
 ## Status
 
 - Created: 2026-07-09
-- Issues: none
+- Docs PR: #377 (story + TS-04 TC-16 + TC-MODELS-017.yml)
+- Issues: none — port issue to follow via `dw-plan`
