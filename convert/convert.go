@@ -204,6 +204,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &bertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
+	case "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
+		conv = &lfm2Model{}
 	case "GptOssForCausalLM":
 		conv = &gptossModel{}
 	default:

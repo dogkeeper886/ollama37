@@ -65,6 +65,10 @@ func rendererForName(name string) Renderer {
 		return &Gemma4Renderer{useImgTags: RenderImgTags}
 	case "gemma4-large":
 		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true}
+	case "lfm2":
+		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
+	case "lfm2-thinking":
+		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

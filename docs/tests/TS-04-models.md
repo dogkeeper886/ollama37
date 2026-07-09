@@ -205,9 +205,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-16: lfm2.5:8b-a1b (Liquid LFM2 MoE)
+### TC-16: lfm2.5:8b (Liquid LFM2 MoE)
 
-- **Objective:** lfm2.5:8b-a1b — the text LFM2 **MoE** (8B total / ~1B active, ~5.2 GB) — runs on K80 compute 3.7 (single GPU). The per-model regression half of [STORY-016](../stories/STORY-016.md): the fork already vendors the `lfm2`/`lfm2moe` llama.cpp arch, so this case gates that the GGUF loads and generates coherently once STORY-016's Go parser/renderer port lands — **red until then**. The inference step pins `"think": false` so the deterministic answer isn't buried inside a `<think>` span (lfm2.5 has a thinking mode). Run under the **dual** judge at least once so "coherent, not fluent garbage" is actually checked, not just non-empty `response`.
+- **Objective:** lfm2.5:8b — the text LFM2 **MoE** (8B total / ~1B active, ~5.2 GB) — runs on K80 compute 3.7 (single GPU). The per-model regression half of [STORY-016](../stories/STORY-016.md): the fork already vendors the `lfm2`/`lfm2moe` llama.cpp arch, so this case gates that the GGUF loads and generates coherently once STORY-016's Go parser/renderer port lands — **red until then**. The inference step pins `"think": false` so the deterministic answer isn't buried inside a `<think>` span (lfm2.5 has a thinking mode). Run under the **dual** judge at least once so "coherent, not fluent garbage" is actually checked, not just non-empty `response`.
 - **Script:** cicd/tests/testcases/models/TC-MODELS-017.yml
 
 | # | Action | Expected Result |
