@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -354,5 +355,35 @@ func TestLFM2Renderer_JSONFormatting(t *testing.T) {
 	want := "{\"type\": \"function\", \"function\": {\"name\": \"echo\", \"description\": \"<html>\", \"parameters\": {\"type\": \"object\", \"required\": null, \"properties\": null}}}"
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("lfm2JSON mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// The rendered tool schema must preserve $defs and top-level items — a tool whose
+// parameters reference JSON-Schema $defs or carry an array `items` would otherwise
+// send the model a broken schema. lfm2ToolSchema mirrors all api fields, dropping
+// only an empty `required`.
+func TestLFM2Renderer_ToolSchemaPreservesDefsAndItems(t *testing.T) {
+	r := &LFM2Renderer{}
+	tools := []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name: "search",
+			Parameters: api.ToolFunctionParameters{
+				Type:  "object",
+				Defs:  map[string]any{"Foo": map[string]any{"type": "string"}},
+				Items: map[string]any{"type": "string"},
+			},
+		},
+	}}
+
+	got, err := r.Render([]api.Message{{Role: "user", Content: "hi"}}, tools, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !strings.Contains(got, `"$defs"`) {
+		t.Errorf("rendered schema dropped $defs:\n%s", got)
+	}
+	if !strings.Contains(got, `"items"`) {
+		t.Errorf("rendered schema dropped items:\n%s", got)
 	}
 }

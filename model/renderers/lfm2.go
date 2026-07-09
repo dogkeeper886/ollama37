@@ -151,6 +151,8 @@ func lfm2RenderContent(content any, useImgTags bool) string {
 // (proven) LFM2 template, which is what the model was trained to read.
 type lfm2ToolParameters struct {
 	Type       string                      `json:"type"`
+	Defs       any                         `json:"$defs,omitempty"`
+	Items      any                         `json:"items,omitempty"`
 	Required   []string                    `json:"required,omitempty"`
 	Properties map[string]api.ToolProperty `json:"properties"`
 }
@@ -172,6 +174,8 @@ func lfm2ToolSchema(tool api.Tool) any {
 		Description: tool.Function.Description,
 		Parameters: lfm2ToolParameters{
 			Type:       tool.Function.Parameters.Type,
+			Defs:       tool.Function.Parameters.Defs,
+			Items:      tool.Function.Parameters.Items,
 			Required:   tool.Function.Parameters.Required,
 			Properties: tool.Function.Parameters.Properties,
 		},
