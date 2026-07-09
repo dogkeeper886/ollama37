@@ -1,0 +1,75 @@
+id: TC-MODELS-017
+name: lfm2.5:8b-a1b Inference
+suite: models
+priority: 17
+timeout: 900000
+dependencies: []
+intent:
+  user_story: |
+    Validate lfm2.5:8b-a1b (Liquid LFM2 MoE, 8B total / ~1B active, ~5.2 GB) runs on
+    K80 compute 3.7 (single GPU). Acceptance for STORY-016: the fork already vendors the
+    lfm2/lfm2moe llama.cpp arch, so this gates that the GGUF loads and generates coherently
+    once the Go parser/renderer port lands — red until then.
+  notes: |
+    Prerequisite: lfm2.5:8b-a1b pre-pulled on the runner. The request pins "think": false
+    so the answer isn't buried inside a <think> span (lfm2.5 has a thinking mode).
+    Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+
+steps:
+  - name: Test inference
+    command: |
+      curl -s http://localhost:11434/api/generate \
+        -d '{"model":"lfm2.5:8b-a1b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
+        | head -c 2000
+    expectPatterns:
+      - "response"
+    rejectPatterns:
+      - "CUBLAS_STATUS"
+      - "CUDA error"
+
+  - name: Check GPU memory
+    command: docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
+    expectPatterns:
+      - "[0-9]+ MiB"
+
+  - name: Check GPU count
+    command: |
+      output=$(docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
+      echo "$output"
+      active=$(echo "$output" | grep -c 'MiB')
+      total=$(echo "$output" | grep -oP '[0-9]+(?= MiB)' | paste -sd+ | bc)
+      echo "Active GPUs: $active, Total VRAM: ${total} MiB"
+      if [ "$active" -le 1 ]; then
+        echo "GPU_COUNT_OK"
+      elif [ "$total" -le $(( (active - 1) * 11441 )) ]; then
+        echo "GPU_COUNT_EXCEEDED: total ${total} MiB fits in $((active - 1)) GPUs but using $active"
+      else
+        echo "GPU_COUNT_OK"
+      fi
+    expectPatterns:
+      - "GPU_COUNT_OK"
+    rejectPatterns:
+      - "GPU_COUNT_EXCEEDED"
+
+  - name: Unload model
+    command: |
+      curl -s http://localhost:11434/api/generate \
+        -d '{"model":"lfm2.5:8b-a1b","keep_alive":0}'
+      echo "Model unloaded"
+    expectPatterns:
+      - "Model unloaded"
+
+criteria: |
+  Validate lfm2.5:8b-a1b (Liquid LFM2 MoE, ~5.2 GB VRAM) runs on K80 (compute 3.7).
+  Prerequisite: Model must be pre-pulled before running this test.
+
+  Expected:
+  - API returns JSON with "response" field (coherent, no garbage)
+  - GPU memory is allocated (visible in nvidia-smi)
+  - GPU count: ~5.2 GB fits a single K80 die (11441 MiB), so GPU_COUNT_OK on one GPU.
+  - No CUDA/CUBLAS errors in output
+  - Model unloads successfully
+
+  Acceptable warnings (NOT errors):
+  - "flash attention enabled but not supported by gpu" - K80 does not support
+    flash attention, this is a normal fallback warning, NOT an error
