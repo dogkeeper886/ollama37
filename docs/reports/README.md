@@ -21,12 +21,14 @@ place or mixed across builds; the pre-versioning (mixed-build) reports live in g
 
 | Snapshot | Build | Swept | Notes |
 |---|---|---|---|
+| [`…-2026-07-10-d83061de.md`](./k80-vram-by-family-2026-07-10-d83061de.md) | `d83061de` | 2026-07-10 | **Latest.** 14 models (+`lfm2.5:8b`, new `lfm2` family, ~33 tok/s). No-harm vs `c282ba37`: 49/51 rows within ±3 %. gemma4:26b @8k+ now spreads to 4 dies (−9 %) — gemma4/KV-graph effect, not lfm2. |
 | [`…-2026-06-29-c282ba37.md`](./k80-vram-by-family-2026-06-29-c282ba37.md) | `c282ba37` | 2026-06-29 | First clean single-build sweep (all 13 models). gemma4:12b now on GPU; `swa_full` windowed cache reclaims its 16k VRAM. e4b@2k cold-load artifact published + flagged. |
 
 ### Capability axis — MCP tool-call
 
 | Snapshot | Build | Swept | Notes |
 |---|---|---|---|
+| [`…-2026-07-10-d83061de.md`](./k80-mcp-by-family-2026-07-10-d83061de.md) | `d83061de` | 2026-07-10 | **Latest — T1 @8k only** (16k thermal-aborted at 81 °C, twice). 14 models (+`lfm2.5:8b`). 0 verdict regressions vs `c282ba37`; `deepseek-r1:8b-tools` ❌→✅; `lfm2.5:8b` ✅; 9/14 PASS. |
 | [`…-2026-06-29-c282ba37.md`](./k80-mcp-by-family-2026-06-29-c282ba37.md) | `c282ba37` | 2026-06-29 | **T1 only.** gemma4:12b: fails-to-load (main) → loads + 16k T1 ✅ (8k over-explores the menu). 0 verdict changes vs main; 15/26 PASS. |
 | [`k80-mcp-by-family.md`](./k80-mcp-by-family.md) | pre-versioning (mixed) | 2026-06-23 era | The older T1+**T2** report (gemma4:12b shown as fails-to-load). Kept for T2 until a clean T1+T2 re-sweep produces a versioned snapshot. |
 
