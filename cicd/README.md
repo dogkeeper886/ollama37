@@ -45,7 +45,7 @@ TypeScript-based test framework with dual-judge architecture.
 | Build | 3 | Verify Docker images, toolchain, image sizes |
 | Runtime | 4 | Container startup, GPU detection, health check, /api/metrics schema |
 | Inference | 2 | Model pull + API inference smoke |
-| Models | 13 | Per-model regression — gpt-oss, ministral-3, gemma3 (4b/27b), gemma4 (e4b/26b), qwen3.5 (9b/27b), qwen3-vl (8b/30b), deepseek-r1 (14b/32b) |
+| Models | 16 | Per-model regression — gpt-oss, ministral-3, functiongemma, gemma3 (4b/27b), gemma4 (12b/e4b/26b), qwen3.5 (9b/27b), qwen3-vl (8b/30b), deepseek-r1 (14b/32b) |
 
 Each test case lives in `cicd/tests/testcases/<suite>/TC-<SUITE>-NNN.yml`. The `intent:` block in every YAML — `user_story`, optional `acceptance`, optional `notes` — is the single design authority for that test.
 

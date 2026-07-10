@@ -55,6 +55,15 @@ runs-on: [self-hosted, sm37]      # Tesla K80 — the only hardware-validated ta
 | Label | Host | Notes |
 |---|---|---|
 | `sm37` | Tesla K80 box (`rocky9-k80-cicd-1`) | 4 dies, ~11.4 GiB each. The reference testbed. |
+| `sm75` | RTX 2060 box (`rocky9-2060-cicd-1`) | 1 card, **5.1 GiB usable** (display attached). |
+
+A workflow that can run on more than one testbed takes a `runner_label` input defaulting to
+`sm37`, and uses `runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]`.
+
+**Not every suite fits every host.** `sm75` holds no model the `models` suite uses
+(`deepseek-r1:32b`, `gemma3:27b`, …), and the `build` suite is a multi-hour no-cache compile that
+belongs on `sm37` where the builder image is cached. The `runtime` suite needs no model and runs
+anywhere.
 
 **Order of operations when adding a runner:** add the label to the runner *first*, then pin
 workflows to it. Pinning to a label no runner carries makes every job queue forever.
@@ -82,10 +91,12 @@ which is tuned for the K80. Another card with a different thermal envelope needs
 
 ## Key Design Decisions
 
-**Manual triggers only:** every workflow is `workflow_dispatch` and, where they compose,
-`workflow_call`. **No workflow triggers on `push` or `pull_request`.** That is deliberate: the
-runners are self-hosted on a public repository, so a PR-triggered workflow would let a fork
-execute arbitrary code on them. Adding such a trigger is a security decision, not a convenience.
+**No workflow triggers on `push` or `pull_request`.** The test workflows are `workflow_dispatch`
+and, where they compose, `workflow_call`; `release-docker.yml` adds `release: [published]`. That
+is deliberate: the runners are self-hosted on a public repository, so a PR-triggered workflow
+would let a fork execute arbitrary code on them. Publishing a release requires write access, so
+that trigger is safe. Adding a `push` or `pull_request` trigger is a security decision, not a
+convenience.
 
 **Dual triggers:** workflows support `workflow_dispatch` (manual) and, where they compose,
 `workflow_call` (the pipeline calls the suites). Run a suite alone or as part of the pipeline.
