@@ -100,6 +100,45 @@ JUDGE_MODE=dual npm test         # Opt in the agent judge (env, not a flag)
 
 ---
 
+## THE BUILD
+
+`test-build.yml` does not *wrap* a build — **`TC-BUILD-002` IS the build.** It runs
+`make build-runtime-local-no-cache`, a full no-cache compile.
+
+```
+   make build  =  build-builder  +  build-runtime
+                        │                 │
+   ensure-builder ──────┘                 │
+     builder image absent?                │
+       → builds it LOCALLY (~90 min,      │
+         CMake from source). It never     │
+         pulls. ~15 GB, then cached.      │
+                                          ▼
+                        ┌─────────────────────────────────┐
+                        │  runtime image, --no-cache,     │
+                        │  preset "CUDA 11 K80"           │
+                        │  native CUBIN sm_37…sm_86       │
+                        │  (no PTX ⇒ no first-run JIT)    │
+                        └───────────────┬─────────────────┘
+                                        ▼
+                             ollama37:latest  (LOCAL tag)
+                                        │
+                        docker/docker-compose.yml reads it
+```
+
+**Two Dockerfiles, same commit, different mechanism:**
+
+| Caller | Target | Dockerfile | Source |
+|---|---|---|---|
+| `TC-BUILD-002` (CI) | `build-runtime-local-no-cache` | `runtime/Dockerfile.local` | `COPY .` — the checkout |
+| `release-docker.yml` | `build-runtime-no-cache` | `runtime/Dockerfile` | `git clone` pinned to `GIT_COMMIT` |
+
+**The build needs no GPU** — nothing passes `--gpus`, and `nvcc` compiles without a device. It
+is host-independent. It stays on `sm37` because `ensure-builder` would otherwise reconstruct the
+15 GB builder from scratch on the other box.
+
+---
+
 ## WHICH TESTBED
 
 Two self-hosted runners. They are **independent hosts with no network between them**, so a
@@ -157,6 +196,34 @@ compose change is needed. The publish and fetch steps belong in **testcases** (s
 architecture on ollama's flash-attention whitelist. On cc ≥ 7.5 the stock compose auto-enables
 FA and the runner panics — issue #385. Once that lands, `test-inference` on sm75 becomes its
 regression test.
+
+## VERIFYING A CODE CHANGE ACROSS BOTH TESTBEDS
+
+A change to the CUDA backend cannot be verified on one card. `sm37` proves nothing regressed;
+`sm75` proves the fix works on silicon `sm37` cannot reach.
+
+```
+  1  push a branch
+  2  test-build.yml            @ sm37   → compiles the branch → ollama37:latest (local)
+  3  publish                   @ sm37   → tag ci-<sha>, push, print the digest
+  4  fetch <digest>            @ sm37   ┐ BOTH hosts pull the same digest and retag
+     fetch <digest>            @ sm75   ┘ to ollama37:latest, which compose reads
+  5  runtime+inference+models  @ sm37   → the no-harm gate: the sweep must not move
+     runtime+<the regression>  @ sm75   → does the fix actually work on cc 7.5?
+  6  benchmark                 @ sm75   → keep the change only if it wins
+  7  (manual) release-docker   @ sm37   → rebuilds at the release tag, pushes :latest
+```
+
+**Both hosts fetch, including the one that built.** Testing a local build on `sm37` while
+`sm75` tests a pulled image compares two artifacts, not one.
+
+**Benchmark before you keep an optimization** (`docs/porting-k80.md` §2), at a realistic
+context — ≥ 6.8k tokens, not a one-line prompt (§3). A short prompt hid a 7.4× flash-attention
+regression on the K80 behind a 22% one.
+
+**Steps 3-4 are not implemented.** The publish/fetch testcases are not yet written, and a
+testcase cannot emit a workflow output — so handing the digest from the publishing run to the
+fetching run is an open problem. See `cicd/docs/PLAN.md`.
 
 ---
 
