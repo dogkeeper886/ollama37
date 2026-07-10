@@ -40,7 +40,7 @@ on:
 jobs:
   models:
     name: Models Tests
-    runs-on: self-hosted
+    runs-on: [self-hosted, sm37]
     environment: cicd-1
     env:
       OLLAMA37_ROOT: ${{ github.workspace }}
@@ -51,6 +51,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Identify host
+        uses: ./.github/actions/identify-host
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

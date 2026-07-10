@@ -37,13 +37,16 @@ on:
 jobs:
   mlx-smoke:
     name: Build + run qwen_smoke
-    runs-on: self-hosted
+    runs-on: [self-hosted, sm37]
     environment: cicd-1
     timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Identify host
+        uses: ./.github/actions/identify-host
 
       - name: Regression check — production GGML path still serves
         # Safety net for the MLX rapid-merge cadence. Our changes only

@@ -69,12 +69,15 @@ env:
 jobs:
   test-mcp:
     name: MCP Tool-Call Test
-    runs-on: self-hosted
+    runs-on: [self-hosted, sm37]
     environment: cicd-1
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Identify host
+        uses: ./.github/actions/identify-host
 
       - name: Validate inputs
         env:
