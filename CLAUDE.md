@@ -97,6 +97,11 @@ use judgment; branch + PR + merge is enough. The three review passes overlap:
 logic or risk, `/review` is the PR summary. Running all three on a trivial diff is
 ritual, not rigor.
 
+**Filing an issue** — whether through `dw-story`/`dw-tasks` or by hand with `gh issue
+create` — follows `.claude/rules/github-issue.md`. `gh` bypasses the templates in
+`.github/ISSUE_TEMPLATE/`, so their sections have to be reproduced deliberately. That
+rule can't be path-scoped (an issue is not a file), which is why it is named here.
+
 ## 6. Artifact & doc review discipline
 
 Match the reviewer to **who reads** the file you changed:
