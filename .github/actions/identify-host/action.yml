@@ -1,54 +1,59 @@
 name: Identify host
 description: >
-  Record which self-hosted runner and which GPU a job actually ran on, into the step
-  summary. Makes every result attributable to a specific testbed instead of "self-hosted".
-
-outputs:
-  compute_cap:
-    description: Compute capability of GPU 0 (e.g. 3.7, 7.5). Empty when no NVIDIA GPU.
-    value: ${{ steps.probe.outputs.compute_cap }}
-  gpu_name:
-    description: Name of GPU 0. Empty when no NVIDIA GPU.
-    value: ${{ steps.probe.outputs.gpu_name }}
+  Record which self-hosted runner and which GPUs a job actually ran on, into the step
+  summary and the log. Makes every result attributable to a specific testbed instead of
+  "self-hosted".
 
 runs:
   using: composite
   steps:
-    - id: probe
-      shell: bash
+    - shell: bash
       run: |
         set -u
 
         if command -v nvidia-smi >/dev/null 2>&1; then
-          mapfile -t gpus < <(nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version \
-                                         --format=csv,noheader 2>/dev/null)
+          # A host with the driver installed that cannot be queried is a broken host, not
+          # a CPU host. Reporting "none detected" there would silently strip attribution
+          # from the result — the same reason gpu-temp-guard.sh aborts on unreadable polls.
+          # stderr goes to a file, never into the parsed output: a benign nvidia-smi
+          # warning must not be mistaken for a GPU row.
+          err="$(mktemp)"
+          if ! smi="$(nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version \
+                                 --format=csv,noheader 2>"$err")" || [ -z "${smi}" ]; then
+            echo "identify-host: nvidia-smi is installed but returned no usable output." >&2
+            cat "$err" >&2
+            rm -f "$err"
+            exit 1
+          fi
+          rm -f "$err"
+          mapfile -t gpus <<< "${smi}"
         else
           gpus=()
         fi
 
-        gpu_name="$(printf '%s' "${gpus[0]:-}" | cut -d, -f1 | sed 's/^ *//')"
-        compute_cap="$(printf '%s' "${gpus[0]:-}" | cut -d, -f2 | sed 's/^ *//')"
-
-        echo "gpu_name=${gpu_name}"       >> "$GITHUB_OUTPUT"
-        echo "compute_cap=${compute_cap}" >> "$GITHUB_OUTPUT"
-
-        {
-          echo "### Host"
-          echo
-          echo "| | |"
-          echo "|---|---|"
-          echo "| Runner | \`${RUNNER_NAME:-?}\` |"
-          echo "| OS / arch | \`${RUNNER_OS:-?} ${RUNNER_ARCH:-?}\` · \`$(uname -sr)\` |"
-          if [ "${#gpus[@]}" -eq 0 ]; then
-            echo "| GPU | none detected |"
-          else
-            i=0
-            for g in "${gpus[@]}"; do
-              echo "| GPU $i | \`${g}\` |"
-              i=$((i + 1))
-            done
+        # Emit to the log as well as the summary: a run that dies before the summary
+        # renders is still attributable.
+        emit() {
+          printf '%s\n' "$1"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
           fi
-        } >> "$GITHUB_STEP_SUMMARY"
+        }
 
-        # Also to the log: a run that dies before the summary renders is still attributable.
-        echo "host: runner=${RUNNER_NAME:-?} gpu=${gpu_name:-none} cc=${compute_cap:-none}"
+        emit "### Host"
+        emit ""
+        emit "| | |"
+        emit "|---|---|"
+        emit "| Runner | \`${RUNNER_NAME:-?}\` |"
+        emit "| OS / arch | \`${RUNNER_OS:-?} ${RUNNER_ARCH:-?}\` · \`$(uname -sr)\` |"
+
+        if [ "${#gpus[@]}" -eq 0 ]; then
+          emit "| GPU | none detected |"
+        else
+          i=0
+          for g in "${gpus[@]}"; do
+            # Escape pipes so an exotic device name cannot mangle the table row.
+            emit "| GPU $i | \`${g//|/\\|}\` |"
+            i=$((i + 1))
+          done
+        fi

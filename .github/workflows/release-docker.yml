@@ -39,7 +39,11 @@ jobs:
         with:
           ref: ${{ steps.version.outputs.tag }}
 
+      # Guarded: this job checks out an arbitrary release tag, and tags cut before the
+      # action existed have no .github/actions/identify-host to resolve. Without the
+      # guard, republishing any older release fails at this step.
       - name: Identify host
+        if: hashFiles('.github/actions/identify-host/action.yml') != ''
         uses: ./.github/actions/identify-host
 
       - name: Build Docker image

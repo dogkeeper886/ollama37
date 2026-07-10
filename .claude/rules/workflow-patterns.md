@@ -1,6 +1,7 @@
 ---
 paths:
   - ".github/workflows/**/*.yml"
+  - ".github/actions/**/*.yml"
 ---
 
 # CI Workflow Patterns
@@ -67,8 +68,13 @@ testbed rather than to "self-hosted":
 ```
 
 It writes the runner name and every GPU's name / compute capability / VRAM / driver to the step
-summary and the log, and exposes `compute_cap` + `gpu_name` as outputs for a job that needs to
-branch on the hardware.
+summary **and** the log — a run that dies before the summary renders is still attributable. If
+`nvidia-smi` is installed but unqueryable, the step **fails** rather than reporting "none
+detected": a broken host is not a CPU host, and an unattributable result is worse than a red job.
+
+It deliberately exposes no outputs. Add them when a job actually needs to branch on the hardware,
+and when you do, decide what a multi-GPU or mixed-architecture host should report — the first
+device's compute capability is not the host's.
 
 **Per-host knobs don't travel.** `cicd/scripts/gpu-temp-guard.sh` defaults to an 80 °C abort,
 which is tuned for the K80. Another card with a different thermal envelope needs its own

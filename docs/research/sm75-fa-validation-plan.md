@@ -115,17 +115,25 @@ bypass it (`deltanet.go`). `model/models/qwen35/` has **no vision tower**, yet t
 
 ## The matrix
 
+As **executed** — this table is the plan as it actually ran, not as first drafted. See *Results*
+above for the observed outcome of each row.
+
 | # | Model | Env | Isolates | Expect | Done |
 |--:|---|---|---|---|:--:|
 | T1 | `deepseek-r1:1.5b` | defaults | sm_75 cubin runs at all | PASS | ✅ |
-| T2 | `lfm2.5-thinking:1.2b` | **no `.env`** | 2nd arch on the no-FA path | PASS | ☐ |
-| T3 | `qwen3.5:0.8b` | **no `.env`** | **default config is broken** | CRASH | ☐ |
-| T4 | `qwen3.5:0.8b` | `FA=0` | controls engine; isolates FA | PASS | ☐ |
-| T5 | `lfm2.5-thinking:1.2b` | `FA=1` | FA break is engine/arch-independent | CRASH | ☐ |
-| T6 | `deepseek-r1:1.5b` | `FA=1`, CPU only | **refutes the CUDA attribution** | PASS | ☐ |
+| T2 | `lfm2.5-thinking:1.2b` | **no `.env`** | 2nd arch on the no-FA path | PASS | ⛔ blocked — model will not load ([#386](https://github.com/dogkeeper886/ollama37/issues/386)) |
+| T3 | `qwen3.5:0.8b` | **no `.env`** | **default config is broken** | CRASH | ✅ |
+| T4 | `qwen3.5:0.8b` | `FA=0` | controls engine; isolates FA | PASS | ✅ |
+| T5 | `deepseek-r1:1.5b` | `FA=1` | FA break is engine/arch-independent | CRASH | ✅ |
+| T6 | `deepseek-r1:1.5b` | `FA=1`, CPU only | **refutes the CUDA attribution** | PASS | ✅ |
+
+**T5 substituted its model.** It was planned as `lfm2.5-thinking:1.2b` + `FA=1`, to reach the
+llama.cpp FA path with a non-whitelisted arch. That model cannot load at all (T2), so `deepseek-r1:1.5b`
+(`arch = qwen2`, also non-whitelisted, also llama.cpp) was used instead. The purpose — showing the FA
+break is not specific to one engine or architecture — is unchanged.
 
 T3 is the headline — no configuration at all. T6 is the falsifier: if CPU also aborts, the
-`movmatrix` trace is wrong and the whole mechanism section must be retracted.
+`movmatrix` trace is wrong and the whole mechanism section must be retracted. It did not abort.
 
 Optional: **T7** = T3 + `OLLAMA_KV_CACHE_TYPE=q8_0` (quantized K ⇒ decode takes `VEC`, prefill
 stays `MMA_F16` — the only way to separate the two kernels without a rebuild).
