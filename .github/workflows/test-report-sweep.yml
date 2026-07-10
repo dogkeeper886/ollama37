@@ -53,13 +53,16 @@ env:
 jobs:
   sweep:
     name: Report Sweep
-    runs-on: self-hosted
+    runs-on: [self-hosted, sm37]
     environment: cicd-1
     timeout-minutes: 660 # ~11h: a full 13-model x (4 ctx tp + 4 mcp) sweep is long
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Identify host
+        uses: ./.github/actions/identify-host
 
       - name: Validate model inputs
         env:

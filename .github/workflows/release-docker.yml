@@ -16,7 +16,7 @@ env:
 jobs:
   publish:
     name: Build & Push Docker Image
-    runs-on: self-hosted
+    runs-on: [self-hosted, sm37]
     environment: cicd-1
     env:
       OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION || '0.0.0' }}
@@ -38,6 +38,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.version.outputs.tag }}
+
+      # Guarded: this job checks out an arbitrary release tag, and tags cut before the
+      # action existed have no .github/actions/identify-host to resolve. Without the
+      # guard, republishing any older release fails at this step.
+      - name: Identify host
+        if: hashFiles('.github/actions/identify-host/action.yml') != ''
+        uses: ./.github/actions/identify-host
 
       - name: Build Docker image
         run: |

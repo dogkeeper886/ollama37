@@ -1,12 +1,14 @@
 ---
 paths:
   - ".github/workflows/**/*.yml"
+  - ".github/actions/**/*.yml"
 ---
 
 # CI Workflow Patterns
 
 ollama37's CI is organized by **test suite**, with a pipeline workflow that chains the suites,
-plus separate perf/experiment workflows. All run on the self-hosted Tesla K80 runner.
+plus separate perf/experiment workflows. All run on a labelled self-hosted GPU runner — see
+[Host selection](#host-selection).
 
 ## Suite workflows + the pipeline
 
@@ -38,7 +40,52 @@ suite workflows:
 (`cli.ts test-mcp` — MCP tool-call capability — is a subcommand with no workflow yet.)
 `release-docker.yml` builds and publishes the image on a release.
 
+## Host selection
+
+There is more than one possible GPU testbed, so **never use a bare `runs-on: self-hosted`.**
+It matches any runner, and a K80 sweep landing on a small consumer card produces numbers that
+look valid and are not.
+
+Select the host by the compute capability it provides:
+
+```yaml
+runs-on: [self-hosted, sm37]      # Tesla K80 — the only hardware-validated target
+```
+
+| Label | Host | Notes |
+|---|---|---|
+| `sm37` | Tesla K80 box (`rocky9-k80-cicd-1`) | 4 dies, ~11.4 GiB each. The reference testbed. |
+
+**Order of operations when adding a runner:** add the label to the runner *first*, then pin
+workflows to it. Pinning to a label no runner carries makes every job queue forever.
+
+**Identify the host** as the first step after checkout, so a result is attributable to a
+testbed rather than to "self-hosted":
+
+```yaml
+- name: Identify host
+  uses: ./.github/actions/identify-host
+```
+
+It writes the runner name and every GPU's name / compute capability / VRAM / driver to the step
+summary **and** the log — a run that dies before the summary renders is still attributable. If
+`nvidia-smi` is installed but unqueryable, the step **fails** rather than reporting "none
+detected": a broken host is not a CPU host, and an unattributable result is worse than a red job.
+
+It deliberately exposes no outputs. Add them when a job actually needs to branch on the hardware,
+and when you do, decide what a multi-GPU or mixed-architecture host should report — the first
+device's compute capability is not the host's.
+
+**Per-host knobs don't travel.** `cicd/scripts/gpu-temp-guard.sh` defaults to an 80 °C abort,
+which is tuned for the K80. Another card with a different thermal envelope needs its own
+`GPU_TEMP_LIMIT`, set where that host's jobs are defined — not by changing the default.
+
 ## Key Design Decisions
+
+**Manual triggers only:** every workflow is `workflow_dispatch` and, where they compose,
+`workflow_call`. **No workflow triggers on `push` or `pull_request`.** That is deliberate: the
+runners are self-hosted on a public repository, so a PR-triggered workflow would let a fork
+execute arbitrary code on them. Adding such a trigger is a security decision, not a convenience.
 
 **Dual triggers:** workflows support `workflow_dispatch` (manual) and, where they compose,
 `workflow_call` (the pipeline calls the suites). Run a suite alone or as part of the pipeline.
