@@ -18,11 +18,18 @@ services:
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_DEBUG=${OLLAMA_DEBUG:-}
       # K80 perf defaults — see docker/.env.example to override.
-      # Flash attention is left unset (not pinned): ollama's hardware gate forces it
-      # off on the K80 (sm_37) anyway — it's a net loss there (see #346) — and we don't
-      # auto-enable it on the experimental cc>=7.0 cards. Set OLLAMA_FLASH_ATTENTION=1
-      # to turn it on where supported. With FA off, q8_0 KV needs FA, so cache is f16.
-      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-}
+      #
+      # Flash attention is pinned OFF. Leaving it unset does NOT mean "off": ollama
+      # falls back to a per-architecture whitelist (gemma3, gpt-oss, qwen3*, qwen35*,
+      # qwen3vl*), so those models switch FA on by themselves. On the K80 (sm_37) the
+      # hardware gate vetoes it regardless — it is a net loss there anyway (#346). On
+      # cc>=7.5 (Turing/Ampere) FA reaches a kernel this CUDA 11.4 build miscompiles and
+      # the runner aborts on the first token (#385, #388).
+      #
+      # Setting OLLAMA_FLASH_ATTENTION=1 currently CRASHES any cc>=7.5 card. It is left
+      # overridable only so the fix in #388 can be tested. With FA off, q8_0 KV needs FA,
+      # so the cache stays f16.
+      - OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION:-0}
       - OLLAMA_KV_CACHE_TYPE=${OLLAMA_KV_CACHE_TYPE:-f16}
       # Compute-buffer safety margin (#352). The built-in default 2.5 keeps large
       # models (deepseek-r1:32b) on the K80's small dies instead of offloading to CPU.
