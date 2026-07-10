@@ -12,22 +12,34 @@ runs:
         set -u
 
         if command -v nvidia-smi >/dev/null 2>&1; then
+          # `compute_cap` is not a valid query field on older nvidia-smi — notably the 470
+          # branch that drives the K80, which is the reference testbed. Probe for it and
+          # drop it rather than failing the job on every workflow.
+          fields="name,compute_cap,memory.total,driver_version"
+          if ! nvidia-smi --query-gpu=compute_cap --format=csv,noheader >/dev/null 2>&1; then
+            fields="name,memory.total,driver_version"
+          fi
+
           # A host with the driver installed that cannot be queried is a broken host, not
           # a CPU host. Reporting "none detected" there would silently strip attribution
           # from the result — the same reason gpu-temp-guard.sh aborts on unreadable polls.
           # stderr goes to a file, never into the parsed output: a benign nvidia-smi
           # warning must not be mistaken for a GPU row.
           err="$(mktemp)"
-          if ! smi="$(nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version \
-                                 --format=csv,noheader 2>"$err")" || [ -z "${smi}" ]; then
-            echo "identify-host: nvidia-smi is installed but returned no usable output." >&2
-            cat "$err" >&2
+          if ! smi="$(nvidia-smi --query-gpu="${fields}" --format=csv,noheader 2>"$err")" \
+             || [ -z "${smi:-}" ]; then
+            # nvidia-smi reports an unusable query on stdout, not stderr. Print both, or
+            # the reason for the failure is invisible.
+            echo "identify-host: nvidia-smi returned no usable output for '${fields}'." >&2
+            echo "--- stdout ---" >&2; printf '%s\n' "${smi:-}" >&2
+            echo "--- stderr ---" >&2; cat "$err" >&2
             rm -f "$err"
             exit 1
           fi
           rm -f "$err"
           mapfile -t gpus <<< "${smi}"
         else
+          fields=""
           gpus=()
         fi
 
@@ -50,6 +62,8 @@ runs:
         if [ "${#gpus[@]}" -eq 0 ]; then
           emit "| GPU | none detected |"
         else
+          # The field list varies by driver, so name it — otherwise the row is unreadable.
+          emit "| GPU fields | \`${fields}\` |"
           i=0
           for g in "${gpus[@]}"; do
             # Escape pipes so an exotic device name cannot mangle the table row.
