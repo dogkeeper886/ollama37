@@ -271,9 +271,12 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     // If Turing tensor cores available, use them:
     // Uses ggml_cuda_should_use_mma_fattn (not turing_mma_available directly): the MMA_F16
-    // kernel needs CUDA 11.8 for movmatrix.sync.aligned; on this CUDA 11.4 build it is never
-    // selected, so cc>=7.5 falls through to the WMMA/tile path (#385). On the K80 this is a
-    // no-op (turing_mma_available(370) is already false).
+    // kernel needs CUDA 11.8 for movmatrix.sync.aligned, so on this CUDA 11.4 build it is
+    // never selected. This only stops MMA — it is NOT a safe landing on its own: cc>=7.5
+    // then falls to WMMA (no Turing device code) or tile (compiled out for Turing+GQA,
+    // NO_DEVICE_CODE). The Volta-only gate in ml/device.go FlashAttentionSupported is the
+    // primary guard that keeps FA off the selector on Turing/Ampere. On the K80 this is a
+    // no-op (turing_mma_available(370) is already false). See #385.
     if (ggml_cuda_should_use_mma_fattn(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40) {
         if (can_use_vector_kernel) {
             if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
