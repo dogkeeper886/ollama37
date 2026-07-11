@@ -1,0 +1,148 @@
+name: Long-context Benchmark
+
+# Long-context FA path comparison: primes a realistic prompt + needle, measures
+# prefill/decode tok/s, verifies simple ∧ needle ∧ agent(dual). Self-contained —
+# applies the experiment env (flash_attention/kv_cache_type) by recreating the
+# container, benchmarks, and always() reverts to the stable baseline (FA off).
+# Keeps test-throughput.yml pure as the short-prompt K80 model-regression tool.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Models to benchmark (space-separated)"
+        required: true
+        default: "qwen2.5:3b"
+        type: string
+      context:
+        description: "Target primed-prompt length in tokens (realistic ≥ ~6800)"
+        required: false
+        default: "8192"
+        type: string
+      num_predict:
+        description: "Max tokens to generate"
+        required: false
+        default: "128"
+        type: string
+      flash_attention:
+        description: "OLLAMA_FLASH_ATTENTION: 0 = off (cuBLAS baseline), 1 = on (FA)."
+        required: false
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "1"
+      kv_cache_type:
+        description: "OLLAMA_KV_CACHE_TYPE (e.g. f16, q8_0). Empty = compose default (f16)."
+        required: false
+        default: ""
+        type: string
+      judge_mode:
+        description: "Output validation (simple = non-empty + needle; dual = also the keyless agent judge)"
+        required: false
+        default: "simple"
+        type: choice
+        options:
+          - "simple"
+          - "dual"
+      runner_label:
+        description: "Which GPU testbed. sm37 = Tesla K80. sm75 = RTX 2060 (~5.1 GiB)."
+        required: false
+        default: "sm75"
+        type: choice
+        options:
+          - "sm37"
+          - "sm75"
+
+env:
+  OLLAMA_HOST: http://localhost:11434
+
+jobs:
+  context:
+    name: Long-context Benchmark
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm75' }}"]
+    environment: cicd-1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Identify host
+        uses: ./.github/actions/identify-host
+
+      - name: Validate inputs
+        env:
+          MODELS: ${{ inputs.models }}
+        run: |
+          if ! echo "$MODELS" | grep -qE '^[a-zA-Z0-9:._/ -]+$'; then
+            echo "ERROR: Invalid characters in model names: $MODELS" >&2
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install test runner dependencies
+        run: cd cicd/tests && npm ci
+
+      # Self-contained: apply the experiment env by recreating the container from the
+      # current ollama37:latest. The always() revert below restores the stable baseline
+      # (FA off) even if the benchmark panics — the testbed is never left experimental.
+      - name: Apply experiment environment
+        env:
+          FA: ${{ inputs.flash_attention || '0' }}
+          KV: ${{ inputs.kv_cache_type }}
+        run: |
+          cd docker
+          echo "Applying experiment env: OLLAMA_FLASH_ATTENTION=${FA} OLLAMA_KV_CACHE_TYPE='${KV}'"
+          OLLAMA_FLASH_ATTENTION="${FA}" OLLAMA_KV_CACHE_TYPE="${KV}" docker compose up -d --force-recreate
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
+          curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 || { echo "server did not come up"; docker compose logs 2>&1 | tail -30; exit 1; }
+          docker compose logs 2>&1 | grep -i "flash_attn" | tail -2 || true
+
+      - name: Run long-context benchmark
+        env:
+          MODELS: ${{ inputs.models }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -o pipefail
+          cd cicd/tests
+          JUDGE_FLAG=""
+          if [ "${{ inputs.judge_mode || 'simple' }}" = "dual" ]; then
+            JUDGE_FLAG="--judge"
+          fi
+          echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
+          # shellcheck disable=SC2086 -- intentional word splitting on models + flag
+          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts bench-context $MODELS \
+            --num-predict "${{ inputs.num_predict || '128' }}" \
+            --context "${{ inputs.context || '8192' }}" \
+            --output /tmp/context-results.json \
+            $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Unload models
+        if: always()
+        env:
+          MODELS: ${{ inputs.models }}
+        run: |
+          for MODEL in $MODELS; do
+            curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
+          done
+
+      # Guaranteed revert: restore the stable baseline (FA off) whatever happened above.
+      - name: Revert to stable baseline (FA off)
+        if: always()
+        run: |
+          cd docker
+          echo "Reverting testbed to stable baseline: OLLAMA_FLASH_ATTENTION=0"
+          OLLAMA_FLASH_ATTENTION=0 docker compose up -d --force-recreate
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
+          echo "Baseline restored (FA off)."
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: context-results
+          path: /tmp/context-results.json
