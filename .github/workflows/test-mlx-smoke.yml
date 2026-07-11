@@ -33,11 +33,19 @@ on:
         required: false
         default: "/home/jack/models/qwen3.6-35b-a3b-4bit"
         type: string
+      runner_label:
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm75 = RTX 2060 (the MLX probe assumes multiple K80 dies)."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm75"
 
 jobs:
   mlx-smoke:
     name: Build + run qwen_smoke
-    runs-on: [self-hosted, sm37]
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
     timeout-minutes: 30
 

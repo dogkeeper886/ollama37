@@ -7,14 +7,17 @@ dependencies:
   - TC-RUNTIME-001
 intent:
   user_story: |
-    Verify Tesla K80 GPU is detected by nvidia-smi and Ollama CUDA runtime
+    Verify the GPU is detected by nvidia-smi and the Ollama CUDA runtime.
+  notes: |
+    Host-agnostic: runs on any GPU testbed (sm37 = Tesla K80, sm75 = RTX 2060, …).
+    Asserts the property "a CUDA GPU is present and in use", not a specific card,
+    driver, or compute capability — the identify-host action records those per run.
 
 steps:
   - name: Check nvidia-smi inside container
     command: docker exec ollama37 nvidia-smi
     expectPatterns:
-      - "Tesla K80"
-      - "470\\."
+      - "CUDA Version"
     rejectPatterns:
       - "NVIDIA-SMI has failed"
       - "No devices were found"
@@ -38,20 +41,18 @@ steps:
     command: docker compose -f ${OLLAMA37_ROOT}/docker/docker-compose.yml logs 2>&1 | grep -i "inference compute" | tail -5
     expectPatterns:
       - "library=CUDA"
-      - "compute=3\\.7"
+      - "compute=[0-9]+\\.[0-9]+"
     rejectPatterns:
       - "library=cpu"
 
 criteria: |
-  Verify Tesla K80 GPU is detected by both nvidia-smi AND Ollama CUDA runtime.
+  Verify the GPU is detected by both nvidia-smi AND the Ollama CUDA runtime.
 
-  nvidia-smi should show:
-  - Tesla K80 GPU(s)
-  - Driver 470.x
+  nvidia-smi should report a working driver stack (a "CUDA Version" line) and must
+  NOT show "NVIDIA-SMI has failed" or "No devices were found".
 
   Ollama logs should show:
   - library=CUDA (NOT library=cpu)
-  - compute=3.7 (K80 compute capability)
-  - description=Tesla K80
+  - compute=X.Y (a real compute capability — 3.7 on the K80, 7.5 on the RTX 2060, etc.)
 
-  If logs show "library=cpu", the GPU detection has failed.
+  If logs show "library=cpu", GPU detection has failed.

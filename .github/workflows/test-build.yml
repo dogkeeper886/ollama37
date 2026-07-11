@@ -12,6 +12,14 @@ on:
         required: false
         default: false
         type: boolean
+      runner_label:
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm75 = RTX 2060."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm75"
   workflow_call:
     inputs:
       debug:
@@ -19,6 +27,11 @@ on:
         required: false
         default: false
         type: boolean
+      runner_label:
+        description: "Which GPU testbed to run on"
+        required: false
+        default: "sm37"
+        type: string
     outputs:
       result:
         description: "Build test result"
@@ -27,7 +40,7 @@ on:
 jobs:
   build:
     name: Build Verification
-    runs-on: [self-hosted, sm37]
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
     env:
       OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION || '0.0.0' }}

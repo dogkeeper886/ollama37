@@ -10,7 +10,6 @@ Execute test cases and evaluate results. The simple (deterministic) judge is the
 default verdict; the agent judge is an opt-in second opinion (`JUDGE_MODE=dual`),
 keyless on a Claude Code subscription.
 
-```
 $ARGUMENTS
 
 ## PURPOSE

@@ -16,6 +16,14 @@ on:
         required: false
         default: false
         type: boolean
+      runner_label:
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (full validation runs here). sm75 = RTX 2060 — completes build+runtime only; inference (#385) and models (VRAM) do not run there yet."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm75"
 
 jobs:
   build:
@@ -23,6 +31,7 @@ jobs:
     uses: ./.github/workflows/test-build.yml
     with:
       debug: ${{ inputs.debug }}
+      runner_label: ${{ inputs.runner_label }}
 
   runtime:
     name: Runtime Tests
@@ -30,6 +39,7 @@ jobs:
     uses: ./.github/workflows/test-runtime.yml
     with:
       debug: ${{ inputs.debug }}
+      runner_label: ${{ inputs.runner_label }}
 
   inference:
     name: Inference Tests
@@ -40,6 +50,7 @@ jobs:
     with:
       judge_mode: ${{ inputs.judge_mode }}
       debug: ${{ inputs.debug }}
+      runner_label: ${{ inputs.runner_label }}
 
   models:
     name: Models Tests
@@ -49,3 +60,4 @@ jobs:
     with:
       judge_mode: ${{ inputs.judge_mode }}
       debug: ${{ inputs.debug }}
+      runner_label: ${{ inputs.runner_label }}

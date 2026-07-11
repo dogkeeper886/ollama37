@@ -46,6 +46,14 @@ on:
         description: "MCP distractor server args"
         type: string
         default: "@playwright/mcp@latest"
+      runner_label:
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm75 = RTX 2060 (models must fit ~5.1 GiB)."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm75"
 
 env:
   OLLAMA_HOST: http://localhost:11434
@@ -53,7 +61,7 @@ env:
 jobs:
   sweep:
     name: Report Sweep
-    runs-on: [self-hosted, sm37]
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
     timeout-minutes: 660 # ~11h: a full 13-model x (4 ctx tp + 4 mcp) sweep is long
 

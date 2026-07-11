@@ -26,6 +26,14 @@ on:
         options:
           - "simple"
           - "dual"
+      runner_label:
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm75 = RTX 2060 (models must fit ~5.1 GiB)."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm75"
 
 env:
   OLLAMA_HOST: http://localhost:11434
@@ -33,7 +41,7 @@ env:
 jobs:
   throughput:
     name: Throughput Benchmark
-    runs-on: [self-hosted, sm37]
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
 
     steps:

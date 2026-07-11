@@ -8,7 +8,6 @@ user-invocable: true
 
 Generate a YAML test case file from requirements or acceptance criteria.
 
-```
 $ARGUMENTS
 
 ## PURPOSE
