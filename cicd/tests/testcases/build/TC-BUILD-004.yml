@@ -1,0 +1,48 @@
+id: TC-BUILD-004
+name: Publish CI image to Docker Hub
+suite: build
+priority: 4
+timeout: 600000
+dependencies: []
+intent:
+  user_story: |
+    Publish the runtime image already built on this runner to the CI image repo, so a
+    second testbed (e.g. sm75) can pull the exact same artifact by digest.
+  notes: |
+    Runs against the `ollama37:latest` already on this host's Docker daemon — it does NOT
+    rebuild (no dependency on TC-BUILD-002). Publishes to a dedicated public repo so
+    half-tested ci-<sha> tags never touch the tag list users pull `:latest` from. Pushes
+    from the sm37 daemon's existing credential; no docker login step. The digest it prints
+    is what the other testbed pulls (a tag can be overwritten; a digest cannot).
+
+steps:
+  - name: Tag and push CI image
+    command: |
+      SHA=$(echo "${GITHUB_SHA:-local}" | cut -c1-12)
+      REF="dogkeeper886/ollama37-ci:ci-${SHA}"
+      echo "Publishing ollama37:latest as ${REF}"
+      docker tag ollama37:latest "${REF}"
+      docker push "${REF}"
+    expectPatterns:
+      - "digest: sha256:"
+    rejectPatterns:
+      - "denied"
+      - "no such image"
+      - "no basic auth credentials"
+
+  - name: Print the fully-qualified digest
+    command: |
+      SHA=$(echo "${GITHUB_SHA:-local}" | cut -c1-12)
+      docker image inspect "dogkeeper886/ollama37-ci:ci-${SHA}" --format '{{index .RepoDigests 0}}'
+    expectPatterns:
+      - "ollama37-ci@sha256:"
+
+criteria: |
+  Publish the local ollama37:latest to dogkeeper886/ollama37-ci:ci-<sha> and report its
+  digest.
+
+  Expected:
+  - docker push succeeds ("digest: sha256:..." in the output)
+  - the fully-qualified digest (dogkeeper886/ollama37-ci@sha256:...) is printed for the
+    fetching testbed to pull by digest
+  - no "denied" (would mean the runner's credential can't push to this repo)
