@@ -69,8 +69,9 @@ function buildPrompt(targetTokens: number): string {
   return parts.join(' ') + TASK;
 }
 
-function needleCheck(response: string): { pass: boolean; reason: string } {
-  const found = response.includes(NEEDLE_CODE);
+function needleCheck(response: string, thinking: string): { pass: boolean; reason: string } {
+  // A reasoning model may state the code while thinking, not in the final answer.
+  const found = response.includes(NEEDLE_CODE) || thinking.includes(NEEDLE_CODE);
   return {
     pass: found,
     reason: found ? `needle ${NEEDLE_CODE} present` : `needle ${NEEDLE_CODE} MISSING — long-context retrieval failed`,
@@ -96,6 +97,7 @@ interface CtxResult {
   vram_used_mib: number[];
   done_reason: string;
   response_preview: string;
+  truncated: boolean;
   needle: { pass: boolean; reason: string };
   check: { overall_pass: boolean; simple: ReturnType<typeof simpleContentCheck>; agent: Judgment | null };
 }
@@ -150,7 +152,7 @@ export async function runContext(opts: ContextOptions): Promise<number> {
   const sha = await gitSha();
   const gpuBefore = await gpuInfo();
   const prompt = buildPrompt(context);
-  const numCtx = context + numPredict + 512; // headroom for the primed prompt + generation
+  const numCtx = context + numPredict + 1024; // generous headroom absorbs per-model tokenizer variance
 
   const results: CtxResult[] = [];
   const fullText = new Map<string, { response: string; thinking: string }>();
@@ -166,7 +168,7 @@ export async function runContext(opts: ContextOptions): Promise<number> {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
       results.push({
         model, in_tokens: 0, out_tokens: 0, prompt_eval_tps: 0, eval_tps: 0, gpu_offload_pct: 0, vram_used_mib: [],
-        done_reason: 'error', response_preview: '', needle: { pass: false, reason: 'no response' },
+        done_reason: 'error', response_preview: '', truncated: false, needle: { pass: false, reason: 'no response' },
         check: { overall_pass: false, simple: { pass: false, reason: 'capture failed', source: 'none' }, agent: null },
       });
       continue;
@@ -174,8 +176,11 @@ export async function runContext(opts: ContextOptions): Promise<number> {
 
     const offload = await gpuOffload(host, model);
     const loaded = await gpuInfo();
+    // If the prompt filled the whole context window it was truncated (context-shifted),
+    // dropping the front where the needle sits — the row is invalid, not a needle-fail.
+    const truncated = cap.inTokens >= numCtx;
     const simple = simpleContentCheck(cap.response, cap.thinking);
-    const needle = needleCheck(cap.response);
+    const needle = needleCheck(cap.response, cap.thinking);
     fullText.set(model, { response: cap.response, thinking: cap.thinking });
 
     results.push({
@@ -188,11 +193,12 @@ export async function runContext(opts: ContextOptions): Promise<number> {
       vram_used_mib: loaded.map((g) => g.usedMib),
       done_reason: cap.doneReason,
       response_preview: cap.response.slice(0, 120),
+      truncated,
       needle,
-      check: { overall_pass: simple.pass && needle.pass, simple, agent: null },
+      check: { overall_pass: !truncated && simple.pass && needle.pass, simple, agent: null },
     });
     process.stderr.write(
-      `  in ${cap.inTokens} · out ${cap.outTokens} @ ${cap.evalTps} tok/s · prefill ${cap.promptEvalTps} tok/s · needle=${needle.pass} · simple=${simple.pass}\n`,
+      `  in ${cap.inTokens} · out ${cap.outTokens} @ ${cap.evalTps} tok/s · prefill ${cap.promptEvalTps} tok/s · ${truncated ? 'TRUNCATED ' : ''}needle=${needle.pass} · simple=${simple.pass}\n`,
     );
   }
 
@@ -200,7 +206,7 @@ export async function runContext(opts: ContextOptions): Promise<number> {
   // wrong-context answer is already a fail, so don't spend the judge on it.
   let judgeFellBack = false;
   if (judge) {
-    const eligible = results.filter((r) => r.check.simple.pass && r.needle.pass);
+    const eligible = results.filter((r) => !r.truncated && r.check.simple.pass && r.needle.pass);
     if (eligible.length > 0) {
       const agentJudge = new AgentJudge();
       if (await agentJudge.isAvailable()) {
@@ -214,7 +220,7 @@ export async function runContext(opts: ContextOptions): Promise<number> {
           const r = byModel.get(v.testId);
           if (r) {
             r.check.agent = v;
-            r.check.overall_pass = r.check.simple.pass && r.needle.pass && v.pass;
+            r.check.overall_pass = !r.truncated && r.check.simple.pass && r.needle.pass && v.pass;
           }
         }
       } else {
@@ -254,17 +260,21 @@ function printSummary(sha: string, gpu: GpuRow[], context: number, mode: string,
   out.push('| Model | Check | Needle | IN tok | OUT tok | Prefill tok/s | Decode tok/s | GPU% | VRAM (MiB) |');
   out.push('|---|---|:--:|--:|--:|--:|--:|--:|--:|');
   for (const r of results) {
-    const check = r.check.overall_pass ? 'PASS' : 'FAIL';
-    const needle = r.needle.pass ? '✓' : '✗';
+    const check = r.truncated ? 'TRUNC' : r.check.overall_pass ? 'PASS' : 'FAIL';
+    const needle = r.truncated ? '—' : r.needle.pass ? '✓' : '✗';
     out.push(
       `| ${r.model} | ${check} | ${needle} | ${r.in_tokens} | ${r.out_tokens} | ${r.prompt_eval_tps} | ${r.eval_tps} | ${r.gpu_offload_pct}% | ${r.vram_used_mib.join(' / ') || 'n/a'} |`,
     );
   }
   const failures = results.filter((r) => !r.check.overall_pass);
   if (failures.length > 0) {
-    out.push('', '### Failed checks', '');
+    out.push('', '### Failed / invalid checks', '');
     for (const r of failures) {
-      const reason = !r.needle.pass ? r.needle.reason : r.check.agent?.reason ?? r.check.simple.reason;
+      const reason = r.truncated
+        ? `TRUNCATED — prompt (${r.in_tokens} tok) filled the context window; result invalid`
+        : !r.needle.pass
+          ? r.needle.reason
+          : r.check.agent?.reason ?? r.check.simple.reason;
       out.push(`- **${r.model}**: ${reason}`);
     }
   }
