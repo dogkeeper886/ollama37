@@ -435,9 +435,19 @@ func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
 // For each GPU, check if it does NOT support flash attention
 func FlashAttentionSupported(l []DeviceInfo) bool {
 	for _, gpu := range l {
+		// CUDA: this fork builds with CUDA 11.4 (to keep sm_37 alive). On Turing/Ampere
+		// (cc >= 7.5) the selector routes the dominant attention shapes to MMA_F16, which
+		// needs CUDA 11.8 (movmatrix.sync.aligned) and emits NaN under 11.4 — so FA crashes
+		// the runner there. The VEC kernel does have working sm_75+ device code, but FA is
+		// all-or-nothing per graph (ggml.go), so VEC cannot cover prefill; WMMA is
+		// Volta-only and tile is compiled out for >= Volta. Volta (cc 7.0) is the only cc
+		// whose selected FA path fully works (WMMA), so restrict CUDA FA to it. Upstream
+		// allows cc >= 7 (it builds with CUDA >= 11.8 where MMA works); this is the fork's
+		// toolchain adaptation. The ggml_cuda_should_use_mma_fattn predicate
+		// (fattn-mma-f16.cuh) is the paired CUDA-layer guard. See #385.
 		supportsFA := gpu.Library == "cpu" ||
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
-			(gpu.Library == "CUDA" && gpu.ComputeMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
+			(gpu.Library == "CUDA" && gpu.ComputeMajor == 7 && gpu.ComputeMinor == 0) ||
 			gpu.Library == "ROCm"
 
 		if !supportsFA {
