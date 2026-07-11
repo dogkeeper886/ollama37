@@ -28,12 +28,15 @@ const execFileAsync = promisify(execFile);
 const NEEDLE_CODE = '7492';
 const NEEDLE_SENTENCE = `CRITICAL FACT: the secret launch code is ${NEEDLE_CODE}. Remember this exact number.`;
 const TASK =
-  '\n\nBased only on the passage above, write a short (~80 word) summary of what it discusses, ' +
-  'then on its own final line state the secret launch code exactly like: LAUNCH CODE: <code>.';
+  '\n\nThe passage above is repetitive filler; ignore it except for the one CRITICAL FACT. In about ' +
+  '100 words, explain what flash attention is and why it helps large language model inference on GPUs. ' +
+  'Then on its own final line write the secret launch code from the passage exactly like: ' +
+  'LAUNCH CODE: <code>.';
 const JUDGE_CRITERIA =
-  'The response must be a coherent, on-topic English summary of the passage (technical filler about ' +
-  'GPU / attention terms). Reject empty, garbled, repetitive, off-topic, or error-message output. ' +
-  '(Correctness of the launch code is checked separately and is not your concern.)';
+  'The response must be a coherent, on-topic English explanation of flash attention — a real GPU/ML ' +
+  'technique (streaming the KV cache, tiling, avoiding materializing the full attention matrix, etc.). ' +
+  'Reject empty, garbled, repetitive, off-topic, or error-message output. (The launch-code line is ' +
+  'checked separately and is not your concern.)';
 
 const FILLER_WORDS =
   'flash attention kernel tensor core memory bandwidth throughput latency prefill decode softmax matmul ' +
@@ -131,7 +134,7 @@ function toTestResult(model: string, response: string, thinking: string): TestRe
       priority: 1,
       timeout: 120000,
       dependencies: [],
-      goal: 'Coherent summary of the passage',
+      goal: 'Coherent explanation of flash attention',
       steps: [{ name: 'generate', command: '(captured /api/generate response)' }],
       criteria: JUDGE_CRITERIA,
     },
