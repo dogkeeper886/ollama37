@@ -15,14 +15,14 @@ on:
         default: "qwen2.5:3b"
         type: string
       context:
-        description: "Target primed-prompt length in tokens (realistic ≥ ~6800)"
+        description: "Target primed-prompt length in tokens"
         required: false
-        default: "8192"
+        default: "4096"
         type: string
       num_predict:
-        description: "Max tokens to generate"
+        description: "Max tokens to generate (room for a thinking model to reason + answer)"
         required: false
-        default: "128"
+        default: "1024"
         type: string
       flash_attention:
         description: "OLLAMA_FLASH_ATTENTION: 0 = off (cuBLAS baseline), 1 = on (FA)."
