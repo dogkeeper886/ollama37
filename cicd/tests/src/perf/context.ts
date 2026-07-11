@@ -33,10 +33,11 @@ const TASK =
   'Then on its own final line write the secret launch code from the passage exactly like: ' +
   'LAUNCH CODE: <code>.';
 const JUDGE_CRITERIA =
-  'The response must be a coherent, on-topic English explanation of flash attention — a real GPU/ML ' +
-  'technique (streaming the KV cache, tiling, avoiding materializing the full attention matrix, etc.). ' +
-  'Reject empty, garbled, repetitive, off-topic, or error-message output. (The launch-code line is ' +
-  'checked separately and is not your concern.)';
+  'This check catches CORRUPTED generation (e.g. NaN output from a broken FA path), not weak answers. ' +
+  'PASS any response that is coherent, fluent English and on-topic (flash attention / GPU inference). ' +
+  'Reject ONLY output that is empty, garbled, stuck in repetition, truncated mid-word, or an error ' +
+  'message. Do NOT grade technical accuracy or completeness — a vague, partial, or imperfect ' +
+  'explanation still PASSES. (The launch-code line is checked separately and is not your concern.)';
 
 const FILLER_WORDS =
   'flash attention kernel tensor core memory bandwidth throughput latency prefill decode softmax matmul ' +
@@ -138,7 +139,7 @@ function toTestResult(model: string, response: string, thinking: string): TestRe
       priority: 1,
       timeout: 120000,
       dependencies: [],
-      goal: 'Coherent explanation of flash attention',
+      goal: 'Coherent, on-topic response about flash attention (not corrupted output)',
       steps: [{ name: 'generate', command: '(captured /api/generate response)' }],
       criteria: JUDGE_CRITERIA,
     },
