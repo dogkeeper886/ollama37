@@ -95,9 +95,11 @@ interface CtxResult {
   eval_tps: number;
   gpu_offload_pct: number;
   vram_used_mib: number[];
+  vram_total_mib: number[];
   done_reason: string;
   response_preview: string;
   truncated: boolean;
+  partial: boolean;
   needle: { pass: boolean; reason: string };
   check: { overall_pass: boolean; simple: ReturnType<typeof simpleContentCheck>; agent: Judgment | null };
 }
@@ -167,8 +169,8 @@ export async function runContext(opts: ContextOptions): Promise<number> {
     } catch (e) {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
       results.push({
-        model, in_tokens: 0, out_tokens: 0, prompt_eval_tps: 0, eval_tps: 0, gpu_offload_pct: 0, vram_used_mib: [],
-        done_reason: 'error', response_preview: '', truncated: false, needle: { pass: false, reason: 'no response' },
+        model, in_tokens: 0, out_tokens: 0, prompt_eval_tps: 0, eval_tps: 0, gpu_offload_pct: 0, vram_used_mib: [], vram_total_mib: [],
+        done_reason: 'error', response_preview: '', truncated: false, partial: false, needle: { pass: false, reason: 'no response' },
         check: { overall_pass: false, simple: { pass: false, reason: 'capture failed', source: 'none' }, agent: null },
       });
       continue;
@@ -179,6 +181,9 @@ export async function runContext(opts: ContextOptions): Promise<number> {
     // If the prompt filled the whole context window it was truncated (context-shifted),
     // dropping the front where the needle sits — the row is invalid, not a needle-fail.
     const truncated = cap.inTokens >= numCtx;
+    // Anything less than fully on the GPU means CPU-offloaded layers — the tok/s is a
+    // CPU-contaminated number, not a GPU perf figure, so the row is invalid for comparison.
+    const partial = offload < 100;
     const simple = simpleContentCheck(cap.response, cap.thinking);
     const needle = needleCheck(cap.response, cap.thinking);
     fullText.set(model, { response: cap.response, thinking: cap.thinking });
@@ -191,14 +196,16 @@ export async function runContext(opts: ContextOptions): Promise<number> {
       eval_tps: cap.evalTps,
       gpu_offload_pct: offload,
       vram_used_mib: loaded.map((g) => g.usedMib),
+      vram_total_mib: loaded.map((g) => g.totalMib),
       done_reason: cap.doneReason,
       response_preview: cap.response.slice(0, 120),
       truncated,
+      partial,
       needle,
-      check: { overall_pass: !truncated && simple.pass && needle.pass, simple, agent: null },
+      check: { overall_pass: !truncated && !partial && simple.pass && needle.pass, simple, agent: null },
     });
     process.stderr.write(
-      `  in ${cap.inTokens} · out ${cap.outTokens} @ ${cap.evalTps} tok/s · prefill ${cap.promptEvalTps} tok/s · ${truncated ? 'TRUNCATED ' : ''}needle=${needle.pass} · simple=${simple.pass}\n`,
+      `  in ${cap.inTokens} · out ${cap.outTokens} @ ${cap.evalTps} tok/s · prefill ${cap.promptEvalTps} tok/s · offload ${offload}% · ${truncated ? 'TRUNCATED ' : ''}${partial ? 'PARTIAL ' : ''}needle=${needle.pass} · simple=${simple.pass}\n`,
     );
   }
 
@@ -206,7 +213,7 @@ export async function runContext(opts: ContextOptions): Promise<number> {
   // wrong-context answer is already a fail, so don't spend the judge on it.
   let judgeFellBack = false;
   if (judge) {
-    const eligible = results.filter((r) => !r.truncated && r.check.simple.pass && r.needle.pass);
+    const eligible = results.filter((r) => !r.truncated && !r.partial && r.check.simple.pass && r.needle.pass);
     if (eligible.length > 0) {
       const agentJudge = new AgentJudge();
       if (await agentJudge.isAvailable()) {
@@ -220,7 +227,7 @@ export async function runContext(opts: ContextOptions): Promise<number> {
           const r = byModel.get(v.testId);
           if (r) {
             r.check.agent = v;
-            r.check.overall_pass = !r.truncated && r.check.simple.pass && r.needle.pass && v.pass;
+            r.check.overall_pass = !r.truncated && !r.partial && r.check.simple.pass && r.needle.pass && v.pass;
           }
         }
       } else {
@@ -257,13 +264,14 @@ function printSummary(sha: string, gpu: GpuRow[], context: number, mode: string,
   out.push('');
   out.push(`**Commit:** \`${sha}\` | **GPU:** ${gpuName} | **Context target:** ${context} tok | **Judge:** ${mode}`);
   out.push('');
-  out.push('| Model | Check | Needle | IN tok | OUT tok | Prefill tok/s | Decode tok/s | GPU% | VRAM (MiB) |');
+  out.push('| Model | Check | Needle | IN tok | OUT tok | Prefill tok/s | Decode tok/s | GPU% | VRAM used/total (MiB) |');
   out.push('|---|---|:--:|--:|--:|--:|--:|--:|--:|');
   for (const r of results) {
-    const check = r.truncated ? 'TRUNC' : r.check.overall_pass ? 'PASS' : 'FAIL';
-    const needle = r.truncated ? '—' : r.needle.pass ? '✓' : '✗';
+    const check = r.truncated ? 'TRUNC' : r.partial ? 'PARTIAL' : r.check.overall_pass ? 'PASS' : 'FAIL';
+    const needle = r.truncated || r.partial ? '—' : r.needle.pass ? '✓' : '✗';
+    const vram = r.vram_used_mib.map((u, i) => `${u}/${r.vram_total_mib[i] ?? '?'}`).join(', ') || 'n/a';
     out.push(
-      `| ${r.model} | ${check} | ${needle} | ${r.in_tokens} | ${r.out_tokens} | ${r.prompt_eval_tps} | ${r.eval_tps} | ${r.gpu_offload_pct}% | ${r.vram_used_mib.join(' / ') || 'n/a'} |`,
+      `| ${r.model} | ${check} | ${needle} | ${r.in_tokens} | ${r.out_tokens} | ${r.prompt_eval_tps} | ${r.eval_tps} | ${r.gpu_offload_pct}% | ${vram} |`,
     );
   }
   const failures = results.filter((r) => !r.check.overall_pass);
@@ -272,9 +280,11 @@ function printSummary(sha: string, gpu: GpuRow[], context: number, mode: string,
     for (const r of failures) {
       const reason = r.truncated
         ? `TRUNCATED — prompt (${r.in_tokens} tok) filled the context window; result invalid`
-        : !r.needle.pass
-          ? r.needle.reason
-          : r.check.agent?.reason ?? r.check.simple.reason;
+        : r.partial
+          ? `PARTIAL — only ${r.gpu_offload_pct}% on GPU (CPU-offloaded layers); tok/s is not a GPU figure`
+          : !r.needle.pass
+            ? r.needle.reason
+            : r.check.agent?.reason ?? r.check.simple.reason;
       out.push(`- **${r.model}**: ${reason}`);
     }
   }
