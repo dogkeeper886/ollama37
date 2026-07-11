@@ -10,6 +10,7 @@ Execute test cases and evaluate results. The simple (deterministic) judge is the
 default verdict; the agent judge is an opt-in second opinion (`JUDGE_MODE=dual`),
 keyless on a Claude Code subscription.
 
+```
 $ARGUMENTS
 
 ## PURPOSE
@@ -23,8 +24,9 @@ Run YAML test cases by executing commands and evaluating results against pattern
 ### Step 1: Load Test Cases
 
 Input can be:
-- A test ID (e.g., `TC-RUNTIME-001`) — run that specific test
-- A suite name (`build`, `runtime`, `inference`, or `models`) — run all tests in that suite
+- A test ID (e.g., `TC-INT-001`) — run that specific test
+- A suite name (e.g., `integration`) — run all tests in that suite
+- A tag name (e.g., `auth`) — run all tests with that tag
 - Empty — run all tests
 
 Read YAML test case files from `cicd/tests/testcases/`.
@@ -66,12 +68,12 @@ Output a summary table:
 ```
 Test Results
 ============
-TC-RUNTIME-001   Container Startup     PASS  (12.4s)
-TC-RUNTIME-002   GPU Detection         FAIL  (step 4: expected "library=CUDA" not found)
-TC-INFERENCE-002 API Inference Test    PASS  (8.1s)
+TC-INT-001  Query resources            PASS  (1.2s)
+TC-INT-002  Create and verify          FAIL  (step 2: expected pattern "active" not found)
+TC-E2E-001  Full lifecycle             PASS  (5.8s)
 
 Summary: 2/3 passed
-Duration: 28.6s
+Duration: 8.2s
 ```
 
 If any test failed, show:
@@ -85,144 +87,18 @@ Instead of agent-based execution, use the built-in CLI:
 
 ```bash
 cd cicd/tests
-npm test                         # All tests (simple judge — fast, no model)
-npm test -- --suite runtime      # Specific suite (build|runtime|inference|models)
-npm test -- --id TC-RUNTIME-001  # Specific test
-npm test -- --dry-run            # Preview only
-JUDGE_MODE=dual npm test         # Opt in the agent judge (env, not a flag)
+npm test                        # All tests (simple judge — fast, no model)
+npm test -- --suite integration # Specific suite
+npm test -- --id TC-INT-001     # Specific test
+npm test -- --tag auth          # Tests tagged 'auth'
+npm test -- --dry-run           # Preview only
+JUDGE_MODE=dual npm test        # Opt in the agent judge (env, not a flag)
 ```
 
 **Environment variables for CI:**
 - `JUDGE_MODE` — `simple` (default) or `dual` (opt in the agent judge)
 - `JUDGE_AGENT` — Command for the ACP agent the judge drives; unset uses the bundled Claude ACP agent (keyless). Set it to swap model/vendor
 - `CLAUDE_CODE_OAUTH_TOKEN` — Authenticates the bundled Claude agent on a GitHub-hosted runner; unneeded on a self-hosted runner logged into Claude Code (`~/.claude`)
-
----
-
-## THE BUILD
-
-`test-build.yml` does not *wrap* a build — **`TC-BUILD-002` IS the build.** It runs
-`make build-runtime-local-no-cache`, a full no-cache compile.
-
-```
-   make build  =  build-builder  +  build-runtime
-                        │                 │
-   ensure-builder ──────┘                 │
-     builder image absent?                │
-       → builds it LOCALLY (~90 min,      │
-         CMake from source). It never     │
-         pulls. ~15 GB, then cached.      │
-                                          ▼
-                        ┌─────────────────────────────────┐
-                        │  runtime image, --no-cache,     │
-                        │  preset "CUDA 11 K80"           │
-                        │  native CUBIN sm_37…sm_86       │
-                        │  (no PTX ⇒ no first-run JIT)    │
-                        └───────────────┬─────────────────┘
-                                        ▼
-                             ollama37:latest  (LOCAL tag)
-                                        │
-                        docker/docker-compose.yml reads it
-```
-
-**Two Dockerfiles, same commit, different mechanism:**
-
-| Caller | Target | Dockerfile | Source |
-|---|---|---|---|
-| `TC-BUILD-002` (CI) | `build-runtime-local-no-cache` | `runtime/Dockerfile.local` | `COPY .` — the checkout |
-| `release-docker.yml` | `build-runtime-no-cache` | `runtime/Dockerfile` | `git clone` pinned to `GIT_COMMIT` |
-
-**The build needs no GPU** — nothing passes `--gpus`, and `nvcc` compiles without a device. It
-is host-independent. It stays on `sm37` because `ensure-builder` would otherwise reconstruct the
-15 GB builder from scratch on the other box.
-
----
-
-## WHICH TESTBED
-
-Two self-hosted runners. They are **independent hosts with no network between them**, so a
-Docker tag on one names nothing on the other. Select the host with `runner_label`; move the
-image through a registry, by digest.
-
-```
-                    ┌──────────────────────────────────────────────┐
-                    │  Docker Hub — public, pull needs no auth      │
-                    │  dogkeeper886/ollama37-ci:ci-<sha>            │
-                    │                      @sha256:<digest>        │
-                    └───────▲──────────────────────────┬───────────┘
-                    publish │                          │ fetch, by digest
-                   (sm37 only)                         │ (BOTH hosts)
-   ┌────────────────────────┴──────┐      ┌────────────▼──────────────────┐
-   │ sm37   rocky9-k80-cicd-1      │      │ sm75   rocky9-2060-cicd-1     │
-   │ 4× Tesla K80 · cc 3.7         │      │ RTX 2060 · cc 7.5             │
-   │ driver 470 · 11.4 GiB per die │      │ driver 580 · 5.1 GiB usable   │
-   │ GPU_TEMP_LIMIT=80             │      │ GPU_TEMP_LIMIT=85             │
-   │ THE REFERENCE TESTBED         │      │ the only tensor-core testbed  │
-   ├───────────────────────────────┤      ├───────────────────────────────┤
-   │ build      the build itself   │      │ build      no — hours, no cache│
-   │ runtime    yes                │      │ runtime    yes                │
-   │ inference  yes                │      │ inference  see note below     │
-   │ models     yes (16 cases)     │      │ models     never — VRAM       │
-   │ perf       yes                │      │ perf       models that fit    │
-   └───────────────────────────────┘      └───────────────────────────────┘
-
-   fetch on BOTH, including the host that built. Testing a local build on sm37
-   while sm75 tests a pulled image compares two artifacts, not one.
-```
-
-**Why a digest, never a tag.** A tag can be overwritten; a digest cannot. That is the only
-thing making "sm37 says no-harm" and "sm75 says fixed" statements about the same bits.
-
-**`runner_label`.** Today only `test-runtime.yml` takes it (`workflow_dispatch` and
-`workflow_call`, default `sm37`). Every other workflow is still pinned to `sm37`. Never use a
-bare `runs-on: self-hosted` — a K80 sweep landing on a small consumer card produces numbers
-that look valid and are not. See `.claude/rules/workflow-patterns.md`.
-
-```bash
-gh workflow run test-runtime.yml -f runner_label=sm75
-```
-
-**Per-host knobs live on the host.** `cicd/scripts/gpu-temp-guard.sh` reads `GPU_TEMP_LIMIT`
-from the environment; each runner sets it in `~/actions-runner/.env`. Don't change the script
-default, and don't add a workflow input for it.
-
-**What a suite actually runs.** `docker/docker-compose.yml` reads the local tag
-`ollama37:latest`. To test a specific build, pull it by digest and retag to that name — no
-compose change is needed. The publish and fetch steps belong in **testcases** (see
-`ci-testcase`), driven by these workflows with `--id`; they are not yet written.
-
-**`inference` on sm75 is currently blocked.** `TC-INFERENCE-001` pulls `gemma3:4b`, an
-architecture on ollama's flash-attention whitelist. On cc ≥ 7.5 the stock compose auto-enables
-FA and the runner panics — issue #385. Once that lands, `test-inference` on sm75 becomes its
-regression test.
-
-## VERIFYING A CODE CHANGE ACROSS BOTH TESTBEDS
-
-A change to the CUDA backend cannot be verified on one card. `sm37` proves nothing regressed;
-`sm75` proves the fix works on silicon `sm37` cannot reach.
-
-```
-  1  push a branch
-  2  test-build.yml            @ sm37   → compiles the branch → ollama37:latest (local)
-  3  publish                   @ sm37   → tag ci-<sha>, push, print the digest
-  4  fetch <digest>            @ sm37   ┐ BOTH hosts pull the same digest and retag
-     fetch <digest>            @ sm75   ┘ to ollama37:latest, which compose reads
-  5  runtime+inference+models  @ sm37   → the no-harm gate: the sweep must not move
-     runtime+<the regression>  @ sm75   → does the fix actually work on cc 7.5?
-  6  benchmark                 @ sm75   → keep the change only if it wins
-  7  (manual) release-docker   @ sm37   → rebuilds at the release tag, pushes :latest
-```
-
-**Both hosts fetch, including the one that built.** Testing a local build on `sm37` while
-`sm75` tests a pulled image compares two artifacts, not one.
-
-**Benchmark before you keep an optimization** (`docs/porting-k80.md` §2), at a realistic
-context — ≥ 6.8k tokens, not a one-line prompt (§3). A short prompt hid a 7.4× flash-attention
-regression on the K80 behind a 22% one.
-
-**Steps 3-4 are not implemented.** The publish/fetch testcases are not yet written, and a
-testcase cannot emit a workflow output — so handing the digest from the publishing run to the
-fetching run is an open problem. See `cicd/docs/PLAN.md`.
 
 ---
 
