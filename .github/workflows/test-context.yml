@@ -46,9 +46,9 @@ on:
           - "simple"
           - "dual"
       runner_label:
-        description: "Which GPU testbed. sm37 = Tesla K80. sm75 = RTX 2060 (~5.1 GiB)."
+        description: "Which GPU testbed. sm37 = Tesla K80 (reference). sm75 = RTX 2060 (~5.1 GiB) — pick this for the FA study."
         required: false
-        default: "sm75"
+        default: "sm37"
         type: choice
         options:
           - "sm37"
@@ -60,7 +60,7 @@ env:
 jobs:
   context:
     name: Long-context Benchmark
-    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm75' }}"]
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
 
     steps:
