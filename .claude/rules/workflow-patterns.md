@@ -34,8 +34,15 @@ Performance and capability experiments run via the runner's perf subcommands, se
 suite workflows:
 
 ```
-└── test-throughput.yml   # cli.ts bench-throughput — per-model tok/s + output check
+├── test-throughput.yml   # cli.ts bench-throughput — per-model tok/s + output check (short prompt)
+└── test-context.yml      # cli.ts bench-context — long-context prefill/decode tok/s + needle + judge
 ```
+
+`test-context.yml` is the flash-attention path comparison: it primes a realistic long prompt (so
+prefill and decode are in the regime where FA's cost/benefit shows) and is self-contained — it
+applies the experiment env (`flash_attention`/`kv_cache_type`) by recreating the container, then
+`always()` reverts to the stable baseline (FA off). `test-throughput.yml` stays the short-prompt K80
+model-regression tool.
 
 (`cli.ts test-mcp` — MCP tool-call capability — is a subcommand with no workflow yet.)
 `release-docker.yml` builds and publishes the image on a release.

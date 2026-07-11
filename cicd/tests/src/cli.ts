@@ -18,6 +18,7 @@ import { JsonReporter, ConsoleReporter } from './reporter/index.js';
 import { RunConfig } from './types.js';
 import { CONFIG, pickEnv } from './config.js';
 import { runThroughput } from './perf/throughput.js';
+import { runContext } from './perf/context.js';
 import { runMcpTest } from './mcp/test-mcp.js';
 
 const program = new Command();
@@ -248,6 +249,36 @@ program
     });
     // Flush stdout before forcing exit — the markdown summary is piped to tee
     // in CI, and process.exit() can truncate buffered pipe output.
+    await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+    process.exit(code);
+  });
+
+/**
+ * bench-context — long-context throughput + correctness for the FA path comparison.
+ *
+ * Primes a long DETERMINISTIC prompt (so prefill is realistic and the KV cache is
+ * full before decode) with a buried needle, then measures prefill/decode tok/s and
+ * a per-model verdict of simple ∧ needle ∧ agent(dual). Unlike bench-throughput's
+ * short prompt, this is the regime where flash attention's cost/benefit shows.
+ */
+program
+  .command('bench-context')
+  .description('Long-context benchmark (prefill/decode tok/s) with a deterministic needle + output validation')
+  .argument('<models...>', 'One or more model names to benchmark')
+  .option('-n, --num-predict <n>', 'Max tokens to generate', '128')
+  .option('-c, --context <n>', 'Target primed-prompt length in tokens', '8192')
+  .option('--judge', 'Also run the agent judge on each response (dual mode)', false)
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .option('-o, --output <file>', 'Write the JSON report to this file')
+  .action(async (models: string[], options) => {
+    const code = await runContext({
+      models,
+      numPredict: Number(options.numPredict),
+      context: Number(options.context),
+      judge: options.judge,
+      host: options.host,
+      output: options.output,
+    });
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
     process.exit(code);
   });
