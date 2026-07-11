@@ -270,7 +270,11 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
     // If Turing tensor cores available, use them:
-    if (turing_mma_available(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40) {
+    // Uses ggml_cuda_should_use_mma_fattn (not turing_mma_available directly): the MMA_F16
+    // kernel needs CUDA 11.8 for movmatrix.sync.aligned; on this CUDA 11.4 build it is never
+    // selected, so cc>=7.5 falls through to the WMMA/tile path (#385). On the K80 this is a
+    // no-op (turing_mma_available(370) is already false).
+    if (ggml_cuda_should_use_mma_fattn(cc) && K->ne[1] % FATTN_KQ_STRIDE == 0 && Q->ne[0] != 40) {
         if (can_use_vector_kernel) {
             if (K->type == GGML_TYPE_F16 && V->type == GGML_TYPE_F16) {
                 if (cc >= GGML_CUDA_CC_ADA_LOVELACE && Q->ne[1] == 1 && Q->ne[3] == 1 && !(gqa_ratio > 4 && K->ne[1] >= 8192)) {

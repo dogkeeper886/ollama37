@@ -3,6 +3,20 @@
 #include "mma.cuh"
 #include "fattn-common.cuh"
 
+// The MMA_F16 flash-attention kernel reaches ggml_cuda_movmatrix (mma.cuh), whose
+// movmatrix.sync.aligned PTX requires PTX ISA 7.8 / CUDA 11.8. Below that (this fork is
+// pinned to CUDA 11.4 to keep sm_37 alive), mma.cuh substitutes a software fallback that
+// produces wrong results, so the kernel must not be selected. Mirrors the availability
+// predicate idiom of ggml_cuda_should_use_wmma_fattn (fattn-wmma-f16.cuh).
+static bool ggml_cuda_should_use_mma_fattn(const int cc) {
+#if CUDART_VERSION < 11080
+    GGML_UNUSED(cc);
+    return false;
+#else
+    return turing_mma_available(cc);
+#endif // CUDART_VERSION < 11080
+}
+
 using namespace ggml_cuda_mma;
 
 typedef tile<16,  8, half2> tile_A;
