@@ -6,28 +6,39 @@ timeout: 600000
 dependencies: []
 intent:
   user_story: |
-    Pull gemma3:4b test model into the container
+    Pull the test model into the container. The model is adjustable via the
+    TEST_MODEL environment variable (set by the workflow's `model` input); it
+    defaults to gemma3:4b so existing runs are unchanged.
+  notes: |
+    Pull-only (no inference) — never loads the model onto the GPU, so it is safe
+    on any testbed regardless of flash-attention support.
 
 steps:
   - name: Pull test model
-    command: docker exec ollama37 ollama pull gemma3:4b
+    command: docker exec ollama37 ollama pull "${TEST_MODEL:-gemma3:4b}"
     timeout: 600000
     expectPatterns:
       - "success|already exists|pulling"
     rejectPatterns:
       - "error pulling"
       - "Error:"
+      - "requires a newer version"
 
   - name: Verify model available
-    command: docker exec ollama37 ollama list
+    command: |
+      m="${TEST_MODEL:-gemma3:4b}"
+      docker exec ollama37 ollama list | grep -F "$m" && echo "MODEL_PRESENT: $m"
     expectPatterns:
-      - "gemma3:4b"
+      - "MODEL_PRESENT:"
 
 criteria: |
-  Pull the gemma3:4b model for testing inside the container.
+  Pull the test model (TEST_MODEL, default gemma3:4b) inside the container.
 
   Expected:
   - Model downloads successfully OR reports already exists
   - Model appears in "ollama list" output
+
+  A "requires a newer version" (registry 412) means the image was built with the
+  wrong OLLAMA_VERSION — a failure, not an acceptable warning.
 
   Note: First pull may take several minutes depending on network speed.

@@ -7,13 +7,15 @@ dependencies:
   - TC-INFERENCE-001
 intent:
   user_story: |
-    Test inference via Ollama REST API and verify GPU memory allocation
+    Test inference via Ollama REST API and verify GPU memory allocation. The model
+    is adjustable via TEST_MODEL (default gemma3:4b), matching TC-INFERENCE-001.
 
 steps:
   - name: Test generate endpoint
     command: |
+      m="${TEST_MODEL:-gemma3:4b}"
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma3:4b","prompt":"What is 2+2? Answer with just the number.","stream":false}' \
+        -d "{\"model\":\"$m\",\"prompt\":\"What is 2+2? Answer with just the number.\",\"stream\":false}" \
         | head -c 1000
     expectPatterns:
       - "response"
@@ -29,8 +31,9 @@ steps:
 
   - name: Unload model after test
     command: |
+      m="${TEST_MODEL:-gemma3:4b}"
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma3:4b","keep_alive":0}'
+        -d "{\"model\":\"$m\",\"keep_alive\":0}"
       echo "Model unload requested"
     expectPatterns:
       - "Model unload requested"

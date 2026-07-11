@@ -7,6 +7,11 @@ on:
         description: "Run a single test by ID (e.g. TC-INFERENCE-001)"
         required: false
         type: string
+      model:
+        description: "Model to pull and test (TEST_MODEL). Default gemma3:4b."
+        required: false
+        default: "gemma3:4b"
+        type: string
       judge_mode:
         description: "Test judge mode (simple = SimpleJudge only; dual = also run the keyless agent judge)"
         required: false
@@ -30,6 +35,11 @@ on:
           - "sm75"
   workflow_call:
     inputs:
+      model:
+        description: "Model to pull and test (TEST_MODEL)"
+        required: false
+        default: "gemma3:4b"
+        type: string
       judge_mode:
         description: "Test judge mode (simple, dual)"
         required: false
@@ -85,6 +95,8 @@ jobs:
           # dual mode runs the keyless agent judge; the runner reads JUDGE_MODE.
           JUDGE_MODE: ${{ inputs.judge_mode || 'simple' }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # inference testcases read TEST_MODEL (they default to gemma3:4b in-shell).
+          TEST_MODEL: ${{ inputs.model || 'gemma3:4b' }}
         run: |
           cd cicd/tests
           echo "Judge mode: ${JUDGE_MODE}"
@@ -114,9 +126,11 @@ jobs:
 
       - name: Unload test models from VRAM
         if: always()
+        env:
+          TEST_MODEL: ${{ inputs.model || 'gemma3:4b' }}
         run: |
           echo "Unloading test models from VRAM..."
-          curl -s http://localhost:11434/api/generate -d '{"model":"gemma3:4b","keep_alive":0}' || true
+          curl -s http://localhost:11434/api/generate -d "{\"model\":\"${TEST_MODEL}\",\"keep_alive\":0}" || true
           echo "Models unloaded"
 
       - name: Upload inference results
