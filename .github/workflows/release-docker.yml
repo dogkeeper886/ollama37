@@ -9,6 +9,14 @@ on:
         description: "Release tag to build (e.g. v2.0.3)"
         required: true
         type: string
+      runner_label:
+        description: "Which host builds the release. sm37 = Tesla K80 box (the builder image is cached there). Releases normally build on sm37."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm75"
 
 env:
   DOCKERHUB_REPO: dogkeeper886/ollama37
@@ -16,7 +24,7 @@ env:
 jobs:
   publish:
     name: Build & Push Docker Image
-    runs-on: [self-hosted, sm37]
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
     env:
       OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION || '0.0.0' }}

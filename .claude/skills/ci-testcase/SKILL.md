@@ -8,7 +8,6 @@ user-invocable: true
 
 Generate a YAML test case file from requirements or acceptance criteria.
 
-```
 $ARGUMENTS
 
 ## PURPOSE
@@ -76,10 +75,12 @@ criteria: |
 ```
 
 **Suite guidelines:**
-- `build` — toolchain image, runtime image build, image sizes
-- `runtime` — container startup, GPU detection, health, `/api/metrics`
-- `inference` — model pull + GPU inference smoke
-- `models` — per-model regression on K80
+- `build` — toolchain image, runtime image build, image sizes. **Also where the CI image is
+  published and fetched**: a testcase may have side effects (`TC-BUILD-002` runs
+  `make build-runtime-local-no-cache`). `sm37` only.
+- `runtime` — container startup, GPU detection, health, `/api/metrics`. Runs on either testbed.
+- `inference` — model pull + GPU inference smoke.
+- `models` — per-model regression. `sm37` only: the models exceed any other card's VRAM.
 
 **ID format:** `TC-BUILD-XXX`, `TC-RUNTIME-XXX`, `TC-INFERENCE-XXX`, `TC-MODELS-XXX`
 
@@ -102,6 +103,46 @@ steps:
 ```
 
 Variables resolve from captured step output first, then fall back to `process.env`.
+
+---
+
+### Writing for two testbeds
+
+The suites run on **`sm37`** (4× Tesla K80, cc 3.7, driver 470) and **`sm75`** (RTX 2060,
+cc 7.5, driver 580). A testcase is plain shell, executed on whichever runner the workflow
+selected. It cannot know which one — so don't let it assume.
+
+**Assert the property, not the device.** A test that names one testbed's hardware fails on
+the other while testing nothing more.
+
+```yaml
+# WRONG — TC-RUNTIME-002 does this today, and it fails on sm75
+expectPatterns:
+  - "Tesla K80"        # the device
+  - "470\\."           # its driver
+  - "compute=3\\.7"    # its compute capability
+
+# RIGHT — the intent is "a CUDA GPU was detected and is in use"
+expectPatterns:
+  - "library=CUDA"
+  - "compute=[0-9]+\\.[0-9]+"
+rejectPatterns:
+  - "library=cpu"
+```
+
+The exact card, driver and compute capability are already recorded per run by the
+`identify-host` action. A testcase does not need to restate them.
+
+**Host-specific values come from the environment, never a literal.** Variables fall back to
+`process.env`, so a workflow passes a CI image digest, a temperature limit, or a model name
+in — the YAML stays host-agnostic.
+
+**Size the test to the smallest testbed it may run on**, or scope it to one suite. `sm75` has
+~5.1 GiB of usable VRAM; the `models` suite exceeds that, which is why it is `sm37` only.
+
+**A testcase cannot emit a workflow output.** It prints to stdout and the results JSON. If a
+later workflow run needs a value it produced — an image digest, say — that handoff is the
+workflow's problem, not the testcase's.
 
 ### Step 4: Report
 
