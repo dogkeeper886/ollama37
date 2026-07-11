@@ -34,6 +34,19 @@ on:
         options:
           - "sm37"
           - "sm75"
+      flash_attention:
+        description: "OLLAMA_FLASH_ATTENTION for this run: 0 = off (cuBLAS, the stable baseline), 1 = on (FA)."
+        required: false
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "1"
+      kv_cache_type:
+        description: "OLLAMA_KV_CACHE_TYPE (e.g. f16, q8_0). Empty = compose default (f16)."
+        required: false
+        default: ""
+        type: string
 
 env:
   OLLAMA_HOST: http://localhost:11434
@@ -69,6 +82,23 @@ jobs:
       - name: Install test runner dependencies
         run: cd cicd/tests && npm ci
 
+      # Self-contained: apply the experiment env by recreating the container from the
+      # current ollama37:latest. The always() revert step below restores the stable
+      # baseline (FA off) even if the benchmark crashes — the testbed is never left in
+      # an experimental state. Models live in the external ollama-data volume, so they
+      # survive the recreate.
+      - name: Apply experiment environment
+        env:
+          FA: ${{ inputs.flash_attention || '0' }}
+          KV: ${{ inputs.kv_cache_type }}
+        run: |
+          cd docker
+          echo "Applying experiment env: OLLAMA_FLASH_ATTENTION=${FA} OLLAMA_KV_CACHE_TYPE='${KV}'"
+          OLLAMA_FLASH_ATTENTION="${FA}" OLLAMA_KV_CACHE_TYPE="${KV}" docker compose up -d --force-recreate
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
+          curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 || { echo "server did not come up"; docker compose logs 2>&1 | tail -30; exit 1; }
+          docker compose logs 2>&1 | grep -i "flash_attn" | tail -2 || true
+
       - name: Run throughput benchmark
         env:
           MODELS: ${{ inputs.models }}
@@ -102,6 +132,17 @@ jobs:
           for MODEL in $MODELS; do
             curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
           done
+
+      # Guaranteed revert: restore the stable baseline (FA off) whatever happened above —
+      # a benchmark crash/panic still leaves the testbed in a known-good state.
+      - name: Revert to stable baseline (FA off)
+        if: always()
+        run: |
+          cd docker
+          echo "Reverting testbed to stable baseline: OLLAMA_FLASH_ATTENTION=0"
+          OLLAMA_FLASH_ATTENTION=0 docker compose up -d --force-recreate
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
+          echo "Baseline restored (FA off)."
 
       - name: Upload results
         uses: actions/upload-artifact@v4
