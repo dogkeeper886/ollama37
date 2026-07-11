@@ -19,7 +19,9 @@ checks the answer is correct; a path that is faster but emits garbage is not a w
 means all three:
 
 - **Verified response** — `judge_mode=dual` runs the keyless agent judge for *meaningfulness*, not
-  just "non-empty." Required for any keep/drop decision.
+  just "non-empty." Required for any keep/drop decision. **`dual` silently degrades to `simple` if the
+  runner has no agent-judge auth (`~/.claude`)** — so confirm a judge *verdict* actually appears in the
+  run; if it fell back to `simple`, the response is not verified and the number is not decision-grade.
 - **Realistic context** — `context_size` ≥ ~6.8k, not a one-line prompt. A short prompt once hid a
   7.4× flash-attention regression on the K80 behind a 22% one (`docs/porting-k80.md` §3).
 - **Consistent** — the workflow recreates the container per run, so the state is fixed; compare paths
