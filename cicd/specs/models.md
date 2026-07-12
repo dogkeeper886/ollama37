@@ -66,3 +66,51 @@ Validate deepseek-r1:14b (~14B params, ~10GB VRAM) runs on K80.
 - **VRAM Constraint:** K80 has 22GB total (2 x 11GB). Models tested one at a time with unloading.
 - **Acceptable warning:** "flash attention enabled but not supported by gpu" - K80 does not support flash attention
 - **No CUDA/CUBLAS errors** should appear in logs
+
+---
+
+## TC-MODELS-018: ornith:9b Inference
+
+**Importance:** High
+**Execution Type:** Automated
+**Status:** Red until the ornith renderer/parser port (#422) is in the deployed image.
+
+**Summary:**
+Validate ornith:9b (Qwen3.5-family, dense `qwen35`, thinking) runs on K80. Request pins
+`"think": false` so the answer isn't buried in a `<think>` span (ornith forces thinking, #422).
+
+---
+
+## TC-MODELS-019: ornith:35b Inference
+
+**Importance:** High
+**Execution Type:** Automated
+**Status:** Red until the ornith renderer/parser port (#422) is in the deployed image.
+
+**Summary:**
+Validate ornith:35b (Qwen3.5-family MoE, `qwen35moe`, thinking) runs on K80. Larger than one
+die, so it may span both K80 dies (`GPU_COUNT_OK` when it genuinely needs them).
+
+---
+
+## TC-MODELS-020: lfm2:24b Inference
+
+**Importance:** High
+**Execution Type:** Automated
+
+**Summary:**
+Validate lfm2:24b (Liquid LFM2 family, likely MoE) runs on K80; may span both K80 dies. If the
+model uses a thinking mode, switch the request to `/api/chat` with `"think": false`.
+
+---
+
+## TC-MODELS-021: lfm2.5-thinking:1.2b Inference
+
+**Importance:** High
+**Execution Type:** Automated
+**Status:** KNOWN RED — GGUF fails to load with `missing tensor 'token_embd_norm.weight'`;
+gates the vendored-llama.cpp LFM2 loader fix.
+
+**Summary:**
+Validate lfm2.5-thinking:1.2b (Liquid LFM2 thinking, ~0.7 GB) runs on K80, single die. Request
+pins `"think": false`.

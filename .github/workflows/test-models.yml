@@ -127,6 +127,10 @@ jobs:
           curl -s http://localhost:11434/api/generate -d '{"model":"gemma4:26b","keep_alive":0}' || true
           curl -s http://localhost:11434/api/generate -d '{"model":"functiongemma:270m","keep_alive":0}' || true
           curl -s http://localhost:11434/api/generate -d '{"model":"ministral-3:3b","keep_alive":0}' || true
+          curl -s http://localhost:11434/api/generate -d '{"model":"ornith:9b","keep_alive":0}' || true
+          curl -s http://localhost:11434/api/generate -d '{"model":"ornith:35b","keep_alive":0}' || true
+          curl -s http://localhost:11434/api/generate -d '{"model":"lfm2:24b","keep_alive":0}' || true
+          curl -s http://localhost:11434/api/generate -d '{"model":"lfm2.5-thinking:1.2b","keep_alive":0}' || true
           echo "Models unloaded"
 
       - name: Upload models results
