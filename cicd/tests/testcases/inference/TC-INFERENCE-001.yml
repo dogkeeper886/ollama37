@@ -6,22 +6,35 @@ timeout: 600000
 dependencies: []
 intent:
   user_story: |
-    Pull the test model into the container. The model is adjustable via the
-    TEST_MODEL environment variable (set by the workflow's `model` input); it
-    defaults to gemma3:4b so existing runs are unchanged.
+    Confirm the test model is available (pulled) in the container — present it if
+    already pulled, or fetch it from the registry only when absent. The model is
+    adjustable via the TEST_MODEL environment variable (set by the workflow's
+    `model` input); it defaults to gemma3:4b so existing runs are unchanged.
   notes: |
-    Pull-only (no inference) — never loads the model onto the GPU, so it is safe
-    on any testbed regardless of flash-attention support.
+    Confirms availability, not registry membership — a locally-imported model
+    (`ollama create`) counts as pulled. Never loads the model onto the GPU, so it
+    is safe on any testbed regardless of flash-attention support.
 
 steps:
-  - name: Pull test model
-    command: docker exec ollama37 ollama pull "${TEST_MODEL:-gemma3:4b}"
+  - name: Ensure test model is available
+    command: |
+      m="${TEST_MODEL:-gemma3:4b}"
+      # Purpose: confirm the model is PULLED/available — not that it is in the
+      # registry. A locally-imported model (`ollama create`) is pulled even though
+      # it is not in the registry, so a forced `ollama pull` would 404 on it. So:
+      # confirm presence first, and consult the registry only when it is absent.
+      if docker exec ollama37 ollama show "$m" >/dev/null 2>&1; then
+        echo "MODEL_PRESENT: $m already pulled"
+      else
+        echo "MODEL_ABSENT: pulling $m from registry"
+        docker exec ollama37 ollama pull "$m"
+      fi
     timeout: 600000
     expectPatterns:
-      - "success|already exists|pulling"
+      - "MODEL_PRESENT|success|pulling"
     rejectPatterns:
       - "error pulling"
-      - "Error:"
+      - "not found"
       - "requires a newer version"
 
   - name: Verify model available
@@ -32,13 +45,17 @@ steps:
       - "MODEL_PRESENT:"
 
 criteria: |
-  Pull the test model (TEST_MODEL, default gemma3:4b) inside the container.
+  Confirm the test model (TEST_MODEL, default gemma3:4b) is available in the container.
 
   Expected:
-  - Model downloads successfully OR reports already exists
+  - If already pulled (present locally, incl. via `ollama create`) → confirmed, no
+    registry needed
+  - If absent → fetched from the registry successfully
   - Model appears in "ollama list" output
 
-  A "requires a newer version" (registry 412) means the image was built with the
+  A registry "not found" (404) only fails the test when the model is ALSO absent
+  locally — a locally-imported model is not required to be in the registry. A
+  "requires a newer version" (registry 412) means the image was built with the
   wrong OLLAMA_VERSION — a failure, not an acceptable warning.
 
-  Note: First pull may take several minutes depending on network speed.
+  Note: A first-time registry pull may take several minutes depending on network speed.

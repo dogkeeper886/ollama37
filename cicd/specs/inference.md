@@ -3,20 +3,22 @@
 
 ---
 
-## TC-INFERENCE-001: Model Pull
+## TC-INFERENCE-001: Model Available
 
 **Importance:** High
 **Execution Type:** Automated
 
 **Summary:**
-Pull the gemma3:4b model for testing inside the container.
+Confirm the test model (default gemma3:4b) is available in the container — present it
+if already pulled, or fetch from the registry only when absent. Confirms availability,
+not registry membership: a locally-imported model (`ollama create`) counts as pulled.
 
 ### Steps
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Pull test model:<br>`docker exec ollama37 ollama pull gemma3:4b` | Model downloads successfully or reports already exists |
-| 2 | Verify model available:<br>`docker exec ollama37 ollama list` | gemma3:4b listed in output |
+| 1 | Ensure model available:<br>`ollama show $m` present → confirmed; else `ollama pull $m` | Present locally → confirmed (no registry); else fetched from registry |
+| 2 | Verify model available:<br>`docker exec ollama37 ollama list` | model listed in output |
 
 ---
 
