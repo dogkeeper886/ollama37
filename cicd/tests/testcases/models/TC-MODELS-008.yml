@@ -1,5 +1,5 @@
 id: TC-MODELS-008
-name: gemma3:4b Inference
+name: gemma3:12b Inference
 suite: models
 priority: 4
 timeout: 600000
@@ -7,13 +7,13 @@ dependencies: []
 issue: 55
 intent:
   user_story: |
-    Validate gemma3:4b runs on K80 compute 3.7 (single GPU)
+    Validate gemma3:12b runs on K80 compute 3.7 (single GPU)
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma3:4b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
+        -d '{"model":"gemma3:12b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -48,14 +48,14 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma3:4b","keep_alive":0}'
+        -d '{"model":"gemma3:12b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate gemma3:4b (~3GB VRAM, single GPU) runs on K80 (compute 3.7).
-  Small model baseline for gemma3 architecture.
+  Validate gemma3:12b (~8GB VRAM, single GPU) runs on K80 (compute 3.7).
+  Largest single-die gemma3; like-size comparison point to gemma4:12b.
   Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:

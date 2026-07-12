@@ -1,5 +1,5 @@
 id: TC-MODELS-007
-name: gemma4:26b Inference
+name: gemma4:31b Inference
 suite: models
 priority: 4
 timeout: 1200000
@@ -7,13 +7,13 @@ dependencies: []
 issue: 55
 intent:
   user_story: |
-    Validate gemma4:26b runs on K80 compute 3.7 (multi-GPU)
+    Validate gemma4:31b runs on K80 compute 3.7 (multi-GPU)
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma4:26b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
+        -d '{"model":"gemma4:31b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -48,13 +48,13 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma4:26b","keep_alive":0}'
+        -d '{"model":"gemma4:31b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate gemma4:26b (~18GB VRAM, multi-GPU layer splitting) runs on K80 (compute 3.7).
+  Validate gemma4:31b (~20GB VRAM, multi-GPU layer splitting) runs on K80 (compute 3.7).
   Model exceeds single K80 GPU (12GB), requires splitting across 2x K80 GPUs.
   Prerequisite: Model must be pre-pulled before running this test.
 

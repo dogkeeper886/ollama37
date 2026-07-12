@@ -93,17 +93,6 @@ die, so it may span both K80 dies (`GPU_COUNT_OK` when it genuinely needs them).
 
 ---
 
-## TC-MODELS-020: lfm2:24b Inference
-
-**Importance:** High
-**Execution Type:** Automated
-
-**Summary:**
-Validate lfm2:24b (Liquid LFM2 family, likely MoE) runs on K80; may span both K80 dies. If the
-model uses a thinking mode, switch the request to `/api/chat` with `"think": false`.
-
----
-
 ## TC-MODELS-021: lfm2.5-thinking:1.2b Inference
 
 **Importance:** High

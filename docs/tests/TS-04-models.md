@@ -97,9 +97,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-07: gemma4:26b (multi-GPU)
+### TC-07: gemma4:31b (multi-GPU)
 
-- **Objective:** gemma4:26b runs on K80 compute 3.7 (multi-GPU).
+- **Objective:** gemma4:31b runs on K80 compute 3.7 (multi-GPU).
 - **Script:** cicd/tests/testcases/models/TC-MODELS-007.yml
 
 | # | Action | Expected Result |
@@ -109,9 +109,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-08: gemma3:4b (single GPU)
+### TC-08: gemma3:12b (single GPU)
 
-- **Objective:** gemma3:4b runs on K80 compute 3.7 (single GPU).
+- **Objective:** gemma3:12b runs on K80 compute 3.7 (single GPU).
 - **Script:** cicd/tests/testcases/models/TC-MODELS-008.yml
 
 | # | Action | Expected Result |
@@ -157,9 +157,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-12: ministral-3:3b (single GPU)
+### TC-12: ministral-3:14b (single GPU)
 
-- **Objective:** ministral-3:3b runs on K80 compute 3.7 (single GPU).
+- **Objective:** ministral-3:14b runs on K80 compute 3.7 (single GPU).
 - **Script:** cicd/tests/testcases/models/TC-MODELS-013.yml
 
 | # | Action | Expected Result |
