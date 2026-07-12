@@ -26,8 +26,6 @@ jobs:
     name: Build & Push Docker Image
     runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
-    env:
-      OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION || '0.0.0' }}
 
     steps:
       - name: Determine version tag
@@ -38,9 +36,15 @@ jobs:
           else
             TAG="${{ inputs.tag }}"
           fi
+          # Derive the binary version from the tag so the image tag and the baked
+          # version can never drift. (OLLAMA_VERSION used to be read from a variable,
+          # which the cicd-1 environment silently shadowed — see #413.) Tag-less CI
+          # builds still source the version from the repo variable; only the release
+          # path derives it from the tag here.
+          VERSION="${TAG#v}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${OLLAMA_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Building version: ${OLLAMA_VERSION} (tag: ${TAG})"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION} (tag: ${TAG})"
 
       - name: Checkout
         uses: actions/checkout@v4
