@@ -5,7 +5,9 @@ description: |
   after any non-trivial code change, and especially after a failed build/test or wrong
   output. Re-index the changed repo, re-trace the symbols you touched (callers, callees,
   data flow), and — for a port/adaptation — diff against the reference project, then
-  verify against the live file before editing. Use when implementing or porting
+  verify against the live file before editing. Confirm any relationship- or
+  reachability-based claim (who-calls, what-derefs, which-case-runs) with a graph trace,
+  not grep alone. Use when implementing or porting
   non-trivial code, when an attempt fails, or before iterating on a fix. Complements (does
   not replace) the codebase-memory tool reference and codebase-graph-navigation
   IDE-movement skills.
@@ -44,6 +46,26 @@ confirm the reference you're copying is the one that actually applies to your ca
    attempt is the signal to re-verify the *premise*, not just the code: re-trace the path
    AND re-confirm the reference. This catches the worst class of bug — comparing against a
    source that doesn't apply (e.g. a code path that never runs for your model/config).
+
+## grep/read vs. the graph — when each
+
+`grep`/`read` and the graph answer different questions; a real finding often needs both.
+
+- **grep + read** — *locating and reading text.* Fast for finding a literal string or
+  symbol, reading a symbol you've already pinned, checking a comment or constant. It shows
+  **text, not relationships**: it can land on the wrong block (several arches share a tensor
+  name; several `case`s look alike) and it can't tell you whether a line is ever reached.
+- **codebase-memory** (`search_graph` / `trace_path` / `get_code_snippet`) — *confirming
+  relationships and reachability.* Use it for who-calls, what-derefs, which-`case`-actually-
+  runs, does-this-path-execute, and a symbol's exact boundaries.
+
+**Condition — when grep isn't enough, confirm with a trace.** If your claim rests on a
+**relationship or reachability** — a call, a deref, a dispatch, "X is required because Y
+uses it", "this path runs for that model/config" — a grep hit is a *lead, not a
+confirmation*. Verify it with `get_code_snippet`/`trace_path` before you record or act on
+it. A grep that "confirms" a behavioral claim is the classic near-miss: right string, wrong
+block (e.g. a `token_embd_norm` hit that turns out to be a *different* arch's case, while
+the one that actually loads sits elsewhere and the graph builder is what proves it required).
 
 ## Right-size it
 
