@@ -49,3 +49,4 @@ capability. The doc has to reflect that, not collapse each arch into one size la
 
 - Created: 2026-07-12
 - Plan: #435
+- PR: #436
