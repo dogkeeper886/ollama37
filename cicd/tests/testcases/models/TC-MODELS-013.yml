@@ -1,5 +1,5 @@
 id: TC-MODELS-013
-name: "ministral-3:3b Inference"
+name: "ministral-3:14b Inference"
 suite: models
 priority: 2
 timeout: 600000
@@ -7,13 +7,13 @@ dependencies: []
 issue: ""
 intent:
   user_story: |
-    Validate ministral-3:3b runs on K80 compute 3.7 (single GPU)
+    Validate ministral-3:14b runs on K80 compute 3.7 (single GPU)
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"ministral-3:3b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
+        -d '{"model":"ministral-3:14b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -48,13 +48,13 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"ministral-3:3b","keep_alive":0}'
+        -d '{"model":"ministral-3:14b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate ministral-3:3b (~2GB VRAM, single GPU) runs on K80 (compute 3.7).
+  Validate ministral-3:14b (~9GB VRAM, single GPU) runs on K80 (compute 3.7).
   Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:
