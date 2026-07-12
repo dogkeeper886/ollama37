@@ -1,0 +1,64 @@
+id: TC-MODELS-019
+name: "ornith:35b Inference"
+suite: models
+priority: 3
+timeout: 900000
+dependencies: []
+issue: ""
+intent:
+  user_story: |
+    Validate ornith:35b (Qwen3.5-family MoE, thinking) runs on K80 compute 3.7. Larger than a
+    single die, so it may span both K80 dies. Acceptance for STORY-020: red until the ornith
+    renderer/parser port (#422) is in the deployed image. "think": false pinned (see #422).
+  notes: |
+    Prerequisite: ornith:35b pre-pulled on the runner.
+    Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+
+steps:
+  - name: Test inference
+    command: |
+      curl -s http://localhost:11434/api/generate \
+        -d '{"model":"ornith:35b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
+        | head -c 2000
+    expectPatterns:
+      - "response"
+    rejectPatterns:
+      - "CUBLAS_STATUS"
+      - "CUDA error"
+
+  - name: Check GPU memory
+    command: docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
+    expectPatterns:
+      - "[0-9]+ MiB"
+
+  - name: Check GPU count
+    command: |
+      output=$(docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
+      echo "$output"
+      active=$(echo "$output" | grep -c 'MiB')
+      total=$(echo "$output" | grep -oP '[0-9]+(?= MiB)' | paste -sd+ | bc)
+      echo "Active GPUs: $active, Total VRAM: ${total} MiB"
+      if [ "$active" -le 1 ]; then
+        echo "GPU_COUNT_OK"
+      elif [ "$total" -le $(( (active - 1) * 11441 )) ]; then
+        echo "GPU_COUNT_EXCEEDED: total ${total} MiB fits in $((active - 1)) GPUs but using $active"
+      else
+        echo "GPU_COUNT_OK"
+      fi
+    expectPatterns:
+      - "GPU_COUNT_OK"
+    rejectPatterns:
+      - "GPU_COUNT_EXCEEDED"
+
+  - name: Unload model
+    command: |
+      curl -s http://localhost:11434/api/generate \
+        -d '{"model":"ornith:35b","keep_alive":0}'
+      echo "Model unloaded"
+    expectPatterns:
+      - "Model unloaded"
+
+criteria: |
+  Validate ornith:35b (Qwen3.5-family MoE, qwen35moe) runs on K80 (compute 3.7). May span both
+  K80 dies given its size — GPU_COUNT_OK if it genuinely needs the dies it uses. Prerequisite:
+  pre-pulled. Red until the ornith renderer/parser port (#422) is in the deployed image.
