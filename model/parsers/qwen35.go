@@ -131,6 +131,11 @@ func (p *Qwen35Parser) parseEvents() []qwen35Event {
 // trim after-left, keep the remainder in the buffer).
 func (p *Qwen35Parser) splitAtTag(tag string, trimAfter bool) (string, string) {
 	split := strings.SplitN(p.buffer.String(), tag, 2)
+	if len(split) == 1 {
+		// tag absent — mirror upstream's guard instead of indexing split[1].
+		p.buffer.Reset()
+		return split[0], ""
+	}
 	before := strings.TrimRightFunc(split[0], unicode.IsSpace)
 	after := split[1]
 	if trimAfter {
