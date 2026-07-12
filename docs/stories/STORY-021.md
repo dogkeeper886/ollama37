@@ -8,9 +8,10 @@ So that I pick a size that fits without trial-and-error OOMs or wasted dies.
 
 ## The Need
 
-The K80 testbed exposes three usable memory tiers — one GK210 die (~11.4 GiB), one
-K80 board (2 dies, ~22.8 GiB), and the full host (2 boards / 4 dies, ~45.6 GiB) — but
-nothing records which model, at which size, belongs on which tier. Picking is guesswork:
+The K80 testbed exposes three usable memory tiers — one GK210 die (~11.4 GiB), two
+dies (~22.8 GiB), and three dies (~34.2 GiB; the host has four, but nothing in the set
+needs the fourth) — but nothing records which model, at which size, belongs on which
+tier. Picking is guesswork:
 too big and it OOMs or needlessly spreads across dies; too small and the hardware is
 wasted. A recent session traced every model's architecture, engine, and real footprint
 and produced that mapping ad hoc; without a durable home it will be lost and re-derived.
