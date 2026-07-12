@@ -52,6 +52,8 @@ This will:
 docker compose up -d
 ```
 
+**Note:** the shipped `docker-compose.yml` pulls the published image `dogkeeper886/ollama37:latest`. To run an image you just built with `make build` (tagged `ollama37:latest`), edit the `image:` line in `docker-compose.yml`, or use the **Run Manually** step below.
+
 Check logs:
 ```bash
 docker compose logs -f
