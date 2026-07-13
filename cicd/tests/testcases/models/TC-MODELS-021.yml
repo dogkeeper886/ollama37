@@ -4,13 +4,15 @@ suite: models
 priority: 2
 timeout: 600000
 dependencies: []
-issue: ""
+issue: "438"
 intent:
   user_story: |
     Validate lfm2.5-thinking:1.2b (Liquid LFM2, thinking, ~0.7 GB) runs on K80 compute 3.7
-    (single GPU). Acceptance for STORY-019. KNOWN RED: on the current image the GGUF fails to
-    load with "missing tensor 'token_embd_norm.weight'" — this gates that vendored-llama.cpp
-    LFM2 fix. "think": false pinned so the answer isn't buried in a <think> span.
+    (single GPU). The ollama-library GGUF is mis-converted — feed_forward_length metadata
+    (12288) disagrees with its 8192-wide FFN tensors, and its final norm ships as output_norm
+    (no token_embd_norm); patch 0034 loads it by deriving n_ff from the ffn_gate tensor and
+    resolving tok_norm from output_norm. "think": false pinned so the answer isn't buried in a
+    <think> span.
   notes: |
     Prerequisite: lfm2.5-thinking:1.2b pre-pulled on the runner.
     Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
@@ -27,6 +29,7 @@ steps:
       - "CUBLAS_STATUS"
       - "CUDA error"
       - "missing tensor"
+      - "wrong shape"
 
   - name: Check GPU memory
     command: docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
@@ -62,5 +65,6 @@ steps:
 
 criteria: |
   Validate lfm2.5-thinking:1.2b (Liquid LFM2 thinking, ~0.7 GB) runs on K80 (compute 3.7),
-  single die. Prerequisite: pre-pulled. KNOWN RED until the vendored-llama.cpp LFM2 loader
-  handles token_embd_norm.weight for this variant (observed load failure).
+  single die. Prerequisite: pre-pulled. Loads via patch 0034 (#438) — feed_forward_length
+  corrected from the ffn_gate tensor width, final norm resolved from output_norm; no
+  "wrong shape" or "missing tensor" load failure.

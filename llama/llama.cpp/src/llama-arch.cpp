@@ -2189,6 +2189,11 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
             { LLM_TENSOR_SHORTCONV_OUTPROJ, "blk.%d.shortconv.out_proj" },
             { LLM_TENSOR_TOKEN_EMBD,        "token_embd" },
             { LLM_TENSOR_TOKEN_EMBD_NORM,   "token_embd_norm" },
+            // The ollama-library lfm2.5 GGUF names the final embedding norm "output_norm"
+            // (llama.cpp's LFM2 graph uses it as model.tok_norm). Register it so the loader
+            // can resolve tok_norm from output_norm. LFM2 dense only — intentionally absent
+            // from the LFM2MOE map below.
+            { LLM_TENSOR_OUTPUT_NORM,       "output_norm" },
             { LLM_TENSOR_OUTPUT,            "output" },
         }
     },
