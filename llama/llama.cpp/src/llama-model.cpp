@@ -2069,6 +2069,26 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     hparams.recurrent_layer_arr[il] = hparams.n_head_kv(il) == 0;
                 }
                 hparams.n_layer_dense_lead = hparams.n_layer;
+
+                // The ollama-library lfm2.5-thinking:1.2b GGUF ships a wrong
+                // lfm2.feed_forward_length (12288) that disagrees with its actual dense FFN
+                // tensors (blk.0.ffn_gate.weight = [n_embd, 8192]). Trust the tensor: derive
+                // the real n_ff from tensor metadata and overwrite n_ff_arr so BOTH the type
+                // switch below and the load_tensors expected dim (hparams.n_ff()) match the
+                // weights. No-op when metadata already agrees (correct hf.co lfm2.5 and lfm2
+                // 2.0 GGUFs), so it cannot disturb them. Mirrors upstream ollama's handle_lfm2.
+                if (const ggml_tensor * t_gate = ml.get_tensor_meta("blk.0.ffn_gate.weight")) {
+                    const int64_t real_n_ff = t_gate->ne[1];
+                    if (real_n_ff > 0 && (uint32_t) real_n_ff != hparams.n_ff()) {
+                        LLAMA_LOG_WARN("%s: lfm2 feed_forward_length metadata (%u) disagrees with "
+                                       "blk.0.ffn_gate.weight width (%lld); using tensor width\n",
+                                       __func__, hparams.n_ff(), (long long) real_n_ff);
+                        for (uint32_t il = 0; il < hparams.n_layer; ++il) {
+                            hparams.n_ff_arr[il] = (uint32_t) real_n_ff;
+                        }
+                    }
+                }
+
                 switch (hparams.n_ff()) {
                     case  4608: type = LLM_TYPE_350M; break;
                     case  6912: type = LLM_TYPE_700M; break;
@@ -6033,6 +6053,14 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     // config ships no token_embd_norm — so make it optional and skip the norm in
                     // llm_build_lfm2 when absent. (lfm2 2.0 ships it; the guard keeps those intact.)
                     tok_norm = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "weight"), {n_embd}, TENSOR_NOT_REQUIRED);
+                    // The ollama-library lfm2.5 GGUF ships the final embedding norm as
+                    // output_norm.weight (no token_embd_norm). In llm_build_lfm2 this is the SAME
+                    // weight (model.tok_norm, applied right before model.output), so fall back to
+                    // output_norm rather than dropping a real norm. Dense-LFM2 only; output_norm is
+                    // unregistered for LFM2MOE, so this is a no-op there even without the guard.
+                    if (tok_norm == NULL && arch == LLM_ARCH_LFM2) {
+                        tok_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, TENSOR_NOT_REQUIRED);
+                    }
                     output   = create_tensor(tn(LLM_TENSOR_OUTPUT,          "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
 
                     if (output == NULL) {
