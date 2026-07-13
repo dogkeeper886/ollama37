@@ -1,0 +1,59 @@
+From 2c3caf2972e3577986200256ef566fe715e92dbf Mon Sep 17 00:00:00 2001
+From: Shang Chieh Tseng <shangchieh.tseng@tsengsyu.com>
+Date: Sun, 12 Jul 2026 22:48:14 +0800
+Subject: [PATCH] fix(lfm2): make token_embd_norm optional for LFM2 (lfm2.5 has
+ no embedding norm)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+LFM2.5 models (e.g. LFM2.5-1.2B-Thinking) ship no token_embd_norm — confirmed in
+LiquidAI's config.json (no embedding norm). The vendored LFM2/LFM2MOE loader
+required it (create_tensor flags=0) → "missing tensor" on lfm2.5. Make it
+TENSOR_NOT_REQUIRED and skip the norm in llm_build_lfm2 when model.tok_norm is
+NULL (build_norm still applies ggml_rms_norm with a NULL weight, so the call must
+be skipped). lfm2 2.0 ships the tensor and is unaffected (the guard passes).
+
+Arch/loading only — no CUDA/toolchain change (K80 unaffected). A correctly-converted
+lfm2.5 GGUF (feed_forward_length = 2/3 * intermediate_size = 8192) is also required;
+the ollama-library GGUF is mis-converted (12288) and needs re-conversion.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ llama/llama.cpp/src/llama-model.cpp | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index dd154253..513b10ff 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -6029,7 +6029,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+             case LLM_ARCH_LFM2MOE:
+                 {
+                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD,      "weight"), {n_embd, n_vocab}, 0);
+-                    tok_norm = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "weight"), {n_embd}, 0);
++                    // lfm2.5 models (e.g. LFM2.5-1.2B-Thinking) have no embedding norm — their
++                    // config ships no token_embd_norm — so make it optional and skip the norm in
++                    // llm_build_lfm2 when absent. (lfm2 2.0 ships it; the guard keeps those intact.)
++                    tok_norm = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "weight"), {n_embd}, TENSOR_NOT_REQUIRED);
+                     output   = create_tensor(tn(LLM_TENSOR_OUTPUT,          "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+ 
+                     if (output == NULL) {
+@@ -19749,8 +19752,12 @@ struct llm_build_lfm2 : public llm_graph_context {
+             cur = ggml_add(ctx0, cur, ffn_out);
+         }
+ 
+-        cur = build_norm(cur, model.tok_norm, NULL, LLM_NORM_RMS, -1);
+-        cb(cur, "model.embedding_norm", -1);
++        // lfm2.5 has no token_embd_norm; skip the norm entirely when it is absent —
++        // build_norm still applies ggml_rms_norm even with a NULL weight.
++        if (model.tok_norm) {
++            cur = build_norm(cur, model.tok_norm, NULL, LLM_NORM_RMS, -1);
++            cb(cur, "model.embedding_norm", -1);
++        }
+         res->t_embd = cur;
+ 
+         cur = build_lora_mm(model.output, cur);
+-- 
+2.52.0
+
