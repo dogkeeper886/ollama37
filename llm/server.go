@@ -227,7 +227,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	//   ≤96k → 512 · ≤192k → 256 · >192k → 128  (~15% prefill per step; decode ~flat).
 	// This can't live in modelFamilyBatchDefaults: DefaultOptions() pre-fills
 	// NumBatch=512, so getModelBatchParams' "NumBatch == 0" family path never runs.
-	// Only ever reduces — a smaller explicit user num_batch is kept.
+	// Only ever lowers the batch: a smaller explicit num_batch is kept as-is; a
+	// larger one (incl. the 512 default) is capped to what fits at this context.
 	if architecture == "qwen35moe" {
 		maxBatch := 512
 		if opts.NumCtx > 98304 { // >96k: 512 spills
