@@ -44,17 +44,24 @@ export async function captureResponse(
   model: string,
   prompt: string,
   numPredict = 128,
-  numCtx = 2048
+  numCtx = 2048,
+  numBatch?: number
 ): Promise<CaptureResult> {
+  // num_batch must be set on the warmup too — Ollama reserves the compute graph
+  // (the Q·Kᵀ score buffer) at load time, so the batch that decides VRAM is the
+  // one on the request that first loads the model. Omit entirely when unset so
+  // default behavior is unchanged.
+  const batchOpt = numBatch ? { num_batch: numBatch } : {};
+
   // Warmup: load the model + prime caches (ignore failures).
-  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, num_ctx: numCtx } }).catch(() => {});
+  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, num_ctx: numCtx, ...batchOpt } }).catch(() => {});
 
   // Benchmark call (deterministic).
   const raw = await generate(host, {
     model,
     prompt,
     stream: false,
-    options: { temperature: 0, seed: 42, num_predict: numPredict, num_ctx: numCtx },
+    options: { temperature: 0, seed: 42, num_predict: numPredict, num_ctx: numCtx, ...batchOpt },
   });
 
   // fetch does not throw on HTTP 4xx; ollama returns {error: "..."} for an
