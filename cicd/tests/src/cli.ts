@@ -235,6 +235,7 @@ program
   .argument('<models...>', 'One or more model names to benchmark')
   .option('-n, --num-predict <n>', 'Max tokens to generate', '128')
   .option('-c, --context <n>', 'Context window size', '2048')
+  .option('-b, --num-batch <n>', 'Micro-batch size (num_batch); empty = model default (512)')
   .option('--judge', 'Also run the agent judge on each response (dual mode)', false)
   .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
   .option('-o, --output <file>', 'Write the JSON report to this file')
@@ -243,6 +244,7 @@ program
       models,
       numPredict: Number(options.numPredict),
       numCtx: Number(options.context),
+      numBatch: options.numBatch ? Number(options.numBatch) : undefined,
       judge: options.judge,
       host: options.host,
       output: options.output,
@@ -297,6 +299,7 @@ program
   .argument('<models...>', 'One or more model names to test')
   .option('--prompt <text>', 'Prompt that should trigger a tool call', CONFIG.mcp.prompt)
   .option('-c, --num-ctx <n>', 'Context window size (8192 fits a merged multi-server tool menu; one server fits in 4096)', '8192')
+  .option('-b, --num-batch <n>', 'Micro-batch size (num_batch); empty = model default (512)')
   .option('--judge', 'Also run the agent judge on the final answer (dual mode)', false)
   .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
   .option('--mcp-command <cmd>', 'Command to launch the stdio MCP server', CONFIG.mcp.command)
@@ -314,6 +317,7 @@ program
       models,
       prompt: options.prompt,
       numCtx: Number(options.numCtx),
+      numBatch: options.numBatch ? Number(options.numBatch) : undefined,
       timeoutMs: Number(options.timeout) * 1000,
       judge: options.judge,
       verifyLive: options.verifyLive,

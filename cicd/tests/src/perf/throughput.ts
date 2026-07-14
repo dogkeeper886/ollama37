@@ -30,6 +30,8 @@ export interface ThroughputOptions {
   models: string[];
   numPredict: number;
   numCtx: number;
+  /** Micro-batch size (num_batch). Undefined = model/server default (512). */
+  numBatch?: number;
   judge: boolean;
   host: string;
   output?: string;
@@ -94,7 +96,7 @@ function toTestResult(model: string, response: string, thinking: string): TestRe
 }
 
 export async function runThroughput(opts: ThroughputOptions): Promise<number> {
-  const { host, models, numPredict, numCtx, judge } = opts;
+  const { host, models, numPredict, numCtx, numBatch, judge } = opts;
   const sha = await gitSha();
   const gpuBefore = await gpuInfo();
 
@@ -109,7 +111,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
 
     let cap;
     try {
-      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx);
+      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch);
     } catch (e) {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
       results.push({
@@ -176,7 +178,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     const report = {
       git_sha: sha,
       timestamp: new Date().toISOString(),
-      config: { num_predict: numPredict, num_ctx: numCtx },
+      config: { num_predict: numPredict, num_ctx: numCtx, num_batch: numBatch ?? null },
       gpu: { before: gpuBefore, after: gpuAfter },
       results,
     };

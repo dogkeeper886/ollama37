@@ -29,6 +29,7 @@ export interface McpTestOptions {
   servers: McpServerConfig[];
   host: string;
   numCtx: number;
+  numBatch?: number;
   judge: boolean;
   /** Opt in the live verifier: the judge calls the server's read-only tools itself
    *  to check the answer against live ground truth (supersedes --judge). */
@@ -120,7 +121,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
 
   for (const model of opts.models) {
     process.stderr.write(`--- ${model} ---\n`);
-    const traj = await runMcpHost({ host: opts.host, model, prompt: opts.prompt, servers: opts.servers, numCtx: opts.numCtx, timeoutMs: opts.timeoutMs });
+    const traj = await runMcpHost({ host: opts.host, model, prompt: opts.prompt, servers: opts.servers, numCtx: opts.numCtx, numBatch: opts.numBatch, timeoutMs: opts.timeoutMs });
     trajByModel.set(model, traj);
     const simple = simpleMcpCheck(traj);
     results.push({

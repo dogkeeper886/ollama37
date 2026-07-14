@@ -217,6 +217,31 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	// Cap at context length (can't batch more tokens than context window)
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
+	// qwen35moe on the K80: with flash attention hard-off (sm_37 < Volta), each
+	// full-attention layer materializes a Q·Kᵀ score buffer sized
+	// n_ctx × n_batch × n_head, reserved at load — it grows with both context and
+	// batch and overflows VRAM at long context (128k spills to CPU, 256k OOMs at
+	// the default nBatch=512). Cap num_batch to the largest that stays 100% on GPU
+	// at this context, measured on the 4× K80 reference rig
+	// (#440, docs/reports/qwen35moe-num-batch-context-fit-2026-07-14.md):
+	//   ≤96k → 512 · ≤192k → 256 · >192k → 128  (~15% prefill per step; decode ~flat).
+	// This can't live in modelFamilyBatchDefaults: DefaultOptions() pre-fills
+	// NumBatch=512, so getModelBatchParams' "NumBatch == 0" family path never runs.
+	// Only ever lowers the batch: a smaller explicit num_batch is kept as-is; a
+	// larger one (incl. the 512 default) is capped to what fits at this context.
+	if architecture == "qwen35moe" {
+		maxBatch := 512
+		if opts.NumCtx > 98304 { // >96k: 512 spills
+			maxBatch = 256
+		}
+		if opts.NumCtx > 196608 { // >192k: 256 spills, 128 still fits (256k)
+			maxBatch = 128
+		}
+		if opts.NumBatch > maxBatch {
+			opts.NumBatch = maxBatch
+		}
+	}
+
 	slog.Debug("using batch size for model",
 		"architecture", architecture,
 		"n_batch", opts.NumBatch,

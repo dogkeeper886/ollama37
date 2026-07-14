@@ -40,6 +40,8 @@ export interface McpHostOptions {
    *  must reach for the right one); a tool call routes back to its owning server. */
   servers: McpServerConfig[];
   numCtx?: number;
+  /** Micro-batch size (num_batch). Undefined = model/server default (512). */
+  numBatch?: number;
   /** Max chat↔tool rounds before giving up (guards against a tool loop). */
   maxIters?: number;
   /** Per-call Ollama response timeout (ms). Default 600000 (10 min) — heavy models on slow
@@ -99,8 +101,9 @@ export function mcpToOllamaTools(tools: Array<{ name: string; description?: stri
  *  fetch() (undici) imposes its own ~300s headers/body timeout that AbortSignal
  *  can't lift — it silently kills slow K80 generations at 5 min. node:http has no
  *  such cap, so timeoutMs (via AbortSignal) is the only deadline. */
-async function chat(host: string, model: string, messages: unknown[], tools: unknown[], numCtx: number, timeoutMs: number): Promise<any> {
-  const body = JSON.stringify({ model, messages, tools, stream: false, options: { temperature: 0, seed: 42, num_ctx: numCtx } });
+async function chat(host: string, model: string, messages: unknown[], tools: unknown[], numCtx: number, numBatch: number | undefined, timeoutMs: number): Promise<any> {
+  const batchOpt = numBatch ? { num_batch: numBatch } : {};
+  const body = JSON.stringify({ model, messages, tools, stream: false, options: { temperature: 0, seed: 42, num_ctx: numCtx, ...batchOpt } });
   const url = new URL(`${host}/api/chat`);
   const transport = url.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
@@ -236,7 +239,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     const tools = mcpToOllamaTools(merged);
 
     for (let i = 0; i < maxIters; i++) {
-      const raw = await chat(opts.host, opts.model, messages, tools, numCtx, timeoutMs);
+      const raw = await chat(opts.host, opts.model, messages, tools, numCtx, opts.numBatch, timeoutMs);
 
       if (!raw || typeof raw !== 'object') {
         throw new Error('ollama /api/chat: no/invalid response');
