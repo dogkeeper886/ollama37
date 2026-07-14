@@ -217,6 +217,18 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	// Cap at context length (can't batch more tokens than context window)
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
+	// qwen35moe on the K80: with flash attention hard-off (sm_37 < Volta), the
+	// full-attention layers materialize a Q·Kᵀ score buffer sized
+	// n_kv × n_batch × n_head. At the default nBatch=512 this grows to ~16 GB at
+	// 128k context and forces layers onto the CPU (~4× decode loss; #440). Cap the
+	// batch for this arch so long context stays fully on GPU. This can't live in
+	// modelFamilyBatchDefaults: DefaultOptions() pre-fills NumBatch=512, so
+	// getModelBatchParams' "NumBatch == 0" family path never runs. A smaller
+	// explicit num_batch from the user is still honored (only 512 is broken here).
+	if architecture == "qwen35moe" && opts.NumBatch > 256 {
+		opts.NumBatch = 256
+	}
+
 	slog.Debug("using batch size for model",
 		"architecture", architecture,
 		"n_batch", opts.NumBatch,
