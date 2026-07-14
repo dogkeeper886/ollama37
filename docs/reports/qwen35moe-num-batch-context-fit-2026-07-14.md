@@ -23,26 +23,24 @@ CPU-spill / OOM). Establishes, per context length, the largest `num_batch` that 
   `n_ctx × n_batch × n_head × 4B`, reserved at load (worst-case `num_batch`) — it grows with both
   context and batch and drives the spill/OOM.
 
-## Fit map   (✅ all-GPU · ⚠️ CPU spill · ❌ OOM)
+## Fit map — complete 15-cell grid   (eval_tps · total_s · fit · VRAM · dies)
 
-| ctx | nb | eval_tps | total_s | fit | per-die VRAM (MiB) | GPU total | dies |
-|--|--|--|--|--|--|--|--|
-| 8k   | 512 | 6.2  | 340 s  | ✅ | 8968 / 8550 / 8406        | 25.4 G | 3 |
-| 8k   | 256 | 6.51 | 391 s  | ✅ | 8812 / 8394 / 8250        | 24.9 G | 3 |
-| 96k  | 512 | 6.7  | 340 s  | ✅ | 10383 / 10379 / 10199 / 9780 | 39.8 G | 4 |
-| 96k  | 256 | 7.02 | 391 s  | ✅ | 10970 / 10584 / 10552     | 31.4 G | 3 |
-| 128k | 512 | **1.94** | 490 s | ⚠️ | 11154 / 10955 / 10578 / 10381 | 42.1 G | 4 |
-| 128k | 256 | 6.86 | 391 s  | ✅ | 9529 / 9527 / 9279 / 8862 | 36.3 G | 4 |
-| 192k | 256 | 6.85 | 392 s  | ✅ | 11129 / 11127 / 10751 / 10334 | 42.3 G | 4 |
-| 256k | 256 | **1.27** | 1184 s | ⚠️ | 11078 / 10555 / 10555 / 10555 | 41.7 G | 4 |
-| 256k | 128 | 5.53 | 437 s  | ✅ | 10548 / 10547 / 10038 / 9625 | 39.8 G | 4 |
+✅ all-GPU · ⚠️ CPU spill · ❌ OOM. VRAM = peak per-die (MiB), sum in GB, active die count.
 
-All verdicts PASS (grounded tool call). **Model-load info** (`ollama_model_vram_bytes`):
-`model=qwen3.6:35b · parameter_size=36.0B · quantization=Q4_K_M`, with a `context_length` label
-that matched each cell's num_ctx (validation ✓); model VRAM ≈ 25 GB at 8k.
+| ctx | nb=512 | nb=256 | nb=128 |
+|--|--|--|--|
+| 8k   | 6.2 · 340 · ✅ · 25.4G/**3d** | 6.51 · 391 · ✅ · 24.9G/**3d** | 5.64 · 431 · ✅ · 24.7G/**3d** |
+| 64k  | *(4d — throughput)* | – | – |
+| 96k  | 6.7 · 340 · ✅ · 39.8G/**4d** | 7.02 · 391 · ✅ · 31.4G/**3d** | 5.62 · 432 · ✅ · 29.0G/**3d** |
+| 128k | **1.94 · 490 · ⚠️** · 42.1G/4d | 6.86 · 391 · ✅ · 36.3G/**4d** | 5.66 · 433 · ✅ · 30.6G/**3d** |
+| 192k | **0.8 · 1381 · ⚠️** · 41.2G/4d | 6.85 · 392 · ✅ · 42.3G/4d | 5.52 · 439 · ✅ · 35.9G/**4d** |
+| 256k | ❌ **OOM** (run failed) | **1.27 · 1184 · ⚠️** · 41.7G/4d | 5.53 · 437 · ✅ · 39.8G/**4d** |
 
-Pending cells (full grid = 5 ctx × 3 batch): `8k·128`, `96k·128`, `128k·128`, `192k·512`,
-`192k·128`, `256k·512` (256k·512 expected OOM).
+All completed runs PASS (grounded tool call); 256k·512 failed to load (OOM). **Model-load info**
+(`ollama_model_vram_bytes`): `qwen3.6:35b · 36.0B · Q4_K_M`, `context_length` label matched every
+cell (validation ✓).
+
+Die-transition cells (**32k, 64k** × 512/256/128) pending — to pin where nb=512 steps 3→4 dies.
 
 ## Findings
 
@@ -55,6 +53,13 @@ Pending cells (full grid = 5 ctx × 3 batch): `8k·128`, `96k·128`, `128k·128`
    dies vs 96k·512 = 39.8 G/4 dies; 128k·256 = 36.3 G vs 128k·512 = 42.1 G-with-spill). A ⚠️ cell is
    pinned near the per-die ceiling (~11.4 GB/die) with the remainder on CPU; the smaller batch pulls
    it back under the ceiling.
+5. **nb=128 is universal** — healthy at *every* context (5.52–5.66 tok/s from 8k to 256k). It's the
+   one batch that fits the whole range, at a ~15% throughput trim vs the largest batch that fits.
+6. **Die count is a function of batch, not just context** — a smaller batch keeps the model on fewer
+   dies: `nb=128` stays on **3 dies up to 128k** (30.6 G) and steps to 4 only at 192k; `nb=512`
+   already needs 4 dies by 64k. No **1-/2-die** region exists for this model — the ~23 GB of resident
+   weights need ≥3 dies (2 dies = 22.8 GB < 23 GB). So it's a **3-die ↔ 4-die** map, and the boundary
+   moves right as the batch shrinks.
 
 ## Solution (proposed) — context-tiered batch (option C)
 
