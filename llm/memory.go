@@ -50,6 +50,14 @@ var modelFamilyBatchDefaults = map[string]modelFamilyBatchParams{
 	"qwen2":    {nBatch: 512, nUbatch: 512},
 	"qwen25vl": {nBatch: 512, nUbatch: 512}, // Qwen vision-language
 
+	// Qwen3.5/3.6-Next MoE (qwen35moe): hybrid MoE + DeltaNet. On the K80 (no
+	// flash attention) the full-attention layers materialize a Q·Kᵀ score buffer
+	// sized n_kv × n_batch × n_head, which at long context (128k) grows to ~16 GB
+	// at nBatch=512 and forces layers onto the CPU (4× decode loss). 256 is the
+	// largest batch that still fits 128k fully on GPU (measured, #440). Only this
+	// arch is affected; the dense qwen35 (27b/9b) keeps 512. See #440.
+	"qwen35moe": {nBatch: 256, nUbatch: 256},
+
 	// Mistral family (sliding window attention)
 	"mistral3": {nBatch: 512, nUbatch: 512},
 
