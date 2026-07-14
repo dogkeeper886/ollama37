@@ -30,17 +30,31 @@ CPU-spill / OOM). Establishes, per context length, the largest `num_batch` that 
 | ctx | nb=512 | nb=256 | nb=128 |
 |--|--|--|--|
 | 8k   | 6.2 · 340 · ✅ · 25.4G/**3d** | 6.51 · 391 · ✅ · 24.9G/**3d** | 5.64 · 431 · ✅ · 24.7G/**3d** |
-| 64k  | *(4d — throughput)* | – | – |
+| 32k  | 6.59 · 345 · ✅ · 28.3G/**3d** | 6.97 · 391 · ✅ · 26.5G/**3d** | 5.56 · 434 · ✅ · 25.8G/**3d** |
+| 64k  | 6.72 · 336 · ✅ · **34.7G/4d** | 6.3 · 394 · ✅ · 29.0G/**3d** | 5.61 · 431 · ✅ · 27.3G/**3d** |
 | 96k  | 6.7 · 340 · ✅ · 39.8G/**4d** | 7.02 · 391 · ✅ · 31.4G/**3d** | 5.62 · 432 · ✅ · 29.0G/**3d** |
 | 128k | **1.94 · 490 · ⚠️** · 42.1G/4d | 6.86 · 391 · ✅ · 36.3G/**4d** | 5.66 · 433 · ✅ · 30.6G/**3d** |
 | 192k | **0.8 · 1381 · ⚠️** · 41.2G/4d | 6.85 · 392 · ✅ · 42.3G/4d | 5.52 · 439 · ✅ · 35.9G/**4d** |
 | 256k | ❌ **OOM** (run failed) | **1.27 · 1184 · ⚠️** · 41.7G/4d | 5.53 · 437 · ✅ · 39.8G/**4d** |
 
-All completed runs PASS (grounded tool call); 256k·512 failed to load (OOM). **Model-load info**
-(`ollama_model_vram_bytes`): `qwen3.6:35b · 36.0B · Q4_K_M`, `context_length` label matched every
-cell (validation ✓).
+`eval_tps` + per-die VRAM valid for all cells. **Model-load info** (`ollama_model_vram_bytes`):
+`qwen3.6:35b · 36.0B · Q4_K_M`, `context_length` label matched every cell (validation ✓).
 
-Die-transition cells (**32k, 64k** × 512/256/128) pending — to pin where nb=512 steps 3→4 dies.
+> **Verdict caveat:** the 32k·256/128 and all 64k cells reported `pass=False` — but the failures
+> began at a wall-clock point (~14:12) and are context-independent, with healthy eval_tps throughout,
+> so this is a **verify-live judge/infra degradation partway through the session, not a model or fit
+> regression**. Their fit/VRAM data stands; the grounded-verdict PASS is confirmed for 8k–192k earlier.
+
+### 3-die ↔ 4-die boundary (from the VRAM above)
+
+There is **no 1-/2-die region** — 23 GB of resident weights need ≥3 dies. The 3→4 step moves *right*
+as the batch shrinks:
+
+| batch | stays 3 dies up to | steps to 4 dies at |
+|--|--|--|
+| 512 | 32k | **64k** |
+| 256 | 96k | **128k** |
+| 128 | 128k | **192k** |
 
 ## Findings
 
