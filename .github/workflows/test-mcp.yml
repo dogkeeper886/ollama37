@@ -70,6 +70,11 @@ on:
         options:
           - "sm37"
           - "sm75"
+      num_batch:
+        description: "num_batch (micro-batch) per request. Empty = model default (512). Lower shrinks the Q·Kᵀ compute-graph reservation at long context."
+        required: false
+        default: ""
+        type: string
 
 env:
   OLLAMA_HOST: http://localhost:11434
@@ -90,10 +95,16 @@ jobs:
       - name: Validate inputs
         env:
           MODELS: ${{ inputs.models }}
+          NUM_BATCH: ${{ inputs.num_batch }}
         run: |
           # Only allow model name characters: alphanumeric, colon, dot, dash, underscore, slash, space
           if ! echo "$MODELS" | grep -qE '^[a-zA-Z0-9:._/ -]+$'; then
             echo "ERROR: Invalid characters in model names: $MODELS" >&2
+            exit 1
+          fi
+          # num_batch, if given, must be a bare positive integer (it is spliced into a shell command).
+          if [ -n "$NUM_BATCH" ] && ! echo "$NUM_BATCH" | grep -qE '^[1-9][0-9]*$'; then
+            echo "ERROR: num_batch must be a positive integer, got: $NUM_BATCH" >&2
             exit 1
           fi
 
@@ -108,6 +119,7 @@ jobs:
       - name: Run MCP tool-call test
         env:
           MODELS: ${{ inputs.models }}
+          NUM_BATCH: ${{ inputs.num_batch }}
           # Keyless auth for the agent judge (dual) and the live verifier (verify-live).
           # On this self-hosted runner the verifier symlinks the ambient ~/.claude token, so the
           # secret is only needed where ~/.claude is absent.
@@ -127,6 +139,11 @@ jobs:
             verify-live) JUDGE_FLAG="--verify-live --verify-allow ${{ inputs.verify_allow || 'list_projects' }} --verify-server-name ${{ inputs.verify_server_name || 'testlink' }}" ;;
           esac
           echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
+          BATCH_FLAG=""
+          if [ -n "$NUM_BATCH" ]; then
+            BATCH_FLAG="--num-batch $NUM_BATCH"
+          fi
+          echo "num_batch: ${NUM_BATCH:-default(512)}"
 
           # The subcommand prints a markdown summary to stdout (→ step summary)
           # and writes the JSON report to --output. Exit code gates the job.
@@ -141,7 +158,7 @@ jobs:
             --distractor-command "${{ inputs.distractor_command }}" \
             --distractor-args "${{ inputs.distractor_args }}" \
             --output /tmp/mcp-results.json \
-            $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"
+            $BATCH_FLAG $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Unload models
         if: always()
