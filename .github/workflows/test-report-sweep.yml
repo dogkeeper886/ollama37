@@ -104,6 +104,13 @@ jobs:
       - name: Install test runner dependencies
         run: cd cicd/tests && npm ci
 
+      - name: Reset sweep output dir
+        # The self-hosted runner's /tmp/sweep-out persists across runs; without this,
+        # aggregate-sweep.py globs stale tp_*/mcp_*/fitmap_* JSONs from earlier sweeps
+        # into this run's SUMMARY.md (e.g. a suite=none fit-map run showing old
+        # throughput/MCP tables). Start every sweep from an empty dir.
+        run: rm -rf /tmp/sweep-out && mkdir -p /tmp/sweep-out
+
       - name: Throughput sweep
         if: ${{ inputs.suite == 'both' || inputs.suite == 'throughput' }}
         env:

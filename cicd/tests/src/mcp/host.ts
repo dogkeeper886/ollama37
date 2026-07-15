@@ -83,6 +83,11 @@ export interface McpTrajectory {
   outTokens: number;
   totalDurationS: number;
   evalTps: number;
+  /** A round's processed prompt + generated tokens reached num_ctx, so the KV cache hit
+   *  capacity and decode ran under eviction — evalTps is not a clean decode figure (#449).
+   *  Ollama never reports this (it only logs "truncating input prompt" server-side), so
+   *  it's inferred from the per-round counts. */
+  saturated?: boolean;
   error?: string;
   /** Per-die VRAM + offload %, snapshotted once the model is resident (STORY-022).
    *  Captured inside the host, before any judge — so it survives a failed verdict. */
@@ -217,6 +222,9 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     outTokens: 0,
     totalDurationS: 0,
     evalTps: 0,
+    // Explicit false (not undefined): a non-saturated run must serialize `saturated: false`,
+    // else JSON.stringify drops the key and the aggregator falls back to a weaker heuristic (#449).
+    saturated: false,
   };
 
   const messages: any[] = [{ role: 'user', content: opts.prompt }];
@@ -263,6 +271,11 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
       evalDurNs += raw.eval_duration ?? 0;
       traj.totalDurationS = round2(totalDurNs / 1e9);
       traj.evalTps = tps(traj.outTokens, evalDurNs);
+
+      // Window saturation: this round's processed prompt + generated tokens reached
+      // num_ctx → the KV cache filled and decode ran under eviction, so evalTps is not a
+      // clean figure. Catches input truncation (eval=0) AND silent gen-time fill (#449).
+      if ((raw.prompt_eval_count ?? 0) + (raw.eval_count ?? 0) >= numCtx) traj.saturated = true;
 
       // Snapshot per-die VRAM + offload once, now that the first round has loaded
       // the model. Fit is reservation-driven (stable while resident), so one
