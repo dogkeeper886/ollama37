@@ -12,8 +12,9 @@ on:
       suite:
         description: "What to sweep"
         type: choice
-        options: ["both", "throughput", "mcp"]
+        options: ["both", "throughput", "mcp", "none"]
         default: "both"
+        # "none" skips both default sweeps — use it with fit_map_models to run ONLY the fit-map.
       throughput_models:
         description: "Throughput models (space-separated)"
         type: string

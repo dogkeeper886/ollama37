@@ -49,8 +49,9 @@ model-regression tool.
 `test-report-sweep.yml` is a MEASUREMENT sweep, not a gate — kept out of the pipeline because MCP
 T2 legitimately fails for weaker models. It loops every model x context serially, and (opt-in via
 `fit_map_models`) adds a **fit-map** pass: per model it bounds the context ladder to the trained
-window and picks the judge from tool support (`cli.ts model-bounds`, via `/api/show`), then loops
-`num_batch` x bounded-context — one `test-mcp` cell each. `aggregate-sweep.py` derives each cell's
+window and gates on tool support — skipping no-tools models (`cli.ts model-bounds`, via
+`/api/show`) — then loops `num_batch` x bounded-context, one `test-mcp` cell each with the
+structural judge. `aggregate-sweep.py` derives each cell's
 fit (✅ on GPU / ⚠️ CPU spill / ❌ OOM) from the MCP GPU snapshot (per-die VRAM + offload%, captured
 independent of the correctness verdict), emitting the fit-map table for a human to commit. The
 default sweep (no `fit_map_models`) is unchanged.
