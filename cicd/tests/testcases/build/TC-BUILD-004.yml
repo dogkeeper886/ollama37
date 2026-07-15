@@ -3,7 +3,8 @@ name: Retag local build as the compose image
 suite: build
 priority: 4
 timeout: 60000
-dependencies: []
+dependencies:
+  - TC-BUILD-002
 intent:
   user_story: |
     Make the freshly-built ollama37:latest the image docker-compose reads on this runner, so
@@ -12,8 +13,10 @@ intent:
   notes: |
     docker-compose.yml reads `dogkeeper886/ollama37:latest` and sets no `pull_policy: always`,
     so `docker compose up` uses a LOCAL image with that tag when one is present. Retagging the
-    fresh `ollama37:latest` (TC-BUILD-002's output, built earlier in this build suite) to that
-    tag makes every subsequent `docker compose up` pick up this build.
+    fresh `ollama37:latest` (TC-BUILD-002's output — declared as a dependency so it is ordered
+    after the build) to that tag makes every subsequent `docker compose up` pick up this build.
+    If TC-BUILD-002 fails, the build job fails and the pipeline's `needs: build` stops the runtime
+    job before this tag is exercised — so a stale retag is never tested downstream in a pipeline run.
 
     Local-only: the runner's `dogkeeper886/ollama37:latest` now names the last local build;
     `docker pull dogkeeper886/ollama37:latest` restores the released image (e.g. to run a
