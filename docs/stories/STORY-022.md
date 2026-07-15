@@ -47,4 +47,6 @@ map is needed to size other models and to explain why certain models (e.g. `qwen
 
 - Created: 2026-07-15
 - Plan: #444
-- Issues: #445, #446, #447
+- Issues: #445, #446, #447 (implemented + merged in PR #448)
+- Follow-up: #449 — confirm the recorder on a real K80 sweep (the "reproduces the hand
+  map / reveals the 27b/30b extra die" criteria are proven in logic, pending on hardware)
