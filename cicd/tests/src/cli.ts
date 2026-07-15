@@ -20,6 +20,7 @@ import { CONFIG, pickEnv } from './config.js';
 import { runThroughput } from './perf/throughput.js';
 import { runContext } from './perf/context.js';
 import { runMcpTest } from './mcp/test-mcp.js';
+import { modelBounds } from './perf/model-bounds.js';
 
 const program = new Command();
 
@@ -346,6 +347,31 @@ program
     });
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
     process.exit(code);
+  });
+
+/**
+ * model-bounds — resolve a model's native context + tool capability for the fit-map sweep.
+ *
+ * Prints ONE line to stdout: `<nativeCtx> <tools 0|1> <arch>` — so the sweep can
+ *   read NATIVE_CTX TOOLS ARCH <<< "$(cli.ts model-bounds "$M")"
+ * to bound its context ladder and pick the judge. All diagnostics go to stderr.
+ */
+program
+  .command('model-bounds')
+  .description("Resolve a model's native context length + tool support from /api/show")
+  .argument('<model>', 'Model name to inspect')
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .action(async (model: string, options) => {
+    try {
+      const b = await modelBounds(options.host, model);
+      process.stderr.write(`${model}: native_ctx=${b.nativeCtx} tools=${b.tools} arch=${b.arch}\n`);
+      process.stdout.write(`${b.nativeCtx} ${b.tools ? 1 : 0} ${b.arch}\n`);
+      process.exit(0);
+    } catch (e) {
+      process.stderr.write(`model-bounds ${model}: ${e instanceof Error ? e.message : e}\n`);
+      process.stdout.write('0 0 \n');
+      process.exit(1);
+    }
   });
 
 program.parse();
