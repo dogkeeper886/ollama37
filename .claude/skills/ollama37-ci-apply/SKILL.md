@@ -37,5 +37,7 @@ is logged and reproducible.
 
 `ollama37-ci-build` builds the image; this skill applies it; then the test suites
 (`test-models.yml`, etc.) exercise it. `test-pipeline.yml` chains `build → runtime → inference →
-models` for one `runner_label` if you want the whole flow in one run. For a CUDA change that must hold
-on both cards, apply the **same published digest** on both hosts before testing — see `ollama37-ci-build`.
+models` for one `runner_label` if you want the whole flow in one run — and because the build suite
+retags the fresh image to the tag compose reads (`TC-BUILD-004`, see `ollama37-ci-build`), that one
+pipeline run builds *and* applies the new bits. Testing is **single-host**; the retired cross-host
+by-digest path no longer applies.

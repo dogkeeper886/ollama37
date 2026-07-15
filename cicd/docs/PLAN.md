@@ -243,6 +243,13 @@ as a second testbed is what surfaced #385.
 
 ### The decision: build once, test the artifact
 
+> **SUPERSEDED (#441).** The publish → fetch-by-digest cross-host flow below was retired: the
+> Docker Hub push was slow and nothing ever consumed the pushed `ollama37-ci:ci-<sha>` image (the
+> "fetch" half was never implemented). It is replaced by a **local retag** — `TC-BUILD-004` now
+> `docker tag ollama37:latest dogkeeper886/ollama37:latest` on the build runner, so `docker compose
+> up` picks up the fresh build with no push and no compose edit. Testing is **single-host**. The
+> record below is kept for history.
+
 Building on `sm75` would take hours (i3-14100, no builder cache) and would produce a
 *second* artifact — so a disagreement between testbeds could not be attributed. Build on
 `sm37`, publish, pull.
