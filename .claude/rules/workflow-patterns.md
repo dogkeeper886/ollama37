@@ -35,7 +35,9 @@ suite workflows:
 
 ```
 ├── test-throughput.yml   # cli.ts bench-throughput — per-model tok/s + output check (short prompt)
-└── test-context.yml      # cli.ts bench-context — long-context prefill/decode tok/s + needle + judge
+├── test-context.yml      # cli.ts bench-context — long-context prefill/decode tok/s + needle + judge
+├── test-mcp.yml          # cli.ts test-mcp — MCP tool-call capability (one model list x one ctx/batch)
+└── test-report-sweep.yml # loops model x context (x num_batch, opt-in) — fills the k80-*-by-family tables + the num_batch x context fit map
 ```
 
 `test-context.yml` is the flash-attention path comparison: it primes a realistic long prompt (so
@@ -44,7 +46,15 @@ applies the experiment env (`flash_attention`/`kv_cache_type`) by recreating the
 `always()` reverts to the stable baseline (FA off). `test-throughput.yml` stays the short-prompt K80
 model-regression tool.
 
-(`cli.ts test-mcp` — MCP tool-call capability — is a subcommand with no workflow yet.)
+`test-report-sweep.yml` is a MEASUREMENT sweep, not a gate — kept out of the pipeline because MCP
+T2 legitimately fails for weaker models. It loops every model x context serially, and (opt-in via
+`fit_map_models`) adds a **fit-map** pass: per model it bounds the context ladder to the trained
+window and picks the judge from tool support (`cli.ts model-bounds`, via `/api/show`), then loops
+`num_batch` x bounded-context — one `test-mcp` cell each. `aggregate-sweep.py` derives each cell's
+fit (✅ on GPU / ⚠️ CPU spill / ❌ OOM) from the MCP GPU snapshot (per-die VRAM + offload%, captured
+independent of the correctness verdict), emitting the fit-map table for a human to commit. The
+default sweep (no `fit_map_models`) is unchanged.
+
 `release-docker.yml` builds and publishes the image on a release.
 
 ## Host selection
