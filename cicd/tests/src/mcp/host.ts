@@ -267,14 +267,21 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
       // Snapshot per-die VRAM + offload once, now that the first round has loaded
       // the model. Fit is reservation-driven (stable while resident), so one
       // snapshot suffices; a die holding only the ~93 MiB CUDA ghost is not "active".
+      // Best-effort telemetry — a GPU-probe failure must NOT fail the tool-call
+      // verdict (the outer catch would turn a passing round into an error), so
+      // swallow it and leave traj.gpu undefined.
       if (!traj.gpu) {
-        const perDie = await gpuInfo();
-        traj.gpu = {
-          perDie,
-          totalMib: perDie.reduce((s, g) => s + g.usedMib, 0),
-          activeDies: perDie.filter((g) => g.usedMib > 200).length,
-          offloadPct: await gpuOffload(opts.host, opts.model),
-        };
+        try {
+          const perDie = await gpuInfo();
+          traj.gpu = {
+            perDie,
+            totalMib: perDie.reduce((s, g) => s + g.usedMib, 0),
+            activeDies: perDie.filter((g) => g.usedMib > 200).length,
+            offloadPct: await gpuOffload(opts.host, opts.model),
+          };
+        } catch (e) {
+          process.stderr.write(`  [warn] GPU snapshot failed (telemetry only): ${e instanceof Error ? e.message : e}\n`);
+        }
       }
 
       const msg = raw.message;

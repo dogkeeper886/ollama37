@@ -82,10 +82,11 @@ def main():
             model = r.get("model", "?")
             gpu = r.get("gpu") or {}
             offload = gpu.get("offloadPct")
-            # ❌ no GPU snapshot = the model never became resident (OOM / load failure);
-            # ✅ fully on GPU; ⚠️ partial = CPU spill.
+            # ✅ fully on GPU; ⚠️ partial = CPU spill; ❌ no GPU snapshot = the model
+            # never became fully resident — a true OOM, or a load/round error/timeout
+            # (they're indistinguishable here, so the mark claims "not resident", not "OOM").
             if not gpu or offload is None:
-                fit = "OOM"
+                fit = "NOFIT"
             elif offload >= 100:
                 fit = "FIT"
             else:
@@ -138,9 +139,9 @@ def main():
 
     if fitmap:
         lines.append("## Fit map (`num_batch` x context, STORY-022)\n")
-        lines.append("Fit: ✅ fully on GPU · ⚠️ CPU spill · ❌ OOM (never resident). "
+        lines.append("Fit: ✅ fully on GPU · ⚠️ CPU spill · ❌ not resident (OOM or a load/round error). "
                      "Numbers are decode tok/s · total_s · total VRAM · active dies · offload%.\n")
-        mark = {"FIT": "✅", "SPILL": "⚠️", "OOM": "❌"}
+        mark = {"FIT": "✅", "SPILL": "⚠️", "NOFIT": "❌"}
         for model in sorted(fitmap):
             lines.append(f"### `{model}`\n")
             lines.append("| ctx | num_batch | fit | verdict | tok/s | total_s | VRAM (G) | dies | offload% | per-die used (MiB) |")
