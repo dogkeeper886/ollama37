@@ -222,6 +222,9 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     outTokens: 0,
     totalDurationS: 0,
     evalTps: 0,
+    // Explicit false (not undefined): a non-saturated run must serialize `saturated: false`,
+    // else JSON.stringify drops the key and the aggregator falls back to a weaker heuristic (#449).
+    saturated: false,
   };
 
   const messages: any[] = [{ role: 'user', content: opts.prompt }];
