@@ -38,6 +38,18 @@ on:
         description: "Throughput tokens to generate"
         type: string
         default: "16"
+      fit_map_models:
+        description: "Fit-map models (space-separated; empty = skip the fit-map sweep). Records num_batch x context fit per model."
+        type: string
+        default: ""
+      fit_map_num_batches:
+        description: "Fit-map num_batch ladder (space-separated)"
+        type: string
+        default: "512 256 128"
+      fit_map_contexts:
+        description: "Fit-map context ladder (space-separated; each clipped to the model's native context via ollama show)"
+        type: string
+        default: "8192 65536 98304 131072 196608 262144"
       distractor_command:
         description: "MCP distractor server command (raises tool-menu difficulty; empty = none)"
         type: string
@@ -146,10 +158,55 @@ jobs:
             done
           done
 
+      - name: MCP fit-map sweep
+        # Opt-in (fit_map_models set) so the default sweep is byte-for-byte unchanged (K80 no-harm).
+        # Per model: ollama show bounds the ctx ladder to native + gates on tool support (#446);
+        # then loop num_batch x bounded-ctx, one test-mcp cell each. Judge is the structural check
+        # (no --verify-live) so a judge/infra hiccup can't lose the VRAM/tps fit data — the fit
+        # numbers (per-die VRAM + offload, #445) are captured regardless of the correctness verdict.
+        if: ${{ inputs.fit_map_models != '' }}
+        env:
+          MODELS: ${{ inputs.fit_map_models }}
+          TESTLINK_URL: ${{ secrets.TESTLINK_URL }}
+          TESTLINK_API_KEY: ${{ secrets.TESTLINK_API_KEY }}
+        run: |
+          set -o pipefail
+          cd cicd/tests
+          mkdir -p /tmp/sweep-out
+          for M in $MODELS; do
+            read NATIVE_CTX TOOLS ARCH <<< "$(npx tsx src/cli.ts model-bounds "$M" 2>/dev/null)"
+            echo "::group::fit-map $M (native_ctx=$NATIVE_CTX tools=$TOOLS arch=$ARCH)"
+            if [ "$TOOLS" != "1" ]; then
+              echo "  $M reports no tool support — skipping (the fit-map uses the tool-call vehicle)"
+              echo "::endgroup::"; continue
+            fi
+            SAFE=$(echo "$M" | tr ':/' '--')
+            for NB in ${{ inputs.fit_map_num_batches }}; do
+              for CTX in ${{ inputs.fit_map_contexts }}; do
+                if [ "$NATIVE_CTX" != "0" ] && [ "$CTX" -gt "$NATIVE_CTX" ]; then
+                  echo "  skip ctx=$CTX > native $NATIVE_CTX"; continue
+                fi
+                echo "--- $M ctx=$CTX nb=$NB ---"
+                bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts test-mcp "$M" \
+                  --prompt "List the test suites in the ollama37 project." \
+                  --num-ctx "$CTX" --num-batch "$NB" \
+                  --timeout "3600" \
+                  --mcp-command "docker" \
+                  --mcp-args "run --rm -i -e TESTLINK_URL -e TESTLINK_API_KEY dogkeeper886/testlink-mcp:latest" \
+                  --mcp-env "TESTLINK_URL,TESTLINK_API_KEY" \
+                  --distractor-command "${{ inputs.distractor_command }}" \
+                  --distractor-args "${{ inputs.distractor_args }}" \
+                  --output "/tmp/sweep-out/fitmap_${CTX}_${NB}_${SAFE}.json" \
+                  | tee -a "$GITHUB_STEP_SUMMARY" || echo "fit-map $M ctx=$CTX nb=$NB returned non-zero (partial results kept)"
+              done
+            done
+            echo "::endgroup::"
+          done
+
       - name: Unload models
         if: always()
         env:
-          ALL_MODELS: ${{ inputs.throughput_models }} ${{ inputs.mcp_models }}
+          ALL_MODELS: ${{ inputs.throughput_models }} ${{ inputs.mcp_models }} ${{ inputs.fit_map_models }}
         run: |
           for M in $ALL_MODELS; do
             curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${M}\",\"keep_alive\":0}" || true
