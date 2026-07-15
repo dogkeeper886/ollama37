@@ -1,6 +1,6 @@
 ---
 name: ollama37-ci-build
-description: Build (and publish) the ollama37 CI image on a self-hosted GPU runner — never with a local make
+description: Build the ollama37 CI image on a self-hosted GPU runner — never with a local make
 user-invocable: true
 ---
 
@@ -39,13 +39,16 @@ gh run watch <run-id> --exit-status        # block until done; GitHub holds the 
   `ensure-builder` rebuilds it, ~90 min). It can run on `sm75` only if `ollama37-builder:latest` is
   already present there.
 
-## The CI image, and moving it between testbeds
+## The CI image lands where compose reads it — same host, no push
 
-`ollama37:latest` is a **local tag** on one runner's Docker daemon — `docker/docker-compose.yml` reads
-exactly this tag. The two runners are **independent hosts with no network between them**, so the tag on
-`sm37` names nothing on `sm75`. To test the *same bits* on both cards, publish to Docker Hub
-**`dogkeeper886/ollama37-ci:ci-<sha>`** and fetch **by digest** (`@sha256:…`, immutable — a tag can be
-overwritten, a digest cannot). `TC-BUILD-004` publishes; a fetch step retags the digest back to
-`ollama37:latest` so compose reads it. That published, digest-addressed artifact is "the CI image."
+The build produces the local tag **`ollama37:latest`**, but `docker/docker-compose.yml` reads
+**`dogkeeper886/ollama37:latest`**. `TC-BUILD-004` (in the build suite) bridges that gap: it retags the
+fresh `ollama37:latest` → `dogkeeper886/ollama37:latest` **locally**, so every later `docker compose up`
+(runtime/inference/models/perf) exercises the build we just made — no compose edit, no Docker Hub push.
+
+This is **single-host**: build and test on the same runner. The old cross-host path — publish to
+`dogkeeper886/ollama37-ci:ci-<sha>` and pull by digest on a second card — was **retired** (#441): the
+push was slow and nothing ever consumed the pushed image. To restore the *published* image on a runner
+(e.g. for a published-image baseline), `docker pull dogkeeper886/ollama37:latest`.
 
 Once built, hand off to `ollama37-ci-apply` to roll it onto the testbed.

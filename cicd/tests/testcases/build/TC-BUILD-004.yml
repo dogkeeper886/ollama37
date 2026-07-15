@@ -1,48 +1,48 @@
 id: TC-BUILD-004
-name: Publish CI image to Docker Hub
+name: Retag local build as the compose image
 suite: build
 priority: 4
-timeout: 600000
-dependencies: []
+timeout: 60000
+dependencies:
+  - TC-BUILD-002
 intent:
   user_story: |
-    Publish the runtime image already built on this runner to the CI image repo, so a
-    second testbed (e.g. sm75) can pull the exact same artifact by digest.
+    Make the freshly-built ollama37:latest the image docker-compose reads on this runner, so
+    the runtime / inference / models / perf suites exercise the build we just made — without
+    editing docker-compose.yml or a slow Docker Hub push.
   notes: |
-    Runs against the `ollama37:latest` already on this host's Docker daemon — it does NOT
-    rebuild (no dependency on TC-BUILD-002). Publishes to a dedicated public repo so
-    half-tested ci-<sha> tags never touch the tag list users pull `:latest` from. Pushes
-    from the sm37 daemon's existing credential; no docker login step. The digest it prints
-    is what the other testbed pulls (a tag can be overwritten; a digest cannot).
+    docker-compose.yml reads `dogkeeper886/ollama37:latest` and sets no `pull_policy: always`,
+    so `docker compose up` uses a LOCAL image with that tag when one is present. Retagging the
+    fresh `ollama37:latest` (TC-BUILD-002's output — declared as a dependency so it is ordered
+    after the build) to that tag makes every subsequent `docker compose up` pick up this build.
+    If TC-BUILD-002 fails, the build job fails and the pipeline's `needs: build` stops the runtime
+    job before this tag is exercised — so a stale retag is never tested downstream in a pipeline run.
+
+    Local-only: the runner's `dogkeeper886/ollama37:latest` now names the last local build;
+    `docker pull dogkeeper886/ollama37:latest` restores the released image (e.g. to run a
+    published-image baseline). This replaces the retired Docker Hub push
+    (`dogkeeper886/ollama37-ci:ci-<sha>`), which had no automated consumer — the "fetch by
+    digest" half was never implemented as a testcase.
 
 steps:
-  - name: Tag and push CI image
+  - name: Retag ollama37:latest as the compose image
     command: |
-      SHA=$(echo "${GITHUB_SHA:-local}" | cut -c1-12)
-      REF="dogkeeper886/ollama37-ci:ci-${SHA}"
-      echo "Publishing ollama37:latest as ${REF}"
-      docker tag ollama37:latest "${REF}"
-      docker push "${REF}"
+      echo "Retagging ollama37:latest -> dogkeeper886/ollama37:latest (local, for compose)"
+      docker tag ollama37:latest dogkeeper886/ollama37:latest
+      docker image inspect dogkeeper886/ollama37:latest --format 'retagged {{.Id}}'
     expectPatterns:
-      - "digest: sha256:"
+      - "retagged sha256:"
     rejectPatterns:
-      - "denied"
-      - "no such image"
-      - "no basic auth credentials"
-
-  - name: Print the fully-qualified digest
-    command: |
-      SHA=$(echo "${GITHUB_SHA:-local}" | cut -c1-12)
-      docker image inspect "dogkeeper886/ollama37-ci:ci-${SHA}" --format '{{index .RepoDigests 0}}'
-    expectPatterns:
-      - "ollama37-ci@sha256:"
+      - "No such image"
 
 criteria: |
-  Publish the local ollama37:latest to dogkeeper886/ollama37-ci:ci-<sha> and report its
-  digest.
+  Retag the freshly-built ollama37:latest to dogkeeper886/ollama37:latest on this runner so
+  docker compose (runtime / inference / models / perf) exercises the new build.
 
   Expected:
-  - docker push succeeds ("digest: sha256:..." in the output)
-  - the fully-qualified digest (dogkeeper886/ollama37-ci@sha256:...) is printed for the
-    fetching testbed to pull by digest
-  - no "denied" (would mean the runner's credential can't push to this repo)
+  - docker tag succeeds and `docker image inspect dogkeeper886/ollama37:latest` prints its id
+    ("retagged sha256:...")
+  - no "No such image" (would mean TC-BUILD-002 did not produce ollama37:latest)
+
+  Local-only: the runner's dogkeeper886/ollama37:latest now names the last local build;
+  `docker pull` restores the published image. No Docker Hub push.
