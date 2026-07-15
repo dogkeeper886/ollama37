@@ -65,6 +65,8 @@ interface McpModelResult {
   max_prompt_tokens: number;
   total_duration_s: number;
   eval_tps: number;
+  /** A round filled num_ctx → decode ran under KV eviction; eval_tps is not clean (#449). */
+  saturated?: boolean;
   /** Per-die VRAM + offload % (STORY-022); undefined if the model never loaded. */
   gpu?: McpTrajectory['gpu'];
   check: { overall_pass: boolean; simple: McpSimpleVerdict; agent: Judgment | null };
@@ -138,6 +140,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
       max_prompt_tokens: traj.maxPromptTokens,
       total_duration_s: traj.totalDurationS,
       eval_tps: traj.evalTps,
+      saturated: traj.saturated,
       gpu: traj.gpu,
       check: { overall_pass: simple.pass, simple, agent: null },
     });

@@ -82,18 +82,28 @@ def main():
             model = r.get("model", "?")
             gpu = r.get("gpu") or {}
             offload = gpu.get("offloadPct")
-            # ✅ fully on GPU; ⚠️ partial = CPU spill; ❌ no GPU snapshot = the model
-            # never became fully resident — a true OOM, or a load/round error/timeout
-            # (they're indistinguishable here, so the mark claims "not resident", not "OOM").
+            # Window saturation (#449): a round's prompt+generated tokens reached num_ctx, so
+            # the KV cache filled and decode ran under eviction — tok/s is not a clean figure.
+            # Prefer the per-round flag the host now emits; fall back to the count predicate
+            # for pre-#449 JSONs. Orthogonal to fit (a saturated cell can still be 100% on GPU),
+            # but it invalidates the SPEED, so it takes display precedence to warn the reader.
+            saturated = r.get("saturated")
+            if saturated is None:
+                saturated = (r.get("max_prompt_tokens", 0) + r.get("out_tokens", 0)) >= int(ctx)
+            # ✂️ saturated = tok/s invalid; ✅ fully on GPU; ⚠️ CPU spill; ❌ never resident
+            # (OOM or a load/round error — indistinguishable here, so "not resident", not "OOM").
             if not gpu or offload is None:
                 fit = "NOFIT"
+            elif saturated:
+                fit = "SAT"
             elif offload >= 100:
                 fit = "FIT"
             else:
                 fit = "SPILL"
             per_die = ",".join(str(g.get("usedMib", 0)) for g in (gpu.get("perDie") or [])) or "-"
             op = (r.get("check") or {}).get("overall_pass")
-            verdict = "PASS" if op else "FAIL"
+            # A saturated cell FAILs regardless of the answer — its tok/s measurement is invalid.
+            verdict = "PASS" if (op and not saturated) else "FAIL"
             row = {
                 "fit": fit,
                 "verdict": verdict,
@@ -139,9 +149,11 @@ def main():
 
     if fitmap:
         lines.append("## Fit map (`num_batch` x context, STORY-022)\n")
-        lines.append("Fit: ✅ fully on GPU · ⚠️ CPU spill · ❌ not resident (OOM or a load/round error). "
+        lines.append("Fit: ✅ fully on GPU · ⚠️ CPU spill · ❌ not resident (OOM or a load/round error) · "
+                     "✂️ saturated = prompt+output reached num_ctx so decode ran under KV eviction "
+                     "(tok/s invalid; the VRAM/dies/offload columns are still valid). "
                      "Numbers are decode tok/s · total_s · total VRAM · active dies · offload%.\n")
-        mark = {"FIT": "✅", "SPILL": "⚠️", "NOFIT": "❌"}
+        mark = {"FIT": "✅", "SPILL": "⚠️", "NOFIT": "❌", "SAT": "✂️"}
         for model in sorted(fitmap):
             lines.append(f"### `{model}`\n")
             lines.append("| ctx | num_batch | fit | verdict | tok/s | total_s | VRAM (G) | dies | offload% | per-die used (MiB) |")
