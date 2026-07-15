@@ -65,6 +65,8 @@ interface McpModelResult {
   max_prompt_tokens: number;
   total_duration_s: number;
   eval_tps: number;
+  /** Per-die VRAM + offload % (STORY-022); undefined if the model never loaded. */
+  gpu?: McpTrajectory['gpu'];
   check: { overall_pass: boolean; simple: McpSimpleVerdict; agent: Judgment | null };
 }
 
@@ -136,6 +138,7 @@ export async function runMcpTest(opts: McpTestOptions): Promise<number> {
       max_prompt_tokens: traj.maxPromptTokens,
       total_duration_s: traj.totalDurationS,
       eval_tps: traj.evalTps,
+      gpu: traj.gpu,
       check: { overall_pass: simple.pass, simple, agent: null },
     });
     process.stderr.write(`  supported=${traj.supported} calls=${traj.toolCalls.length} simple=${simple.pass} · ${traj.outTokens} tok @ ${traj.evalTps} tok/s in ${traj.totalDurationS}s\n`);
@@ -267,8 +270,8 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
   out.push('');
 
   // Scannable table — judge stages + cross-check, no raw JSON in the cells.
-  out.push('| Model | Verdict | Tool call(s) | Judge stages (tool·query·content) | Cross-check | Time (s) | Peak in/ctx | Out tok | tok/s |');
-  out.push('|---|---|---|---|---|--:|--:|--:|--:|');
+  out.push('| Model | Verdict | Tool call(s) | Judge stages (tool·query·content) | Cross-check | Time (s) | Peak in/ctx | Out tok | tok/s | VRAM/dies@GPU% |');
+  out.push('|---|---|---|---|---|--:|--:|--:|--:|--:|');
   for (const r of results) {
     const verdict = r.check.overall_pass ? '✅ PASS' : r.supported ? '❌ FAIL' : '⚪ NO TOOL SUPPORT';
     const calls = r.tool_calls.map((c) => c.name).join(', ') || '—';
@@ -276,7 +279,8 @@ function printSummary(opts: McpTestOptions, results: McpModelResult[]): void {
     const stages = s ? `${tick(s.tool)} · ${tick(s.query)} · ${tick(s.content)}` : '—';
     const cc = r.check.agent?.crossCheckUnsupported;
     const cross = cc === undefined ? '—' : cc.length ? `❌ ${cc.join(', ').slice(0, 60)}` : '✅ grounded';
-    out.push(`| ${r.model} | ${verdict} | ${calls} | ${stages} | ${cross} | ${r.total_duration_s || '—'} | ${peakCtx(r.max_prompt_tokens, opts.numCtx)} | ${r.out_tokens || '—'} | ${r.eval_tps || '—'} |`);
+    const g = r.gpu ? `${(r.gpu.totalMib / 1024).toFixed(1)}G/${r.gpu.activeDies}d@${r.gpu.offloadPct}%` : '—';
+    out.push(`| ${r.model} | ${verdict} | ${calls} | ${stages} | ${cross} | ${r.total_duration_s || '—'} | ${peakCtx(r.max_prompt_tokens, opts.numCtx)} | ${r.out_tokens || '—'} | ${r.eval_tps || '—'} | ${g} |`);
   }
 
   // Per-model detail (reasoning + raw evidence) tucked behind a toggle — proof without the clutter.

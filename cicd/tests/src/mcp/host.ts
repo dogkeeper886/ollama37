@@ -16,6 +16,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { gpuInfo, gpuOffload, type GpuRow } from '../perf/gpu.js';
 
 /** How to spawn the stdio MCP server. testlink-mcp is just one such config. */
 export interface McpServerConfig {
@@ -83,6 +84,9 @@ export interface McpTrajectory {
   totalDurationS: number;
   evalTps: number;
   error?: string;
+  /** Per-die VRAM + offload %, snapshotted once the model is resident (STORY-022).
+   *  Captured inside the host, before any judge — so it survives a failed verdict. */
+  gpu?: { perDie: GpuRow[]; totalMib: number; activeDies: number; offloadPct: number };
 }
 
 /** MCP tool {name, description?, inputSchema} → Ollama tools[] entry (near 1:1). */
@@ -259,6 +263,26 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
       evalDurNs += raw.eval_duration ?? 0;
       traj.totalDurationS = round2(totalDurNs / 1e9);
       traj.evalTps = tps(traj.outTokens, evalDurNs);
+
+      // Snapshot per-die VRAM + offload once, now that the first round has loaded
+      // the model. Fit is reservation-driven (stable while resident), so one
+      // snapshot suffices; a die holding only the ~93 MiB CUDA ghost is not "active".
+      // Best-effort telemetry — a GPU-probe failure must NOT fail the tool-call
+      // verdict (the outer catch would turn a passing round into an error), so
+      // swallow it and leave traj.gpu undefined.
+      if (!traj.gpu) {
+        try {
+          const perDie = await gpuInfo();
+          traj.gpu = {
+            perDie,
+            totalMib: perDie.reduce((s, g) => s + g.usedMib, 0),
+            activeDies: perDie.filter((g) => g.usedMib > 200).length,
+            offloadPct: await gpuOffload(opts.host, opts.model),
+          };
+        } catch (e) {
+          process.stderr.write(`  [warn] GPU snapshot failed (telemetry only): ${e instanceof Error ? e.message : e}\n`);
+        }
+      }
 
       const msg = raw.message;
       const toolCalls: any[] = msg?.tool_calls ?? [];

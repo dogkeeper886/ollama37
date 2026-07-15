@@ -29,6 +29,7 @@ def main():
     tsv_rows = []          # suite-tagged flat rows for the TSV
     tp = {}                # model -> ctx -> dict
     mcp = {}               # model -> (test,ctx) -> dict
+    fitmap = {}            # model -> (ctx,nb) -> dict  (STORY-022 num_batch x context)
 
     for path in sorted(glob.glob(os.path.join(in_dir, "tp_*.json"))):
         m = re.match(r"tp_(\d+)\.json$", os.path.basename(path))
@@ -70,6 +71,43 @@ def main():
             tsv_rows.append(f"mcp\t{model}\t{test}\t{ctx_label(ctx)}\t{verdict}\t"
                             f"{row['ptok']}\t{row['secs']}\t{row['tps']}\t{calls}")
 
+    # Fit-map cells: one model per file, ctx + num_batch in the name (fitmap_<ctx>_<nb>_<model>.json).
+    # The fit verdict comes from the GPU snapshot (#445), independent of the correctness judge.
+    for path in sorted(glob.glob(os.path.join(in_dir, "fitmap_*.json"))):
+        m = re.match(r"fitmap_(\d+)_(\d+)_.+\.json$", os.path.basename(path))
+        if not m:
+            continue
+        ctx, nb = m.group(1), m.group(2)
+        for r in load(path):
+            model = r.get("model", "?")
+            gpu = r.get("gpu") or {}
+            offload = gpu.get("offloadPct")
+            # ✅ fully on GPU; ⚠️ partial = CPU spill; ❌ no GPU snapshot = the model
+            # never became fully resident — a true OOM, or a load/round error/timeout
+            # (they're indistinguishable here, so the mark claims "not resident", not "OOM").
+            if not gpu or offload is None:
+                fit = "NOFIT"
+            elif offload >= 100:
+                fit = "FIT"
+            else:
+                fit = "SPILL"
+            per_die = ",".join(str(g.get("usedMib", 0)) for g in (gpu.get("perDie") or [])) or "-"
+            op = (r.get("check") or {}).get("overall_pass")
+            verdict = "PASS" if op else "FAIL"
+            row = {
+                "fit": fit,
+                "verdict": verdict,
+                "tps": r.get("eval_tps", 0),
+                "secs": r.get("total_duration_s", 0),
+                "vram_g": round(gpu.get("totalMib", 0) / 1024, 1) if gpu else 0,
+                "dies": gpu.get("activeDies", 0) if gpu else 0,
+                "offload": offload if offload is not None else 0,
+                "per_die": per_die,
+            }
+            fitmap.setdefault(model, {})[(ctx, nb)] = row
+            tsv_rows.append(f"fitmap\t{model}\t{ctx_label(ctx)}\t{nb}\t{fit}\t{verdict}\t"
+                            f"{row['tps']}\t{row['secs']}\t{row['vram_g']}\t{row['dies']}\t{row['offload']}\t{per_die}")
+
     with open(tsv_out, "w") as f:
         f.write("\n".join(tsv_rows) + "\n")
 
@@ -98,6 +136,21 @@ def main():
                 lines.append(f"| `{model}` | {test} | {ctx_label(ctx)} | {mark} | "
                              f"{r['ptok']} | {r['secs']} | {r['tps']} | {r['calls']} |")
         lines.append("")
+
+    if fitmap:
+        lines.append("## Fit map (`num_batch` x context, STORY-022)\n")
+        lines.append("Fit: ✅ fully on GPU · ⚠️ CPU spill · ❌ not resident (OOM or a load/round error). "
+                     "Numbers are decode tok/s · total_s · total VRAM · active dies · offload%.\n")
+        mark = {"FIT": "✅", "SPILL": "⚠️", "NOFIT": "❌"}
+        for model in sorted(fitmap):
+            lines.append(f"### `{model}`\n")
+            lines.append("| ctx | num_batch | fit | verdict | tok/s | total_s | VRAM (G) | dies | offload% | per-die used (MiB) |")
+            lines.append("|---|--:|:--:|:--:|--:|--:|--:|:--:|--:|---|")
+            for (ctx, nb) in sorted(fitmap[model], key=lambda k: (int(k[0]), -int(k[1]))):
+                r = fitmap[model][(ctx, nb)]
+                lines.append(f"| {ctx_label(ctx)} | {nb} | {mark.get(r['fit'], r['fit'])} | {r['verdict']} | "
+                             f"{r['tps']} | {r['secs']} | {r['vram_g']} | {r['dies']} | {r['offload']}% | {r['per_die']} |")
+            lines.append("")
 
     with open(md_out, "w") as f:
         f.write("\n".join(lines) + "\n")

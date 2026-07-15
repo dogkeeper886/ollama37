@@ -59,3 +59,28 @@ So a kernel that panics — e.g. tensor-core MMA on Turing under CUDA 11.4 — i
 dodging the crash; the crash is the finding.
 
 `models` is `sm37`-only for the large models; on `sm75` size to the ~5 GiB it has.
+
+## Size a model's context/batch fit (fit-map sweep)
+
+A different question from "is this FA path faster": *at what context does a model spill to CPU, and
+does a smaller `num_batch` pull it back onto the GPU?* On the K80 (FA off) the `Q·Kᵀ` score buffer is
+sized by `num_batch`, so batch — not just context — sets the VRAM wall. `test-report-sweep.yml` records
+this as a **fit map** (the basis for the qwen35moe clamp in #440):
+
+```bash
+gh workflow run test-report-sweep.yml --ref <branch> \
+  -f suite=none \
+  -f fit_map_models='qwen3.6:35b' \
+  -f fit_map_num_batches='512 256 128' \
+  -f fit_map_contexts='8192 65536 98304 131072 196608 262144'
+```
+
+`suite=none` skips the default throughput/MCP sweeps so only the fit-map runs (the fit-map is
+gated on `fit_map_models`, independent of `suite`). Per model it bounds the context ladder to the
+trained window and gates on tool support (`cli.ts model-bounds`, via `/api/show`), then loops
+`num_batch` x bounded-context. The
+`report-sweep-results` artifact's `SUMMARY.md` holds the fit-map table: per cell the **fit**
+(✅ on GPU / ⚠️ CPU spill / ❌ OOM), decode tok/s, `total_s`, per-die VRAM, active dies, and
+offload% — captured from the MCP GPU snapshot **independent of the correctness verdict**, so a
+judge hiccup never loses the fit data. Leave `fit_map_models` empty (default) and the sweep runs
+its normal throughput/MCP pass unchanged.
