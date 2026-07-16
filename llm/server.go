@@ -242,6 +242,28 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 	}
 
+	// qwen35 (dense GatedDeltaNet — the 27b/9b siblings of qwen35moe) has the same
+	// FA-off score-buffer spill, but this arch spans two sizes: the 27b spills at long
+	// context while the 9b fits at the default batch. The 27b's larger attention (64
+	// blocks / 24 heads vs the 9b's 32 / 16) is what overruns VRAM, so gate the clamp to
+	// the 27b-class by block count — the 9b keeps its default batch (no-harm anchor, #452).
+	// Thresholds measured on the K80 (run 29413759899, qwen3.6:27b fit-map):
+	//   ≤64k → 512 · ≤128k → 256 · >128k → 128. Recovers the 96k/128k CPU spill; 192k+
+	//   still spills at every batch (a separate KV-quant/FA question, out of scope here).
+	// Only ever lowers the batch: a smaller explicit num_batch is kept as-is.
+	if architecture == "qwen35" && f.KV().BlockCount() >= 48 {
+		maxBatch := 512
+		if opts.NumCtx > 65536 { // >64k: 512 spills (96k@512 = 91% GPU)
+			maxBatch = 256
+		}
+		if opts.NumCtx > 131072 { // >128k: 256 spills (192k@256 = 78%); 128 is the least-bad
+			maxBatch = 128
+		}
+		if opts.NumBatch > maxBatch {
+			opts.NumBatch = maxBatch
+		}
+	}
+
 	slog.Debug("using batch size for model",
 		"architecture", architecture,
 		"n_batch", opts.NumBatch,
