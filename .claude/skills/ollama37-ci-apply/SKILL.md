@@ -15,10 +15,17 @@ $ARGUMENTS
 ## Applying = running the runtime workflow
 
 **`test-runtime.yml` is how a built image is applied.** `TC-RUNTIME-001` runs `docker compose down`
-then `docker compose up -d`, which recreates the container from the current **`ollama37:latest`** — so
-it picks up whatever `ollama37-ci-build` last built. The `ollama-data` volume is `external`, so pulled
-models survive the recreate. The same run then exercises the runtime checks (startup, GPU detection,
-health).
+then `docker compose up -d`, which recreates the container from **`dogkeeper886/ollama37:latest`** — the
+tag `docker-compose.yml` reads. The `ollama-data` volume is `external`, so pulled models survive the
+recreate. The same run then exercises the runtime checks (startup, GPU detection, health).
+
+**Precondition — confirm the retag, or you apply a STALE image.** The build produces `ollama37:latest`;
+only **`TC-BUILD-004`** retags it to `dogkeeper886/ollama37:latest` (the tag compose reads). So apply
+picks up your fresh build *only if the build ran that retag*. A full `test-build.yml` run does (it's
+`[4/4]` of the build suite) — but a single-test build (`-f test_id=TC-BUILD-002`) **skips it**, leaving
+the compose tag pointing at the previous image. **Before applying, confirm TC-BUILD-004 passed in the
+build run** (`gh run view <build-run> --log | grep TC-BUILD-004`) — otherwise the recreate, and every
+test after it, silently exercises stale code.
 
 ```bash
 gh workflow run test-runtime.yml --ref <branch> -f runner_label=<sm37|sm75>
