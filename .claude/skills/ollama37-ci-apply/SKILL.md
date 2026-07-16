@@ -21,11 +21,12 @@ recreate. The same run then exercises the runtime checks (startup, GPU detection
 
 **Precondition — confirm the retag, or you apply a STALE image.** The build produces `ollama37:latest`;
 only **`TC-BUILD-004`** retags it to `dogkeeper886/ollama37:latest` (the tag compose reads). So apply
-picks up your fresh build *only if the build ran that retag*. A full `test-build.yml` run does (it's
-`[4/4]` of the build suite) — but a single-test build (`-f test_id=TC-BUILD-002`) **skips it**, leaving
-the compose tag pointing at the previous image. **Before applying, confirm TC-BUILD-004 passed in the
-build run** (`gh run view <build-run> --log | grep TC-BUILD-004`) — otherwise the recreate, and every
-test after it, silently exercises stale code.
+picks up your fresh build *only if the build ran that retag*. A full `test-build.yml` run does (TC-BUILD-004 runs in the build suite) — but a single-test build
+(`-f test_id=TC-BUILD-002`) **skips it**, leaving
+the compose tag pointing at the previous image. **Before applying, confirm the retag actually
+succeeded** — grep the build run for TC-BUILD-004's success line, not just its name (the name appears
+whether it passed or failed): `gh run view <build-run> --log | grep 'retagged sha256'`. No match →
+the recreate, and every test after it, silently exercises stale code.
 
 ```bash
 gh workflow run test-runtime.yml --ref <branch> -f runner_label=<sm37|sm75>

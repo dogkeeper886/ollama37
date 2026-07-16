@@ -49,7 +49,7 @@ fresh `ollama37:latest` → `dogkeeper886/ollama37:latest` **locally**, so every
 **A single-test build skips the retag.** `TC-BUILD-004` only runs as part of the full build suite. If
 you build one test (`-f test_id=TC-BUILD-002`), `dogkeeper886/ollama37:latest` still points at the
 *previous* image — so apply + every downstream test silently exercises stale code. Run the full
-`test-build.yml` (no `test_id`), or run TC-BUILD-004 too. `ollama37-ci-apply` restates this as a
+`test-build.yml` (no `test_id`), or run the retag too (`-f test_id=TC-BUILD-004`). `ollama37-ci-apply` restates this as a
 precondition to confirm before applying.
 
 This is **single-host**: build and test on the same runner. The old cross-host path — publish to
