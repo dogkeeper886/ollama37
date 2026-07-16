@@ -243,9 +243,10 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	// The score buffer scales with the full-attention layer count × heads, which grows with
 	// model size — so each family/size gets its own tiers, all from the measured fit maps
-	// (docs/reports/qwen35*-num-batch-context-fit-*.md). BlockCount splits the dense qwen35:
-	// the 27b (64 blocks, 16 full-attn × 24 heads) spills far earlier than the 9b (32 blocks,
-	// 8 full-attn × 16 heads), which only overflows at 256k.
+	// (docs/reports/*-num-batch-context-fit-*.md). BlockCount splits the dense qwen35: the 27b
+	// (64 blocks, 16 full-attn × 24 heads) spills far earlier than the 9b (32 blocks, 8
+	// full-attn × 16 heads), which only overflows at 256k. gpt-oss's score buffer is huge
+	// relative to the 11.4 GiB K80 dies, so it spills the earliest of all (512 only fits ≤32k).
 	switch {
 	case architecture == "qwen35moe": // 35b (#440)
 		clampBatch(98304, 196608) // ≤96k→512 · ≤192k→256 · >192k→128
@@ -253,6 +254,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		clampBatch(65536, 131072) // ≤64k→512 · ≤128k→256 · >128k→128
 	case architecture == "qwen35" && f.KV().BlockCount() < 48: // 9b (#455, runs 29467635730/29468072044)
 		clampBatch(196608, 0) // ≤192k→512 · >192k→256 (256k fits at 256; native max, no 128 tier)
+	case architecture == "gptoss" || architecture == "gpt-oss": // gpt-oss:20b (#453, run 29476267134 + direct loads)
+		clampBatch(32768, 98304) // ≤32k→512 · ≤96k→256 · >96k→128 (native 128k)
 	}
 
 	slog.Debug("using batch size for model",
