@@ -217,24 +217,23 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	// Cap at context length (can't batch more tokens than context window)
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
-	// qwen35moe on the K80: with flash attention hard-off (sm_37 < Volta), each
-	// full-attention layer materializes a Q·Kᵀ score buffer sized
-	// n_ctx × n_batch × n_head, reserved at load — it grows with both context and
-	// batch and overflows VRAM at long context (128k spills to CPU, 256k OOMs at
-	// the default nBatch=512). Cap num_batch to the largest that stays 100% on GPU
-	// at this context, measured on the 4× K80 reference rig
-	// (#440, docs/reports/qwen35moe-num-batch-context-fit-2026-07-14.md):
-	//   ≤96k → 512 · ≤192k → 256 · >192k → 128  (~15% prefill per step; decode ~flat).
-	// This can't live in modelFamilyBatchDefaults: DefaultOptions() pre-fills
-	// NumBatch=512, so getModelBatchParams' "NumBatch == 0" family path never runs.
-	// Only ever lowers the batch: a smaller explicit num_batch is kept as-is; a
-	// larger one (incl. the 512 default) is capped to what fits at this context.
-	if architecture == "qwen35moe" {
+	// qwen35 / qwen35moe on the K80: with flash attention hard-off (sm_37 < Volta), each
+	// full-attention layer materializes a Q·Kᵀ score buffer sized n_ctx × n_batch × n_head,
+	// reserved at load — it grows with both context and batch and overflows VRAM at long
+	// context (CPU spill, then OOM, at the default nBatch=512). Cap num_batch to the largest
+	// that stays 100% on GPU at this context, per the measured K80 fit maps. This can't live
+	// in modelFamilyBatchDefaults: DefaultOptions() pre-fills NumBatch=512, so its
+	// "NumBatch == 0" family path never runs.
+	//
+	// clampBatch only ever LOWERS the batch: 512 by default, 256 above hi256, 128 above hi128
+	// (hi128 == 0 disables the 128 tier). A smaller explicit num_batch is kept as-is. Lowering
+	// the batch trims prefill (~15% per step) but leaves decode ~flat — a good trade to stay on GPU.
+	clampBatch := func(hi256, hi128 int) {
 		maxBatch := 512
-		if opts.NumCtx > 98304 { // >96k: 512 spills
+		if opts.NumCtx > hi256 {
 			maxBatch = 256
 		}
-		if opts.NumCtx > 196608 { // >192k: 256 spills, 128 still fits (256k)
+		if hi128 > 0 && opts.NumCtx > hi128 {
 			maxBatch = 128
 		}
 		if opts.NumBatch > maxBatch {
@@ -242,26 +241,18 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 	}
 
-	// qwen35 (dense GatedDeltaNet — the 27b/9b siblings of qwen35moe) has the same
-	// FA-off score-buffer spill, but this arch spans two sizes: the 27b spills at long
-	// context while the 9b fits at the default batch. The 27b's larger attention (64
-	// blocks / 24 heads vs the 9b's 32 / 16) is what overruns VRAM, so gate the clamp to
-	// the 27b-class by block count — the 9b keeps its default batch (no-harm anchor, #452).
-	// Thresholds measured on the K80 (run 29413759899, qwen3.6:27b fit-map):
-	//   ≤64k → 512 · ≤128k → 256 · >128k → 128. Recovers the 96k/128k CPU spill; 192k+
-	//   still spills at every batch (a separate KV-quant/FA question, out of scope here).
-	// Only ever lowers the batch: a smaller explicit num_batch is kept as-is.
-	if architecture == "qwen35" && f.KV().BlockCount() >= 48 {
-		maxBatch := 512
-		if opts.NumCtx > 65536 { // >64k: 512 spills (96k@512 = 91% GPU)
-			maxBatch = 256
-		}
-		if opts.NumCtx > 131072 { // >128k: 256 spills (192k@256 = 78%); 128 is the least-bad
-			maxBatch = 128
-		}
-		if opts.NumBatch > maxBatch {
-			opts.NumBatch = maxBatch
-		}
+	// The score buffer scales with the full-attention layer count × heads, which grows with
+	// model size — so each family/size gets its own tiers, all from the measured fit maps
+	// (docs/reports/qwen35*-num-batch-context-fit-*.md). BlockCount splits the dense qwen35:
+	// the 27b (64 blocks, 16 full-attn × 24 heads) spills far earlier than the 9b (32 blocks,
+	// 8 full-attn × 16 heads), which only overflows at 256k.
+	switch {
+	case architecture == "qwen35moe": // 35b (#440)
+		clampBatch(98304, 196608) // ≤96k→512 · ≤192k→256 · >192k→128
+	case architecture == "qwen35" && f.KV().BlockCount() >= 48: // 27b (#452, run 29413759899)
+		clampBatch(65536, 131072) // ≤64k→512 · ≤128k→256 · >128k→128
+	case architecture == "qwen35" && f.KV().BlockCount() < 48: // 9b (#455, runs 29467635730/29468072044)
+		clampBatch(196608, 0) // ≤192k→512 · >192k→256 (256k fits at 256; native max, no 128 tier)
 	}
 
 	slog.Debug("using batch size for model",
