@@ -220,14 +220,17 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	// qwen35 / qwen35moe on the K80: with flash attention hard-off (sm_37 < Volta), each
 	// full-attention layer materializes a Q·Kᵀ score buffer sized n_ctx × n_batch × n_head,
 	// reserved at load — it grows with both context and batch and overflows VRAM at long
-	// context (CPU spill, then OOM, at the default nBatch=512). Cap num_batch to the largest
-	// that stays 100% on GPU at this context, per the measured K80 fit maps. This can't live
-	// in modelFamilyBatchDefaults: DefaultOptions() pre-fills NumBatch=512, so its
-	// "NumBatch == 0" family path never runs.
+	// context. A larger batch inflates that buffer, spreading the model across MORE K80 dies;
+	// the dies talk over PCIe, so extra dies cost decode tok/s — and VRAM, the scarce resource
+	// (a MoE keeps all experts resident). So cap num_batch to the FEWEST-die batch that still
+	// stays 100% on GPU at this context, per the measured fit maps (#458). A die tie goes to the
+	// higher measured tok/s (usually the larger batch, for faster prefill); a larger, more-die
+	// batch wins only where a real number shows it decodes faster. This can't live in
+	// modelFamilyBatchDefaults: DefaultOptions() pre-fills NumBatch=512, so its "NumBatch == 0"
+	// family path never runs.
 	//
 	// clampBatch only ever LOWERS the batch: 512 by default, 256 above hi256, 128 above hi128
-	// (hi128 == 0 disables the 128 tier). A smaller explicit num_batch is kept as-is. Lowering
-	// the batch trims prefill (~15% per step) but leaves decode ~flat — a good trade to stay on GPU.
+	// (hi128 == 0 disables the 128 tier). A smaller explicit num_batch is kept as-is.
 	clampBatch := func(hi256, hi128 int) {
 		maxBatch := 512
 		if opts.NumCtx > hi256 {
@@ -248,14 +251,14 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	// full-attn × 16 heads), which only overflows at 256k. gpt-oss's score buffer is huge
 	// relative to the 11.4 GiB K80 dies, so it spills the earliest of all (512 only fits ≤32k).
 	switch {
-	case architecture == "qwen35moe": // 35b (#440)
-		clampBatch(98304, 196608) // ≤96k→512 · ≤192k→256 · >192k→128
-	case architecture == "qwen35" && f.KV().BlockCount() >= 48: // 27b (#452, run 29413759899)
-		clampBatch(65536, 131072) // ≤64k→512 · ≤128k→256 · >128k→128
-	case architecture == "qwen35" && f.KV().BlockCount() < 48: // 9b (#455, runs 29467635730/29468072044)
-		clampBatch(196608, 0) // ≤192k→512 · >192k→256 (256k fits at 256; native max, no 128 tier)
-	case architecture == "gptoss" || architecture == "gpt-oss": // gpt-oss:20b (#453, run 29476267134 + direct loads)
-		clampBatch(32768, 98304) // ≤32k→512 · ≤96k→256 · >96k→128 (native 128k)
+	case architecture == "qwen35moe": // 35b (#440; #458 fewest-dies re-tune, runs 29484930437/29550110578)
+		clampBatch(32768, 196608) // ≤32k→512(3d) · ≤192k→256(3–4d) · >192k→128 — 64k/96k: 256 fewer dies & faster than 512
+	case architecture == "qwen35" && f.KV().BlockCount() >= 48: // 27b (#452; #458 re-tune, run 29484930437)
+		clampBatch(32768, 65536) // ≤32k→512(3d) · ≤64k→256(3d) · >64k→128 — 96k: 128=3d beats 256=4d
+	case architecture == "qwen35" && f.KV().BlockCount() < 48: // 9b (#455; #458 re-tune, runs 29484930437/29550117574/29557518952)
+		clampBatch(32768, 131072) // ≤32k→512(1d) · ≤128k→256(1–2d) · >128k→128(2d) — 192k: 128 decodes faster at equal 2d (5.36 vs 5.23, 2 runs)
+	case architecture == "gptoss" || architecture == "gpt-oss": // gpt-oss:20b (#453; #458 fewest-dies re-tune, run 29482994550)
+		clampBatch(32768, 32768) // ≤32k→512 · >32k→128 — fewest dies: 128=2d beats 256=3–4d, +7–9% t/s @64k/96k
 	}
 
 	slog.Debug("using batch size for model",
