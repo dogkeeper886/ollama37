@@ -255,8 +255,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		clampBatch(32768, 196608) // ≤32k→512(3d) · ≤192k→256(3–4d) · >192k→128 — 64k/96k: 256 fewer dies & faster than 512
 	case architecture == "qwen35" && f.KV().BlockCount() >= 48: // 27b (#452; #458 re-tune, run 29484930437)
 		clampBatch(32768, 65536) // ≤32k→512(3d) · ≤64k→256(3d) · >64k→128 — 96k: 128=3d beats 256=4d
-	case architecture == "qwen35" && f.KV().BlockCount() < 48: // 9b (#455; #458 re-tune, runs 29484930437/29550117574)
-		clampBatch(32768, 196608) // ≤32k→512(1d) · ≤192k→256(1–2d) · >192k→128(2d) — 256/128 fewer dies than 512
+	case architecture == "qwen35" && f.KV().BlockCount() < 48: // 9b (#455; #458 re-tune, runs 29484930437/29550117574/29557518952)
+		clampBatch(32768, 131072) // ≤32k→512(1d) · ≤128k→256(1–2d) · >128k→128(2d) — 192k: 128 decodes faster at equal 2d (5.36 vs 5.23, 2 runs)
 	case architecture == "gptoss" || architecture == "gpt-oss": // gpt-oss:20b (#453; #458 fewest-dies re-tune, run 29482994550)
 		clampBatch(32768, 32768) // ≤32k→512 · >32k→128 — fewest dies: 128=2d beats 256=3–4d, +7–9% t/s @64k/96k
 	}

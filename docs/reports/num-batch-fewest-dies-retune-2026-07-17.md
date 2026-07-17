@@ -58,12 +58,12 @@ tie by measured tok/s (usually the larger batch — faster prefill). Take a larg
 |--|--|--|--|--|
 | 32k | ✅ 1d / 6.45 | ✅ 1d / 6.43 | ✅ 1d / 6.45 | **512** (min dies, largest) |
 | 64k | ✅ **2d** / 5.50 | ✅ **1d** / 6.45 | ✅ 1d / 6.46 | **256** (fewer dies & faster) |
-| 96k | ✅ 2d / 5.34 | ✅ 2d / 5.35 | ✅ 2d / 5.38 | **256** (die tie, monotonic) |
-| 128k | ✅ 2d | ✅ 2d / 5.32 | ✅ 2d / 5.38 | **256** (die tie, monotonic) |
-| 192k | 4d (old) | ✅ **2d** / 5.25 | ✅ 2d / 5.39 | **256** (fewer dies than 512) |
+| 96k | ✅ 2d / 5.34 | ✅ 2d / 5.35 | ✅ 2d / 5.38 | **256** (2d tie → prefill; Δ within noise) |
+| 128k | ✅ 2d | ✅ 2d / 5.32 | ✅ 2d / 5.38 | **256** (2d tie → prefill; Δ within noise) |
+| 192k | 4d (old) | ✅ 2d / 5.23 | ✅ **2d / 5.36** | **128** (faster at equal 2d, avg of 2 runs) |
 | 256k | ❌ | ✅ 3d / 5.10 | ✅ **2d** / 5.35 | **128** (fewer dies & faster) |
 
-→ `clampBatch(32768, 196608)` — ≤32k:512 · ≤192k:256 · >192k:128
+→ `clampBatch(32768, 131072)` — ≤32k:512 · ≤128k:256 · >128k:128
 
 ### gpt-oss:20b (`gptoss`, native 128k)
 | ctx | nb=512 | nb=256 | nb=128 | pick |
@@ -78,8 +78,10 @@ tie by measured tok/s (usually the larger batch — faster prefill). Take a larg
 ## Notes
 
 1. **The 9b VRAM pattern is non-linear** (1 die ≤64k, 2 dies to 192k, 3 at 256k@256), and `nb=512`
-   costs a die at 64k (2d vs 256's 1d) and 192k (4d vs 2d). The clamp uses the monotonic tier that
-   captures both die savings; at 96k/128k (all batches 2d) it holds 256 rather than break monotonicity.
+   costs a die at 64k (2d vs 256's 1d) and 192k (4d vs 2d). From 96k–192k all of 256/128 sit at
+   2 dies, so the pick is a pure decode-tiebreak: 128 measured ≥ 256 throughout and clearly faster
+   at 192k (5.36 vs 5.23, avg of runs 29484930437/29557518952), so the clamp drops to 128 by 192k;
+   96k/128k stay at 256, where the delta is within noise and the larger batch prefills faster.
 2. **The 35b @64k cell was re-measured** (29550110578) after an outlier (256=6.23) in the first pass;
    the clean value (256 = 3d / 7.06 vs 512 = 4d / 6.80) makes 256 the unambiguous pick — fewer dies
    *and* faster.
