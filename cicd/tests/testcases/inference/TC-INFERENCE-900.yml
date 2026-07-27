@@ -51,24 +51,51 @@ steps:
       docker logs ollama37 --since "$start" 2>&1 \
         | grep -E "prefill progress|prefill done|decode progress|msg=completion" || echo "NO_PROGRESS_LINES"
 
-      # Same prompt again: the cache serves the prefix, so prefill_tokens must fall
-      # well below the API's prompt_eval_count instead of reporting an impossible rate
+      # --- warm cache ---------------------------------------------------------
+      # A prompt that fills num_ctx cannot be reused: generation pushes the total
+      # past the window, the slot shifts, and the next request re-prefills from
+      # scratch. Use a prompt short enough that the slot survives, so the second
+      # request genuinely hits the cache.
+      short=""
+      for i in $(seq 1 100); do short="$short$para"; done
+      short="$short
+
+      Reply with one short sentence."
+      sbody=$(jq -nc --arg m "$m" --arg p "$short" \
+        '{model:$m, prompt:$p, stream:false, options:{num_predict:20, num_ctx:8192}}')
+
+      echo "=== WARM: priming request ==="
+      curl -s http://localhost:11434/api/generate -d "$sbody" >/dev/null
+
       warm=$(date -u +%Y-%m-%dT%H:%M:%S)
-      echo "=== WARM REQUEST (since $warm) ==="
-      curl -s http://localhost:11434/api/generate -d "$body" \
-        | jq -r '"API: prompt_eval_count=\(.prompt_eval_count) prompt_eval_duration=\(.prompt_eval_duration)"'
+      echo "=== WARM: repeat of the same prompt (since $warm) ==="
+      api_count=$(curl -s http://localhost:11434/api/generate -d "$sbody" | jq -r '.prompt_eval_count')
+      echo "API: prompt_eval_count=$api_count"
 
       echo "=== LOG LINES (warm) ==="
-      docker logs ollama37 --since "$warm" 2>&1 \
-        | grep -E "prefill done|msg=completion" || echo "NO_WARM_LINES"
+      docker logs ollama37 --since "$warm" 2>&1 | grep -E "msg=completion" || echo "NO_WARM_LINES"
+
+      log_tokens=$(docker logs ollama37 --since "$warm" 2>&1 \
+        | grep "msg=completion" | tail -1 \
+        | sed -n 's/.*prefill_tokens=\([0-9]*\).*/\1/p')
+
+      # The API counts the whole prompt; the log counts only what was computed. If
+      # they match on a cache hit, the log is reporting a rate the hardware never hit.
+      if [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 100 ]; then
+        echo "WARM_CACHE_OK: log prefill_tokens=$log_tokens vs API prompt_eval_count=$api_count"
+      else
+        echo "WARM_CACHE_BAD: log prefill_tokens=${log_tokens:-none} vs API prompt_eval_count=$api_count"
+      fi
 
     expectPatterns:
       - "prefill progress"
       - "prefill done"
       - "decode progress"
       - "msg=completion"
+      - "WARM_CACHE_OK"
     rejectPatterns:
       - "NO_PROGRESS_LINES"
+      - "WARM_CACHE_BAD"
       - "CUDA error"
       - "tokens=0 "
 
@@ -89,10 +116,13 @@ criteria: |
   - one or more "decode progress" lines carrying tps and tps_recent
   - a "completion" line with both phases' tokens/elapsed/tps
 
-  Expected in the warm run:
+  Expected in the warm run (WARM_CACHE_OK):
   - a "completion" line whose prefill_tokens is far below the API's prompt_eval_count
     for the same request — the cached prefix cost no compute, so counting it would
     report a prefill rate the hardware cannot reach
+  - the priming prompt must be short enough to leave room for what it generates:
+    a prompt that fills num_ctx shifts the slot and is fully re-prefilled next time,
+    which looks like a cache miss because it is one
 
   Not expected:
   - "tokens=0 " on any line (a sequence charged for time it did not spend)
