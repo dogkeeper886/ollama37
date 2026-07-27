@@ -105,26 +105,25 @@ steps:
       set -u
       m="${TEST_MODEL:-deepseek-r1:7b}"
 
-      # Count summaries before and after instead of filtering the log by time.
-      # Two earlier attempts at this step produced confident wrong verdicts from a
-      # mis-parsed --since window; a counter cannot read a neighbouring request.
+      # Count summaries before/after rather than filtering the log by time — earlier
+      # attempts produced confident wrong verdicts from a mis-parsed --since window.
       count() { docker logs ollama37 --since 30m 2>&1 | grep -c "msg=completion" || true; }
       before=$(count)
       echo "summaries before: $before"
 
-      # 120 tokens is ~15s at this model's rate; the client leaves at 5s.
-      #   hangup reaches the runner -> summary with reason=closed at ~5s
-      #   it does not               -> summary with reason=length at ~15s
-      # Capture the HTTP status so a rejected request cannot masquerade as either.
-      code=$(curl -s -o /tmp/disc-body.txt -w '%{http_code}' --max-time 5 \
+      # Cut at 20s, not 5s. This is a thinking model: its <think> block delays visible
+      # output, and a 5s cut landed before a single byte was streamed — so the absent
+      # summary proved nothing about the hangup. 20s at ~8 t/s is ~160 tokens, well
+      # into generation, and num_predict 400 keeps it running past the cut.
+      code=$(curl -s -o /tmp/disc-body.txt -w '%{http_code}' --max-time 20 \
         http://localhost:11434/api/generate \
-        -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":120}}" \
+        -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":400}}" \
         || echo "cut-off")
-      echo "curl status: $code (cut-off is the expected value — --max-time fired)"
-      echo "first bytes: $(head -c 200 /tmp/disc-body.txt 2>/dev/null)"
+      bytes=$(wc -c < /tmp/disc-body.txt 2>/dev/null || echo 0)
+      echo "curl status: $code, streamed bytes: $bytes"
 
-      if ! grep -q '"response"' /tmp/disc-body.txt 2>/dev/null; then
-        echo "REQUEST_BAD: the server streamed nothing back, so nothing was generated to summarise"
+      if [ "$bytes" -lt 100 ]; then
+        echo "REQUEST_BAD: only $bytes bytes streamed — generation was not underway when the client left"
       fi
 
       line=""
@@ -136,13 +135,19 @@ steps:
         fi
       done
 
-      echo "=== NEW SUMMARY AFTER DISCONNECT (waited ~$((i * 5))s) ==="
+      waited=$((i * 5))
+      echo "=== NEW SUMMARY AFTER DISCONNECT (waited ~${waited}s) ==="
       echo "${line:-NO_SUMMARY_AT_ALL}"
+
+      if [ -z "$line" ]; then
+        echo "=== what the runner logged instead ==="
+        docker logs ollama37 --tail 25 2>&1
+      fi
 
       case "$line" in
         *"reason=closed"*) echo "DISCONNECT_RESULT: closed — the hangup reached the runner" ;;
         *"reason=length"*) echo "DISCONNECT_RESULT: length — generation ran to completion; the hangup did not stop it" ;;
-        *"reason=stop"*)   echo "DISCONNECT_RESULT: stop — the model finished on its own before the window" ;;
+        *"reason=stop"*)   echo "DISCONNECT_RESULT: stop — the model finished on its own" ;;
         *"msg=completion"*) echo "DISCONNECT_RESULT: other — see the line above" ;;
         *)                 echo "DISCONNECT_RESULT: none — no new summary was written at all" ;;
       esac
