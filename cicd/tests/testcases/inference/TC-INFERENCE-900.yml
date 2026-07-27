@@ -111,7 +111,11 @@ steps:
       #                             reason=length at ~15s
       # Either way removeSequence runs and a summary is written; this distinguishes
       # which, instead of assuming.
-      cut=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      # Nanosecond precision, and a beat to let the previous step's request settle:
+      # a whole-second --since sweeps in a line from the same second, and tail -1
+      # then reads the wrong request entirely.
+      sleep 3
+      cut=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
       curl -s --max-time 5 http://localhost:11434/api/generate \
         -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":120}}" \
         >/dev/null 2>&1 || true
@@ -126,6 +130,12 @@ steps:
       echo "=== SUMMARY AFTER DISCONNECT (waited ~$((i * 5))s) ==="
       echo "${line:-NO_SUMMARY_AT_ALL}"
 
+      # This request asked for 120 tokens; the neighbouring warm one asks for 20.
+      # If the line says 20 we are reading the wrong request and the verdict is void.
+      case "$line" in
+        *decode_tokens=20\ *) echo "WINDOW_BAD: matched the previous request, not this one" ;;
+      esac
+
       case "$line" in
         *"reason=closed"*) echo "DISCONNECT_RESULT: closed — the hangup reached the runner" ;;
         *"reason=length"*) echo "DISCONNECT_RESULT: length — generation ran to completion; the hangup did not stop it" ;;
@@ -136,6 +146,7 @@ steps:
       - "DISCONNECT_RESULT:"
     rejectPatterns:
       - "DISCONNECT_RESULT: none"
+      - "WINDOW_BAD"
 
   - name: Unload
     command: |
