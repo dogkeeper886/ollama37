@@ -372,7 +372,7 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	// client hung up mid-generation. Embeddings have neither phase to report, and a
 	// sequence removed before it computed anything has nothing to say.
 	if !seq.embeddingOnly && (seq.numPrefilled > 0 || seq.numPredicted > 0) {
-		common.Summary(reason.String(), seq.numPrefilled, seq.processingDuration, seq.numPredicted, seq.generationDuration)
+		common.Summary(seqIndex, reason.String(), seq.numPrefilled, seq.processingDuration, seq.numPredicted, seq.generationDuration)
 	}
 
 	seq.doneReason = reason
@@ -542,7 +542,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		if len(seq.inputs) != 0 {
 			seq.processingDuration += time.Since(t)
 			seq.numPrefilled += numPending
-			seq.progress.Prefill(seq.numPrefilled, len(seq.inputs), seq.processingDuration)
+			seq.progress.Prefill(i, seq.numPrefilled, len(seq.inputs), seq.processingDuration)
 			continue
 		}
 
@@ -554,6 +554,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			// the batch that emptied seq.inputs finished the prompt, so its tokens
 			// are prefill even though this pass goes on to sample
 			seq.numPrefilled += numPending
+			seq.progress.PrefillDone(i, seq.numPrefilled, seq.processingDuration)
 		}
 
 		// if done processing the prompt, generate an embedding and return
@@ -574,7 +575,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		piece := s.model.TokenToPiece(token)
 
 		seq.numPredicted++
-		seq.progress.Decode(seq.numPredicted, seq.generationDuration)
+		seq.progress.Decode(i, seq.numPredicted, seq.generationDuration)
 
 		// if it's an end of sequence token, break
 		if s.model.TokenIsEog(token) {

@@ -11,8 +11,8 @@ import (
 // operator watching `docker logs` sees while a request is still running — on a
 // K80 that can be minutes of otherwise total silence.
 //
-// The shape is ported from llama.cpp's server, which prints the same three kinds
-// of line (tools/server/server-context.cpp: print_timings_pp, print_timings_tg,
+// The shape is ported from llama.cpp's server, which prints the same kinds of
+// line (tools/server/server-context.cpp: print_timings_pp, print_timings_tg,
 // print_timings). We can't inherit them: this fork vendors llama.cpp without
 // tools/server and serves inference from its own runners.
 //
@@ -34,32 +34,62 @@ type phase struct {
 }
 
 const (
-	// A prompt ingested faster than this reports no progress at all — only the
-	// summary. Anything slow enough to be worth watching crosses it.
-	progressMinPrefill = 3 * time.Second
+	// A phase faster than this says nothing — only the summary reports it. Anything
+	// slow enough to be worth watching crosses it.
+	//
+	// llama.cpp additionally holds decode back for its first 100 tokens, because on
+	// the hardware it targets 100 tokens can pass in under a second. Here that floor
+	// would buy silence, not quiet: at a K80's few tokens per second it is ~16 s of
+	// nothing after the prompt lands, and a request answering in under 100 tokens
+	// would never report a rate at all. The interval below already does the job.
+	progressMinElapsed = 3 * time.Second
 
-	// Smallest gap between two progress lines for the same sequence. Without it
-	// a long prompt would emit a line per batch.
+	// Smallest gap between two progress lines for the same sequence. Without it a
+	// long prompt would emit a line per batch.
 	progressInterval = 3 * time.Second
-
-	// Decode stays quiet until the rate means something.
-	progressMinDecoded = 100
 )
 
 // Prefill reports how far through its prompt a sequence is. tokens must count
 // only the tokens actually pushed through a batch — a prefix served from the KV
 // cache was never computed, and including it reports a rate the hardware cannot
 // reach. remaining is what is still to ingest.
-func (p *Progress) Prefill(tokens, remaining int, elapsed time.Duration) {
-	if elapsed < progressMinPrefill || !p.prefill.due(elapsed, tokens) {
+//
+// Note that tokens and remaining therefore describe the *uncached* work, not the
+// prompt: on a warm multi-turn request they sum to far less than the prompt the
+// caller sent. Neither is named as a prompt size for that reason.
+func (p *Progress) Prefill(seq, tokens, remaining int, elapsed time.Duration) {
+	// With more than one sequence in flight, a sequence can be shut out of a batch
+	// entirely (no room, or the batch is the other input type) and still be charged
+	// for the time it took. Nothing was computed for it, so there is nothing to say.
+	if tokens == 0 {
 		return
 	}
 
-	total := tokens + remaining
+	if elapsed < progressMinElapsed || !p.prefill.due(elapsed, tokens) {
+		return
+	}
+
 	slog.Info("prefill progress",
+		"seq", seq,
 		"tokens", tokens,
-		"total", total,
-		"progress", round(float64(tokens)/float64(total)),
+		"remaining", remaining,
+		"progress", round(float64(tokens)/float64(tokens+remaining)),
+		"elapsed", elapsed.Round(time.Millisecond),
+		"tps", rate(tokens, elapsed))
+}
+
+// PrefillDone reports the finished prompt. It closes the gap the throttled lines
+// leave: the last of those is always a partial fraction, and decode then has its
+// own quiet spell before it can report a rate, so without this an operator cannot
+// tell a prompt that landed from one that stalled.
+func (p *Progress) PrefillDone(seq, tokens int, elapsed time.Duration) {
+	if elapsed < progressMinElapsed {
+		return
+	}
+
+	slog.Info("prefill done",
+		"seq", seq,
+		"tokens", tokens,
 		"elapsed", elapsed.Round(time.Millisecond),
 		"tps", rate(tokens, elapsed))
 }
@@ -67,8 +97,8 @@ func (p *Progress) Prefill(tokens, remaining int, elapsed time.Duration) {
 // Decode reports generation speed while it is still generating. It carries a
 // recent-window rate alongside the lifetime one: a model slowing down as its KV
 // cache fills is visible in the window long before it moves the average.
-func (p *Progress) Decode(tokens int, elapsed time.Duration) {
-	if tokens < progressMinDecoded {
+func (p *Progress) Decode(seq, tokens int, elapsed time.Duration) {
+	if elapsed < progressMinElapsed {
 		return
 	}
 
@@ -83,6 +113,7 @@ func (p *Progress) Decode(tokens int, elapsed time.Duration) {
 	}
 
 	slog.Info("decode progress",
+		"seq", seq,
 		"tokens", tokens,
 		"elapsed", elapsed.Round(time.Millisecond),
 		"tps", rate(tokens, elapsed),
@@ -92,13 +123,17 @@ func (p *Progress) Decode(tokens int, elapsed time.Duration) {
 // Summary logs a request's totals for both phases. Unthrottled: exactly one line
 // per sequence, whatever ended it — including a client that hung up mid-
 // generation, which is the case a caller-side log would miss.
-func Summary(reason string, prefillTokens int, prefillElapsed time.Duration, decodeTokens int, decodeElapsed time.Duration) {
+//
+// prefillTokens is the computed prefill, so it is below the API's
+// prompt_eval_count whenever the cache served part of the prompt.
+func Summary(seq int, reason string, prefillTokens int, prefillElapsed time.Duration, decodeTokens int, decodeElapsed time.Duration) {
 	if reason == "" {
 		// llm.DoneReason.String() has no text for a closed connection.
 		reason = "closed"
 	}
 
 	slog.Info("completion",
+		"seq", seq,
 		"reason", reason,
 		"prefill_tokens", prefillTokens,
 		"prefill_elapsed", prefillElapsed.Round(time.Millisecond),
