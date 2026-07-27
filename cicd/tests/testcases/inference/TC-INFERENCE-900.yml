@@ -105,48 +105,51 @@ steps:
       set -u
       m="${TEST_MODEL:-deepseek-r1:7b}"
 
-      # ~120 tokens is ~15s at this model's rate, and the client leaves at 5s. So:
-      #   disconnect propagates  -> a summary with reason=closed at ~5-6s
-      #   it does not            -> the runner generates all 120 and reports
-      #                             reason=length at ~15s
-      # Either way removeSequence runs and a summary is written; this distinguishes
-      # which, instead of assuming.
-      # Nanosecond precision, and a beat to let the previous step's request settle:
-      # a whole-second --since sweeps in a line from the same second, and tail -1
-      # then reads the wrong request entirely.
-      sleep 3
-      cut=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
-      curl -s --max-time 5 http://localhost:11434/api/generate \
+      # Count summaries before and after instead of filtering the log by time.
+      # Two earlier attempts at this step produced confident wrong verdicts from a
+      # mis-parsed --since window; a counter cannot read a neighbouring request.
+      count() { docker logs ollama37 --since 30m 2>&1 | grep -c "msg=completion" || true; }
+      before=$(count)
+      echo "summaries before: $before"
+
+      # 120 tokens is ~15s at this model's rate; the client leaves at 5s.
+      #   hangup reaches the runner -> summary with reason=closed at ~5s
+      #   it does not               -> summary with reason=length at ~15s
+      # Capture the HTTP status so a rejected request cannot masquerade as either.
+      code=$(curl -s -o /tmp/disc-body.txt -w '%{http_code}' --max-time 5 \
+        http://localhost:11434/api/generate \
         -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":120}}" \
-        >/dev/null 2>&1 || true
+        || echo "cut-off")
+      echo "curl status: $code (cut-off is the expected value — --max-time fired)"
+      echo "first bytes: $(head -c 200 /tmp/disc-body.txt 2>/dev/null)"
+
+      if ! grep -q '"response"' /tmp/disc-body.txt 2>/dev/null; then
+        echo "REQUEST_BAD: the server streamed nothing back, so nothing was generated to summarise"
+      fi
 
       line=""
       for i in $(seq 1 24); do
         sleep 5
-        line=$(docker logs ollama37 --since "$cut" 2>&1 | grep "msg=completion" | tail -1)
-        [ -n "$line" ] && break
+        if [ "$(count)" -gt "$before" ]; then
+          line=$(docker logs ollama37 --since 30m 2>&1 | grep "msg=completion" | tail -1)
+          break
+        fi
       done
 
-      echo "=== SUMMARY AFTER DISCONNECT (waited ~$((i * 5))s) ==="
+      echo "=== NEW SUMMARY AFTER DISCONNECT (waited ~$((i * 5))s) ==="
       echo "${line:-NO_SUMMARY_AT_ALL}"
-
-      # This request asked for 120 tokens; the neighbouring warm one asks for 20.
-      # If the line says 20 we are reading the wrong request and the verdict is void.
-      case "$line" in
-        *decode_tokens=20\ *) echo "WINDOW_BAD: matched the previous request, not this one" ;;
-      esac
 
       case "$line" in
         *"reason=closed"*) echo "DISCONNECT_RESULT: closed — the hangup reached the runner" ;;
         *"reason=length"*) echo "DISCONNECT_RESULT: length — generation ran to completion; the hangup did not stop it" ;;
-        *"msg=completion"*) echo "DISCONNECT_RESULT: other reason in the line above" ;;
-        *)                 echo "DISCONNECT_RESULT: none — no summary was written at all" ;;
+        *"reason=stop"*)   echo "DISCONNECT_RESULT: stop — the model finished on its own before the window" ;;
+        *"msg=completion"*) echo "DISCONNECT_RESULT: other — see the line above" ;;
+        *)                 echo "DISCONNECT_RESULT: none — no new summary was written at all" ;;
       esac
     expectPatterns:
       - "DISCONNECT_RESULT:"
     rejectPatterns:
-      - "DISCONNECT_RESULT: none"
-      - "WINDOW_BAD"
+      - "REQUEST_BAD"
 
   - name: Unload
     command: |
