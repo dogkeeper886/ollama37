@@ -99,6 +99,35 @@ steps:
       - "CUDA error"
       - "tokens=0 "
 
+  - name: A client that hangs up mid-generation still gets a summary
+    timeout: 300000
+    command: |
+      set -u
+      m="${TEST_MODEL:-deepseek-r1:7b}"
+
+      cut=$(date -u +%Y-%m-%dT%H:%M:%S)
+      # Ask for far more than it can produce in the time allowed, then cut the
+      # connection. The runner tears the sequence down with DoneReasonConnectionClosed,
+      # whose String() is empty — the summary should say "closed", not blank.
+      curl -s --max-time 8 http://localhost:11434/api/generate \
+        -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":500}}" \
+        >/dev/null 2>&1 || true
+
+      sleep 5
+      echo "=== LOG LINES (after disconnect) ==="
+      docker logs ollama37 --since "$cut" 2>&1 | grep -E "msg=completion" || echo "NO_DISCONNECT_SUMMARY"
+
+      if docker logs ollama37 --since "$cut" 2>&1 | grep -q "msg=completion.*reason=closed"; then
+        echo "DISCONNECT_OK: summary written with reason=closed"
+      else
+        echo "DISCONNECT_BAD: no reason=closed summary after the client hung up"
+      fi
+    expectPatterns:
+      - "DISCONNECT_OK"
+    rejectPatterns:
+      - "DISCONNECT_BAD"
+      - "NO_DISCONNECT_SUMMARY"
+
   - name: Unload
     command: |
       m="${TEST_MODEL:-deepseek-r1:7b}"
