@@ -42,7 +42,7 @@ steps:
       body=$(jq -nc --arg m "$m" --arg p "$long" \
         '{model:$m, prompt:$p, stream:false, options:{num_predict:150, num_ctx:8192}}')
 
-      start=$(date -u +%Y-%m-%dT%H:%M:%S)
+      start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       echo "=== COLD REQUEST (since $start) ==="
       curl -s http://localhost:11434/api/generate -d "$body" \
         | jq -r '"API: prompt_eval_count=\(.prompt_eval_count) prompt_eval_duration=\(.prompt_eval_duration) eval_count=\(.eval_count) eval_duration=\(.eval_duration)"'
@@ -67,7 +67,7 @@ steps:
       echo "=== WARM: priming request ==="
       curl -s http://localhost:11434/api/generate -d "$sbody" >/dev/null
 
-      warm=$(date -u +%Y-%m-%dT%H:%M:%S)
+      warm=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       echo "=== WARM: repeat of the same prompt (since $warm) ==="
       api_count=$(curl -s http://localhost:11434/api/generate -d "$sbody" | jq -r '.prompt_eval_count')
       echo "API: prompt_eval_count=$api_count"
@@ -105,7 +105,7 @@ steps:
       set -u
       m="${TEST_MODEL:-deepseek-r1:7b}"
 
-      cut=$(date -u +%Y-%m-%dT%H:%M:%S)
+      cut=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       # Ask for far more than it can produce in the time allowed, then cut the
       # connection. The runner tears the sequence down with DoneReasonConnectionClosed,
       # whose String() is empty — the summary should say "closed", not blank.
@@ -113,12 +113,24 @@ steps:
         -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":500}}" \
         >/dev/null 2>&1 || true
 
-      sleep 5
+      # The runner does not learn of the hangup until a send BLOCKS: seq.responses
+      # is buffered to 100, so it keeps generating into the buffer and only then
+      # picks the quit branch in flushPending. At this model's rate that is ~12s
+      # after the client left, so poll rather than grep once.
+      found=""
+      for i in $(seq 1 12); do
+        sleep 5
+        if docker logs ollama37 --since "$cut" 2>&1 | grep -q "msg=completion.*reason=closed"; then
+          found="yes"
+          break
+        fi
+      done
+
       echo "=== LOG LINES (after disconnect) ==="
       docker logs ollama37 --since "$cut" 2>&1 | grep -E "msg=completion" || echo "NO_DISCONNECT_SUMMARY"
 
-      if docker logs ollama37 --since "$cut" 2>&1 | grep -q "msg=completion.*reason=closed"; then
-        echo "DISCONNECT_OK: summary written with reason=closed"
+      if [ -n "$found" ]; then
+        echo "DISCONNECT_OK: summary written with reason=closed after ~$((i * 5))s"
       else
         echo "DISCONNECT_BAD: no reason=closed summary after the client hung up"
       fi
