@@ -1,0 +1,98 @@
+id: TC-INFERENCE-900
+name: Prefill/decode progress lines appear in the container log
+suite: inference
+priority: 900
+timeout: 900000
+dependencies: []
+intent:
+  user_story: |
+    TEMPORARY verification scaffolding for #464 (STORY-023). Confirms that a long
+    request writes prefill and decode progress to the container log *while it runs*,
+    and a summary when it ends.
+
+  notes: |
+    DELETE THIS FILE before the PR. It asserts llamarunner-only behaviour, so it fails
+    on any model the Go engine claims (gemma3, qwen3*, gpt-oss, … — see
+    fs/ggml/ggml.go OllamaEngineRequired), including the inference suite's default
+    gemma3:4b. Run it explicitly with a llama.cpp-engine model:
+
+      gh workflow run test-inference.yml --ref issue-464-prefill-decode-log \
+        -f runner_label=sm37 -f test_id=TC-INFERENCE-900 -f model=deepseek-r1:7b
+
+    Once #465 instruments the Go engine too, a permanent testcase can assert these
+    lines for any model.
+
+steps:
+  - name: Long request, then read the log it wrote while running
+    timeout: 900000
+    command: |
+      set -u
+      m="${TEST_MODEL:-deepseek-r1:7b}"
+
+      docker exec ollama37 ollama show "$m" >/dev/null 2>&1 || docker exec ollama37 ollama pull "$m"
+
+      # ~6k tokens of prompt so prefill runs well past the 3s floor the lines gate on
+      para="The Tesla K80 is a dual-GPU accelerator built on the Kepler architecture with compute capability 3.7. "
+      long=""
+      for i in $(seq 1 400); do long="$long$para"; done
+      long="$long
+
+      Summarise the paragraph above in two sentences."
+
+      body=$(jq -nc --arg m "$m" --arg p "$long" \
+        '{model:$m, prompt:$p, stream:false, options:{num_predict:150, num_ctx:8192}}')
+
+      start=$(date -u +%Y-%m-%dT%H:%M:%S)
+      echo "=== COLD REQUEST (since $start) ==="
+      curl -s http://localhost:11434/api/generate -d "$body" \
+        | jq -r '"API: prompt_eval_count=\(.prompt_eval_count) prompt_eval_duration=\(.prompt_eval_duration) eval_count=\(.eval_count) eval_duration=\(.eval_duration)"'
+
+      echo "=== LOG LINES (cold) ==="
+      docker logs ollama37 --since "$start" 2>&1 \
+        | grep -E "prefill progress|prefill done|decode progress|msg=completion" || echo "NO_PROGRESS_LINES"
+
+      # Same prompt again: the cache serves the prefix, so prefill_tokens must fall
+      # well below the API's prompt_eval_count instead of reporting an impossible rate
+      warm=$(date -u +%Y-%m-%dT%H:%M:%S)
+      echo "=== WARM REQUEST (since $warm) ==="
+      curl -s http://localhost:11434/api/generate -d "$body" \
+        | jq -r '"API: prompt_eval_count=\(.prompt_eval_count) prompt_eval_duration=\(.prompt_eval_duration)"'
+
+      echo "=== LOG LINES (warm) ==="
+      docker logs ollama37 --since "$warm" 2>&1 \
+        | grep -E "prefill done|msg=completion" || echo "NO_WARM_LINES"
+
+    expectPatterns:
+      - "prefill progress"
+      - "prefill done"
+      - "decode progress"
+      - "msg=completion"
+    rejectPatterns:
+      - "NO_PROGRESS_LINES"
+      - "CUDA error"
+      - "tokens=0 "
+
+  - name: Unload
+    command: |
+      m="${TEST_MODEL:-deepseek-r1:7b}"
+      curl -s http://localhost:11434/api/generate -d "{\"model\":\"$m\",\"keep_alive\":0}" >/dev/null
+      echo "UNLOADED"
+    expectPatterns:
+      - "UNLOADED"
+
+criteria: |
+  A long request must write progress to the container log while it is still running.
+
+  Expected in the cold run's log:
+  - one or more "prefill progress" lines with rising tokens and a tps value
+  - a "prefill done" line when the prompt lands
+  - one or more "decode progress" lines carrying tps and tps_recent
+  - a "completion" line with both phases' tokens/elapsed/tps
+
+  Expected in the warm run:
+  - a "completion" line whose prefill_tokens is far below the API's prompt_eval_count
+    for the same request — the cached prefix cost no compute, so counting it would
+    report a prefill rate the hardware cannot reach
+
+  Not expected:
+  - "tokens=0 " on any line (a sequence charged for time it did not spend)
