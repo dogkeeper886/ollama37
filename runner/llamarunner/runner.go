@@ -541,8 +541,17 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
 			seq.processingDuration += time.Since(t)
-			seq.numPrefilled += numPending
-			seq.progress.Prefill(i, seq.numPrefilled, len(seq.inputs), seq.processingDuration)
+
+			// Only a pass that actually put tokens in the batch is prefill progress.
+			// With more than one sequence in flight a sequence can be shut out of a
+			// batch — no room, or the batch is the other input type — and a decoding
+			// sequence whose single sampled token is the one shut out still arrives
+			// here with an input outstanding. Reporting those would label generation
+			// as prefill and re-print a stale count with a decaying rate.
+			if numPending > 0 {
+				seq.numPrefilled += numPending
+				seq.progress.Prefill(i, seq.numPrefilled, len(seq.inputs), seq.processingDuration)
+			}
 			continue
 		}
 

@@ -57,14 +57,16 @@ const (
 // Note that tokens and remaining therefore describe the *uncached* work, not the
 // prompt: on a warm multi-turn request they sum to far less than the prompt the
 // caller sent. Neither is named as a prompt size for that reason.
+//
+// Call this only from a pass that actually placed tokens in the batch. A sequence
+// shut out of a batch is still charged the time, and reporting it would re-print a
+// stale count at a decaying rate — the caller has the per-pass count and this does
+// not, so the check cannot live here.
+//
+// elapsed is that sequence's share of shared batch time, not hardware time: every
+// live sequence is charged the whole batch, so with several prefilling at once each
+// one's tps reads low. It is the same duration the API reports for the request.
 func (p *Progress) Prefill(seq, tokens, remaining int, elapsed time.Duration) {
-	// With more than one sequence in flight, a sequence can be shut out of a batch
-	// entirely (no room, or the batch is the other input type) and still be charged
-	// for the time it took. Nothing was computed for it, so there is nothing to say.
-	if tokens == 0 {
-		return
-	}
-
 	if elapsed < progressMinElapsed || !p.prefill.due(elapsed, tokens) {
 		return
 	}
@@ -82,6 +84,10 @@ func (p *Progress) Prefill(seq, tokens, remaining int, elapsed time.Duration) {
 // leave: the last of those is always a partial fraction, and decode then has its
 // own quiet spell before it can report a rate, so without this an operator cannot
 // tell a prompt that landed from one that stalled.
+//
+// For an embedding sequence this is the terminal line — there is no decode phase,
+// and Summary is deliberately not called for one (a summary per embedding would
+// flood a bulk indexing run, which the min-elapsed gate here already keeps quiet).
 func (p *Progress) PrefillDone(seq, tokens int, elapsed time.Duration) {
 	if elapsed < progressMinElapsed {
 		return
@@ -126,6 +132,13 @@ func (p *Progress) Decode(seq, tokens int, elapsed time.Duration) {
 //
 // prefillTokens is the computed prefill, so it is below the API's
 // prompt_eval_count whenever the cache served part of the prompt.
+//
+// Both durations are the ones the API reports for the same request, kept identical
+// on purpose so the log and the API never disagree. That inherits their quirks:
+// decodeElapsed covers one step fewer than decodeTokens counts (the first token's
+// compute is charged to prefill), so a one-token generation reads
+// decode_tokens=1 decode_elapsed=0s decode_tps=0, and a short one overstates the
+// rate a little. Correcting it here would make the log contradict the API.
 func Summary(seq int, reason string, prefillTokens int, prefillElapsed time.Duration, decodeTokens int, decodeElapsed time.Duration) {
 	if reason == "" {
 		// llm.DoneReason.String() has no text for a closed connection.
