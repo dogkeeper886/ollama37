@@ -51,6 +51,10 @@ workflows cover the common cases:
 | `test-throughput.yml` | generation tok/s at a chosen `context_size` (`bench-throughput`) |
 | `test-mcp.yml` | long-context / tool-use decode over a large merged tool menu |
 
+For a single request, the server also reports prefill and decode speed in its own log as it
+runs — see [Reading prefill and decode speed in the server log](./server-log-metrics.md),
+which also covers where those numbers deliberately differ from the API's.
+
 FA and KV-cache type are server-global env vars set in `docker/docker-compose.yml`
 (`OLLAMA_FLASH_ATTENTION`, `OLLAMA_KV_CACHE_TYPE`), overridable via `docker/.env`. To A/B a
 setting, change `docker/.env`, recreate the container (`docker compose up -d`), run the
