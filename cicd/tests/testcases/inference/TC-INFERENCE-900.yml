@@ -1,0 +1,189 @@
+id: TC-INFERENCE-900
+name: Prefill/decode progress lines appear in the container log (Go engine)
+suite: inference
+priority: 900
+timeout: 900000
+dependencies: []
+intent:
+  user_story: |
+    TEMPORARY verification scaffolding for #465 (STORY-023). Confirms the Go engine
+    writes prefill and decode progress to the container log *while a request runs*,
+    and a summary when it ends — matching what #464 verified for the llama.cpp engine.
+
+  notes: |
+    DELETE THIS FILE before the PR.
+
+    Unlike the #464 version, this one wants a model the **Go engine** claims —
+    `gemma3:4b` (the inference suite's own default) is in `OllamaEngineRequired()`
+    (fs/ggml/ggml.go), so the plain suite default is correct here:
+
+      gh workflow run test-inference.yml --ref issue-465-ollamarunner-progress \
+        -f runner_label=sm37 -f test_id=TC-INFERENCE-900
+
+    Method notes, all learned the hard way on #464:
+      - Count summary lines before/after rather than filtering `docker logs` by time.
+        A bare `--since` timestamp is read as LOCAL time, and even a correct one has
+        whole-second granularity that sweeps in a neighbouring request — which
+        produced two confident wrong verdicts before it was caught.
+      - Assert bytes actually streamed before judging a disconnect. A cut that lands
+        before the first token proves nothing, and `curl -s >/dev/null` hides it.
+
+steps:
+  - name: Long request, then read the log it wrote while running
+    timeout: 900000
+    command: |
+      set -u
+      m="${TEST_MODEL:-gemma3:4b}"
+
+      docker exec ollama37 ollama show "$m" >/dev/null 2>&1 || docker exec ollama37 ollama pull "$m"
+
+      para="The Tesla K80 is a dual-GPU accelerator built on the Kepler architecture with compute capability 3.7. "
+      long=""
+      for i in $(seq 1 400); do long="$long$para"; done
+      long="$long
+
+      Summarise the paragraph above in two sentences."
+
+      body=$(jq -nc --arg m "$m" --arg p "$long" \
+        '{model:$m, prompt:$p, stream:false, options:{num_predict:150, num_ctx:8192}}')
+
+      start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      echo "=== COLD REQUEST ==="
+      curl -s http://localhost:11434/api/generate -d "$body" \
+        | jq -r '"API: prompt_eval_count=\(.prompt_eval_count) prompt_eval_duration=\(.prompt_eval_duration) eval_count=\(.eval_count) eval_duration=\(.eval_duration)"'
+
+      echo "=== LOG LINES (cold) ==="
+      docker logs ollama37 --since "$start" 2>&1 \
+        | grep -E "prefill progress|prefill done|decode progress|msg=completion" || echo "NO_PROGRESS_LINES"
+
+      # --- warm cache ---------------------------------------------------------
+      # Short enough that generation does not push the total past num_ctx: a prompt
+      # that fills the window shifts the slot and is fully re-prefilled next time,
+      # which looks like a cache miss because it is one.
+      short=""
+      for i in $(seq 1 100); do short="$short$para"; done
+      short="$short
+
+      Reply with one short sentence."
+      sbody=$(jq -nc --arg m "$m" --arg p "$short" \
+        '{model:$m, prompt:$p, stream:false, options:{num_predict:20, num_ctx:8192}}')
+
+      echo "=== WARM: priming request ==="
+      curl -s http://localhost:11434/api/generate -d "$sbody" >/dev/null
+
+      count() { docker logs ollama37 --since 30m 2>&1 | grep -c "msg=completion" || true; }
+      before=$(count)
+
+      echo "=== WARM: repeat of the same prompt ==="
+      api_count=$(curl -s http://localhost:11434/api/generate -d "$sbody" | jq -r '.prompt_eval_count')
+      echo "API: prompt_eval_count=$api_count"
+
+      line=""
+      for i in $(seq 1 12); do
+        [ "$(count)" -gt "$before" ] && { line=$(docker logs ollama37 --since 30m 2>&1 | grep "msg=completion" | tail -1); break; }
+        sleep 5
+      done
+      echo "warm summary: ${line:-NONE}"
+
+      log_tokens=$(printf '%s' "$line" | sed -n 's/.*prefill_tokens=\([0-9]*\).*/\1/p')
+
+      # The API counts the whole prompt; the log counts only what was computed. If
+      # they match on a cache hit, the log is reporting a rate the hardware never hit.
+      if [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 100 ]; then
+        echo "WARM_CACHE_OK: log prefill_tokens=$log_tokens vs API prompt_eval_count=$api_count"
+      else
+        echo "WARM_CACHE_BAD: log prefill_tokens=${log_tokens:-none} vs API prompt_eval_count=$api_count"
+      fi
+
+    expectPatterns:
+      - "prefill progress"
+      - "prefill done"
+      - "decode progress"
+      - "msg=completion"
+      - "WARM_CACHE_OK"
+    rejectPatterns:
+      - "NO_PROGRESS_LINES"
+      - "WARM_CACHE_BAD"
+      - "CUDA error"
+      - "tokens=0 "
+
+  - name: What happens to the summary when a client hangs up mid-generation
+    timeout: 300000
+    command: |
+      set -u
+      m="${TEST_MODEL:-gemma3:4b}"
+
+      count() { docker logs ollama37 --since 30m 2>&1 | grep -c "msg=completion" || true; }
+      before=$(count)
+      echo "summaries before: $before"
+
+      # gemma3 is not a thinking model, so tokens stream promptly and a 10s cut lands
+      # well inside generation. num_predict 400 keeps it running past the cut.
+      code=$(curl -s -o /tmp/disc-body.txt -w '%{http_code}' --max-time 10 \
+        http://localhost:11434/api/generate \
+        -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":400}}" \
+        || echo "cut-off")
+      bytes=$(wc -c < /tmp/disc-body.txt 2>/dev/null || echo 0)
+      echo "curl status: $code, streamed bytes: $bytes"
+
+      if [ "$bytes" -lt 100 ]; then
+        echo "REQUEST_BAD: only $bytes bytes streamed — generation was not underway when the client left"
+      fi
+
+      line=""
+      for i in $(seq 1 24); do
+        sleep 5
+        if [ "$(count)" -gt "$before" ]; then
+          line=$(docker logs ollama37 --since 30m 2>&1 | grep "msg=completion" | tail -1)
+          break
+        fi
+      done
+
+      echo "=== NEW SUMMARY AFTER DISCONNECT (waited ~$((i * 5))s) ==="
+      echo "${line:-NO_SUMMARY_AT_ALL}"
+
+      if [ -z "$line" ]; then
+        echo "=== what the runner logged instead ==="
+        docker logs ollama37 --tail 25 2>&1
+      fi
+
+      case "$line" in
+        *"reason=closed"*) echo "DISCONNECT_RESULT: closed — the hangup reached the runner" ;;
+        *"reason=length"*) echo "DISCONNECT_RESULT: length — generation ran to completion; the hangup did not stop it" ;;
+        *"reason=stop"*)   echo "DISCONNECT_RESULT: stop — the model finished on its own" ;;
+        *"msg=completion"*) echo "DISCONNECT_RESULT: other — see the line above" ;;
+        *)                 echo "DISCONNECT_RESULT: none — no new summary was written at all" ;;
+      esac
+    expectPatterns:
+      - "DISCONNECT_RESULT:"
+    rejectPatterns:
+      - "REQUEST_BAD"
+
+  - name: Unload
+    command: |
+      m="${TEST_MODEL:-gemma3:4b}"
+      curl -s http://localhost:11434/api/generate -d "{\"model\":\"$m\",\"keep_alive\":0}" >/dev/null
+      echo "UNLOADED"
+    expectPatterns:
+      - "UNLOADED"
+
+criteria: |
+  The Go engine must write the same three kinds of line as the llama.cpp engine did
+  in #464, so an operator does not need to know which engine served their model.
+
+  Expected in the cold run's log:
+  - one or more "prefill progress" lines with rising tokens and a tps value
+  - a "prefill done" line when the prompt lands
+  - one or more "decode progress" lines carrying tps and tps_recent
+  - a "completion" line with both phases' tokens/elapsed/tps
+
+  Expected in the warm run (WARM_CACHE_OK):
+  - prefill_tokens far below the API's prompt_eval_count for the same request
+
+  Note this engine measures prefill as time-to-first-token, so its prefill_elapsed
+  includes waiting for a batch slot — it is not directly comparable to the llama.cpp
+  engine's compute-only figure for the same model.
+
+  Not expected:
+  - "tokens=0 " on any line
+  - a negative decode_elapsed (the mid-prefill teardown path)
