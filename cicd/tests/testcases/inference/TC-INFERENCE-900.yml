@@ -57,11 +57,13 @@ steps:
         | grep -E "prefill progress|prefill done|decode progress|msg=completion" || echo "NO_PROGRESS_LINES"
 
       # --- warm cache ---------------------------------------------------------
-      # NOT gemma3. It is a sliding-window model, and kvcache/causal.go CanResume
-      # refuses to resume a prefix once the window has moved past it, so a repeat
-      # re-prefills in full — a property of the cache, not of the counting under
-      # test. WARM_MODEL must be a non-SWA model the Go engine also claims.
-      wm="${WARM_MODEL:-qwen3.5:9b}"
+      # NOT gemma3: sliding-window, and kvcache/causal.go:666 CanResume refuses to
+      # resume once the window has moved past the prefix. qwen3.5:9b is no good
+      # either — DeltaNet, so kvcache/recurrent.go:449 needs a checkpoint at that
+      # exact position. Either way the repeat re-prefills in full, which is the
+      # cache's behaviour and not the counting under test. So the check below has
+      # to establish that a cache hit HAPPENED before it can judge the count.
+      wm="${WARM_MODEL:-ornith:9b}"
       if ! docker exec ollama37 ollama show "$wm" >/dev/null 2>&1; then
         echo "WARM_SKIPPED: $wm not present on this testbed"
       else
@@ -74,14 +76,17 @@ steps:
           '{model:$m, prompt:$p, stream:false, options:{num_predict:20, num_ctx:8192}}')
 
         echo "=== WARM: priming request ($wm) ==="
-        curl -s http://localhost:11434/api/generate -d "$sbody" >/dev/null
+        prime_ns=$(curl -s http://localhost:11434/api/generate -d "$sbody" | jq -r '.prompt_eval_duration')
+        echo "priming prompt_eval_duration=$prime_ns"
 
         count() { docker logs ollama37 --since 30m 2>&1 | grep -c "msg=completion" || true; }
         before=$(count)
 
         echo "=== WARM: repeat of the same prompt ==="
-        api_count=$(curl -s http://localhost:11434/api/generate -d "$sbody" | jq -r '.prompt_eval_count')
-        echo "API: prompt_eval_count=$api_count"
+        rep=$(curl -s http://localhost:11434/api/generate -d "$sbody")
+        api_count=$(printf '%s' "$rep" | jq -r '.prompt_eval_count')
+        rep_ns=$(printf '%s' "$rep" | jq -r '.prompt_eval_duration')
+        echo "API: prompt_eval_count=$api_count prompt_eval_duration=$rep_ns"
 
         line=""
         for i in $(seq 1 12); do
@@ -92,13 +97,23 @@ steps:
 
         log_tokens=$(printf '%s' "$line" | sed -n 's/.*prefill_tokens=\([0-9]*\).*/\1/p')
 
+        # Did a cache hit actually happen? If the repeat took anywhere near as long
+        # as the priming run, the prefix was recomputed and there is nothing to
+        # judge — that is the cache refusing to resume, not a counting error. Only
+        # a genuinely fast repeat can distinguish "counted what we computed" from
+        # "counted the cached prefix too".
+        hit=$(awk -v a="$rep_ns" -v b="$prime_ns" 'BEGIN{print (b>0 && a < b/4) ? "yes" : "no"}')
+        echo "cache hit: $hit (repeat ${rep_ns}ns vs priming ${prime_ns}ns)"
+
         # Threshold is 10, not 100: a fully cached prompt must report ~1. At
         # num_predict=20 a looser bound would still pass if prefill_tokens grew by
         # one per generated token, which is exactly the bug this needs to catch.
-        if [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 10 ]; then
+        if [ "$hit" != "yes" ]; then
+          echo "WARM_UNPROVEN: $wm re-prefilled instead of resuming, so the cached-prefix case was never exercised"
+        elif [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 10 ]; then
           echo "WARM_CACHE_OK: log prefill_tokens=$log_tokens vs API prompt_eval_count=$api_count"
         else
-          echo "WARM_CACHE_BAD: log prefill_tokens=${log_tokens:-none} vs API prompt_eval_count=$api_count"
+          echo "WARM_CACHE_BAD: log prefill_tokens=${log_tokens:-none} vs API prompt_eval_count=$api_count on a confirmed cache hit"
         fi
       fi
 
@@ -107,7 +122,6 @@ steps:
       - "prefill done"
       - "decode progress"
       - "msg=completion"
-      - "WARM_CACHE_OK"
     rejectPatterns:
       - "NO_PROGRESS_LINES"
       - "WARM_CACHE_BAD"
