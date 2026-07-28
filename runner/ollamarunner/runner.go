@@ -718,13 +718,24 @@ func (s *Server) computeBatch(activeBatch batchState) {
 				panic("caching disabled but unable to fit entire input in a batch")
 			}
 
-			// Report before counting this batch: unlike the llama.cpp engine, this
-			// runs *before* Compute for these tokens, so numPrefilled is the count
-			// that is genuinely through the GPU and the pending batch is still
-			// outstanding. Elapsed is wall time since the sequence entered a batch,
-			// which is what processingDuration will be measured from.
-			if numPending > 0 {
-				seq.progress.Prefill(i, seq.numPrefilled, len(seq.inputs)+numPending, time.Since(seq.startedAt))
+			// Only the initial prompt is prefill. A cache shift that cannot shift
+			// (ErrReprocessInputs, cache.go) refills seq.inputs mid-generation and
+			// brings us back here — but by then processingDuration is frozen at
+			// time-to-first-token and startedAt has been reset to it, so counting
+			// those tokens would divide a growing count by a fixed duration and
+			// report a rate the hardware never reached. Skip the phase entirely
+			// rather than mislabel generation as prefill; the decode lines carry on.
+			// The matching guard is on the branch below, so the two agree.
+			if seq.numPredicted == 0 && numPending > 0 {
+				// Report before counting this batch: unlike the llama.cpp engine, this
+				// runs *before* Compute for these tokens, so numPrefilled is the count
+				// that is genuinely through the GPU and the pending batch is still
+				// outstanding. That makes the very first pass zero — nothing has been
+				// computed yet — and a sequence queued behind another batch for longer
+				// than the report floor would otherwise open with tokens=0 tps=0.
+				if seq.numPrefilled > 0 {
+					seq.progress.Prefill(i, seq.numPrefilled, len(seq.inputs)+numPending, time.Since(seq.startedAt))
+				}
 				seq.numPrefilled += numPending
 			}
 			continue
