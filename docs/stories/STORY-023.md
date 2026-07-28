@@ -68,4 +68,4 @@ serves inference from its own Go runners and so gets none of it.
 
 - Created: 2026-07-27
 - Plan: #462
-- Issues: #464 (PR #468 open), #465, #466, #467 (#463 folded into #464 at task review)
+- Issues: #464 (merged, PR #468), #465 (PR #469 open), #466, #467 (#463 folded into #464 at task review)
