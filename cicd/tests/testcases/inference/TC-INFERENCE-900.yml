@@ -89,7 +89,10 @@ steps:
 
       # The API counts the whole prompt; the log counts only what was computed. If
       # they match on a cache hit, the log is reporting a rate the hardware never hit.
-      if [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 100 ]; then
+      # Threshold is 10, not 100: a fully cached prompt must report ~1. At
+      # num_predict=20 a looser bound would still pass if prefill_tokens grew by one
+      # per generated token, which is exactly the bug this needs to catch.
+      if [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 10 ]; then
         echo "WARM_CACHE_OK: log prefill_tokens=$log_tokens vs API prompt_eval_count=$api_count"
       else
         echo "WARM_CACHE_BAD: log prefill_tokens=${log_tokens:-none} vs API prompt_eval_count=$api_count"
@@ -158,6 +161,10 @@ steps:
       - "DISCONNECT_RESULT:"
     rejectPatterns:
       - "REQUEST_BAD"
+      # Without these the step passes green on the one outcome it exists to catch:
+      # every case branch prints the DISCONNECT_RESULT prefix, including "none".
+      - "DISCONNECT_RESULT: none"
+      - "NO_SUMMARY_AT_ALL"
 
   - name: Unload
     command: |

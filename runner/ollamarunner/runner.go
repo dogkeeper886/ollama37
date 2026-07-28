@@ -417,15 +417,19 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	// sequence removed before it computed anything has nothing to say.
 	if !seq.embeddingOnly && (seq.numPrefilled > 0 || seq.numPredicted > 0) {
 		// Unlike the llama.cpp engine, neither duration accumulates as it goes here:
-		// processingDuration is only written when the first token lands, and
-		// lastUpdatedAt is the zero time until then. A sequence killed mid-prefill
-		// would otherwise report no prefill time and a wildly negative decode time.
+		// processingDuration and lastUpdatedAt are both written only when the first
+		// token lands. Test lastUpdatedAt, not numPredicted — numPredicted is raised
+		// in computeBatch's first loop, before the lock is dropped for Compute, and
+		// forwardBatch can remove the sequence in that window (a num_predict limit,
+		// or the context limit with shift off). Gating on numPredicted would then
+		// subtract from the zero time and log decode_elapsed=-2562047h47m16.854s.
 		prefillElapsed := seq.processingDuration
 		var decodeElapsed time.Duration
 
-		if seq.numPredicted > 0 {
+		switch {
+		case !seq.lastUpdatedAt.IsZero():
 			decodeElapsed = seq.lastUpdatedAt.Sub(seq.startedAt) - seq.samplingDuration
-		} else if !seq.startedAt.IsZero() {
+		case !seq.startedAt.IsZero():
 			prefillElapsed = time.Since(seq.startedAt)
 		}
 
@@ -726,8 +730,13 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
-		// the batch that emptied seq.inputs finished the prompt
-		seq.numPrefilled += numPending
+		// The batch that emptied seq.inputs finished the prompt — but every decode
+		// step also lands here, with the placeholder next-token as its one pending
+		// input. Only count while no token has been predicted yet, or prefill_tokens
+		// grows by one per generated token and reports a rate never achieved.
+		if seq.numPredicted == 0 {
+			seq.numPrefilled += numPending
+		}
 
 		seq.numPredicted++
 		nextToken := &input.Input{Token: 0} // placeholder we'll fill in after Compute/Floats
