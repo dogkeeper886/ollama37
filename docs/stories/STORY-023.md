@@ -68,7 +68,10 @@ serves inference from its own Go runners and so gets none of it.
 
 - Created: 2026-07-27
 - Plan: #462
-- Issues: #464 (merged, PR #468), #465 (merged, PR #469), #466, #467
+- Issues: #464 (merged, PR #468), #465 (merged, PR #469), #466 open
   (#463 folded into #464 at task review)
-- Spun out: #470 (qwen3.5 cache never resumes — bug), #471 (wall clock vs measured
-  phases), #472 (ci-apply retag check)
+- Closed not-planned: #467 (K80 no-harm sweep — the logging ships unmeasured;
+  expected free, not proven), #470 (qwen3.5 family re-prefills instead of
+  resuming its cache, ~26s per turn), #471 (wall clock vs measured phases),
+  #472 (ci-apply retag check). Each carries its measurements in a closing
+  comment.
