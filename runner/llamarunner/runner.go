@@ -89,6 +89,15 @@ type Sequence struct {
 	generationDuration time.Duration
 	numDecoded         int
 	numPromptInputs    int
+
+	// numPrefilled counts prompt tokens this sequence actually pushed through a
+	// batch. It is not numPromptInputs, which is the whole prompt as it arrived —
+	// a prefix served from the cache costs no compute, so counting it would report
+	// a prefill rate the hardware never achieved.
+	numPrefilled int
+
+	// progress emits the prefill/decode progress lines to the log
+	progress common.Progress
 }
 
 type NewSequenceParams struct {
@@ -358,6 +367,14 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	seq := s.seqs[seqIndex]
 
 	flushPending(seq)
+
+	// Every termination lands here, so this is also the summary for a request whose
+	// client hung up mid-generation. Embeddings have neither phase to report, and a
+	// sequence removed before it computed anything has nothing to say.
+	if !seq.embeddingOnly && (seq.numPrefilled > 0 || seq.numPredicted > 0) {
+		common.Summary(seqIndex, reason.String(), seq.numPrefilled, seq.processingDuration, seq.numPredicted, seq.generationDuration)
+	}
+
 	seq.doneReason = reason
 	close(seq.responses)
 	close(seq.embedding)
@@ -515,7 +532,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// After calling Decode, pending inputs are now in the cache
-		if len(seq.pendingInputs) > 0 {
+		numPending := len(seq.pendingInputs)
+		if numPending > 0 {
 			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
 			seq.pendingInputs = []input{}
 		}
@@ -523,6 +541,17 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
 			seq.processingDuration += time.Since(t)
+
+			// Only a pass that actually put tokens in the batch is prefill progress.
+			// With more than one sequence in flight a sequence can be shut out of a
+			// batch — no room, or the batch is the other input type — and a decoding
+			// sequence whose single sampled token is the one shut out still arrives
+			// here with an input outstanding. Reporting those would label generation
+			// as prefill and re-print a stale count with a decaying rate.
+			if numPending > 0 {
+				seq.numPrefilled += numPending
+				seq.progress.Prefill(i, seq.numPrefilled, len(seq.inputs), seq.processingDuration)
+			}
 			continue
 		}
 
@@ -531,6 +560,10 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			seq.generationDuration += time.Since(t)
 		} else {
 			seq.processingDuration += time.Since(t)
+			// the batch that emptied seq.inputs finished the prompt, so its tokens
+			// are prefill even though this pass goes on to sample
+			seq.numPrefilled += numPending
+			seq.progress.PrefillDone(i, seq.numPrefilled, seq.processingDuration)
 		}
 
 		// if done processing the prompt, generate an embedding and return
@@ -551,6 +584,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		piece := s.model.TokenToPiece(token)
 
 		seq.numPredicted++
+		seq.progress.Decode(i, seq.numPredicted, seq.generationDuration)
 
 		// if it's an end of sequence token, break
 		if s.model.TokenIsEog(token) {
