@@ -66,9 +66,10 @@ serves inference from its own Go runners and so gets none of it.
 
 ## Status
 
+- **Completed: 2026-07-28**
 - Created: 2026-07-27
 - Plan: #462
-- Issues: #464 (merged, PR #468), #465 (merged, PR #469), #466 open
+- Completed: #464 (PR #468), #465 (PR #469), #466 (PR #473) — all merged
   (#463 folded into #464 at task review)
 - Closed not-planned: #467 (K80 no-harm sweep — the logging ships unmeasured;
   expected free, not proven), #470 (qwen3.5 family re-prefills instead of
