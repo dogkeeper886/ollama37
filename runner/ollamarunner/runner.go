@@ -99,6 +99,15 @@ type Sequence struct {
 	samplingDuration         time.Duration
 	numPredicted             int
 	numPromptInputs          int
+
+	// numPrefilled counts prompt tokens this sequence actually pushed through a
+	// batch. It is not numPromptInputs, which is the whole prompt as it arrived —
+	// a prefix served from the cache costs no compute, so counting it would report
+	// a prefill rate the hardware never achieved.
+	numPrefilled int
+
+	// progress emits the prefill/decode progress lines to the log
+	progress common.Progress
 }
 
 type NewSequenceParams struct {
@@ -402,6 +411,28 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	seq := s.seqs[seqIndex]
 
 	flushPending(seq)
+
+	// Every termination lands here, so this is also the summary for a request whose
+	// client hung up mid-generation. Embeddings have no decode phase to report, and a
+	// sequence removed before it computed anything has nothing to say.
+	if !seq.embeddingOnly && (seq.numPrefilled > 0 || seq.numPredicted > 0) {
+		// Unlike the llama.cpp engine, neither duration accumulates as it goes here:
+		// processingDuration is only written when the first token lands, and
+		// lastUpdatedAt is the zero time until then. A sequence killed mid-prefill
+		// would otherwise report no prefill time and a wildly negative decode time.
+		prefillElapsed := seq.processingDuration
+		var decodeElapsed time.Duration
+
+		if seq.numPredicted > 0 {
+			decodeElapsed = seq.lastUpdatedAt.Sub(seq.startedAt) - seq.samplingDuration
+		} else if !seq.startedAt.IsZero() {
+			prefillElapsed = time.Since(seq.startedAt)
+		}
+
+		common.Summary(seqIndex, reason.String(), seq.numPrefilled, prefillElapsed,
+			seq.numPredicted, decodeElapsed)
+	}
+
 	seq.doneReason = reason
 	close(seq.responses)
 	close(seq.embedding)
@@ -671,7 +702,8 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		// the computation. This is OK as long as we ensure that this batch's
 		// computation happens before any future batch's and we never fail
 		// (unless we take down the whole runner).
-		if len(seq.pendingInputs) > 0 {
+		numPending := len(seq.pendingInputs)
+		if numPending > 0 {
 			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
 			seq.pendingInputs = []*input.Input{}
 		}
@@ -681,8 +713,21 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			if !s.cache.enabled {
 				panic("caching disabled but unable to fit entire input in a batch")
 			}
+
+			// Report before counting this batch: unlike the llama.cpp engine, this
+			// runs *before* Compute for these tokens, so numPrefilled is the count
+			// that is genuinely through the GPU and the pending batch is still
+			// outstanding. Elapsed is wall time since the sequence entered a batch,
+			// which is what processingDuration will be measured from.
+			if numPending > 0 {
+				seq.progress.Prefill(i, seq.numPrefilled, len(seq.inputs)+numPending, time.Since(seq.startedAt))
+				seq.numPrefilled += numPending
+			}
 			continue
 		}
+
+		// the batch that emptied seq.inputs finished the prompt
+		seq.numPrefilled += numPending
 
 		seq.numPredicted++
 		nextToken := &input.Input{Token: 0} // placeholder we'll fill in after Compute/Floats
@@ -720,6 +765,9 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		if seq.numPredicted == 1 {
 			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
 			seq.startedAt = seq.lastUpdatedAt
+			// This engine measures prefill as time-to-first-token, so it includes
+			// waiting for a batch slot, not just compute.
+			seq.progress.PrefillDone(i, seq.numPrefilled, seq.processingDuration)
 		}
 
 		// if done processing the prompt, generate an embedding and return
@@ -801,6 +849,9 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	for i, seq := range s.seqs {
 		if seq != nil && nextBatchTokens[i] != nil {
 			s.seqs[i].samplingDuration += samplingDuration
+			// Reported here rather than in the loop above so samplingDuration is the
+			// current one — this is the same expression the API reports as EvalDuration.
+			seq.progress.Decode(i, seq.numPredicted, seq.lastUpdatedAt.Sub(seq.startedAt)-seq.samplingDuration)
 		}
 	}
 }
