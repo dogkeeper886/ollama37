@@ -42,7 +42,7 @@ steps:
       for i in $(seq 1 400); do long="$long$para"; done
       long="$long
 
-      Summarise the paragraph above in two sentences."
+      Now count from one to two hundred in words, one number per line."
 
       body=$(jq -nc --arg m "$m" --arg p "$long" \
         '{model:$m, prompt:$p, stream:false, options:{num_predict:150, num_ctx:8192}}')
@@ -57,45 +57,49 @@ steps:
         | grep -E "prefill progress|prefill done|decode progress|msg=completion" || echo "NO_PROGRESS_LINES"
 
       # --- warm cache ---------------------------------------------------------
-      # Short enough that generation does not push the total past num_ctx: a prompt
-      # that fills the window shifts the slot and is fully re-prefilled next time,
-      # which looks like a cache miss because it is one.
-      short=""
-      for i in $(seq 1 100); do short="$short$para"; done
-      short="$short
+      # NOT gemma3. It is a sliding-window model, and kvcache/causal.go CanResume
+      # refuses to resume a prefix once the window has moved past it, so a repeat
+      # re-prefills in full — a property of the cache, not of the counting under
+      # test. WARM_MODEL must be a non-SWA model the Go engine also claims.
+      wm="${WARM_MODEL:-qwen3.5:9b}"
+      if ! docker exec ollama37 ollama show "$wm" >/dev/null 2>&1; then
+        echo "WARM_SKIPPED: $wm not present on this testbed"
+      else
+        short=""
+        for i in $(seq 1 100); do short="$short$para"; done
+        short="$short
 
       Reply with one short sentence."
-      sbody=$(jq -nc --arg m "$m" --arg p "$short" \
-        '{model:$m, prompt:$p, stream:false, options:{num_predict:20, num_ctx:8192}}')
+        sbody=$(jq -nc --arg m "$wm" --arg p "$short" \
+          '{model:$m, prompt:$p, stream:false, options:{num_predict:20, num_ctx:8192}}')
 
-      echo "=== WARM: priming request ==="
-      curl -s http://localhost:11434/api/generate -d "$sbody" >/dev/null
+        echo "=== WARM: priming request ($wm) ==="
+        curl -s http://localhost:11434/api/generate -d "$sbody" >/dev/null
 
-      count() { docker logs ollama37 --since 30m 2>&1 | grep -c "msg=completion" || true; }
-      before=$(count)
+        count() { docker logs ollama37 --since 30m 2>&1 | grep -c "msg=completion" || true; }
+        before=$(count)
 
-      echo "=== WARM: repeat of the same prompt ==="
-      api_count=$(curl -s http://localhost:11434/api/generate -d "$sbody" | jq -r '.prompt_eval_count')
-      echo "API: prompt_eval_count=$api_count"
+        echo "=== WARM: repeat of the same prompt ==="
+        api_count=$(curl -s http://localhost:11434/api/generate -d "$sbody" | jq -r '.prompt_eval_count')
+        echo "API: prompt_eval_count=$api_count"
 
-      line=""
-      for i in $(seq 1 12); do
-        [ "$(count)" -gt "$before" ] && { line=$(docker logs ollama37 --since 30m 2>&1 | grep "msg=completion" | tail -1); break; }
-        sleep 5
-      done
-      echo "warm summary: ${line:-NONE}"
+        line=""
+        for i in $(seq 1 12); do
+          [ "$(count)" -gt "$before" ] && { line=$(docker logs ollama37 --since 30m 2>&1 | grep "msg=completion" | tail -1); break; }
+          sleep 5
+        done
+        echo "warm summary: ${line:-NONE}"
 
-      log_tokens=$(printf '%s' "$line" | sed -n 's/.*prefill_tokens=\([0-9]*\).*/\1/p')
+        log_tokens=$(printf '%s' "$line" | sed -n 's/.*prefill_tokens=\([0-9]*\).*/\1/p')
 
-      # The API counts the whole prompt; the log counts only what was computed. If
-      # they match on a cache hit, the log is reporting a rate the hardware never hit.
-      # Threshold is 10, not 100: a fully cached prompt must report ~1. At
-      # num_predict=20 a looser bound would still pass if prefill_tokens grew by one
-      # per generated token, which is exactly the bug this needs to catch.
-      if [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 10 ]; then
-        echo "WARM_CACHE_OK: log prefill_tokens=$log_tokens vs API prompt_eval_count=$api_count"
-      else
-        echo "WARM_CACHE_BAD: log prefill_tokens=${log_tokens:-none} vs API prompt_eval_count=$api_count"
+        # Threshold is 10, not 100: a fully cached prompt must report ~1. At
+        # num_predict=20 a looser bound would still pass if prefill_tokens grew by
+        # one per generated token, which is exactly the bug this needs to catch.
+        if [ -n "$log_tokens" ] && [ "$api_count" -gt 500 ] && [ "$log_tokens" -lt 10 ]; then
+          echo "WARM_CACHE_OK: log prefill_tokens=$log_tokens vs API prompt_eval_count=$api_count"
+        else
+          echo "WARM_CACHE_BAD: log prefill_tokens=${log_tokens:-none} vs API prompt_eval_count=$api_count"
+        fi
       fi
 
     expectPatterns:
@@ -122,9 +126,20 @@ steps:
 
       # gemma3 is not a thinking model, so tokens stream promptly and a 10s cut lands
       # well inside generation. num_predict 400 keeps it running past the cut.
+      # A previous run left this file behind and its 3497 stale bytes defeated the
+      # REQUEST_BAD guard below — curl never truncates it when nothing arrives.
+      rm -f /tmp/disc-body.txt
+
+      # Pin num_ctx to what the earlier steps used. Omitting it asks for a different
+      # context size, which makes the scheduler unload and reload the model; the cut
+      # then lands during the load, nothing generates, and no summary is due.
+      warmup=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:11434/api/generate \
+        -d "{\"model\":\"$m\",\"prompt\":\"hi\",\"stream\":false,\"options\":{\"num_predict\":1,\"num_ctx\":8192}}")
+      echo "warmup status: $warmup (model resident before the cut)"
+
       code=$(curl -s -o /tmp/disc-body.txt -w '%{http_code}' --max-time 10 \
         http://localhost:11434/api/generate \
-        -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":400}}" \
+        -d "{\"model\":\"$m\",\"prompt\":\"Count slowly from one to five hundred in words.\",\"stream\":true,\"options\":{\"num_predict\":400,\"num_ctx\":8192}}" \
         || echo "cut-off")
       bytes=$(wc -c < /tmp/disc-body.txt 2>/dev/null || echo 0)
       echo "curl status: $code, streamed bytes: $bytes"
