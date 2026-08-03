@@ -25,7 +25,7 @@ Fits in the qa-workflow:
         ├─► Step 1: Each doc
         │   - [ ] One scenario, one job; cases are coherent slices of it.
         │   - [ ] Front-matter complete and resolvable: story file exists,
-        │         story_hash matches it, namespace set, status present.
+        │         the profile's drift anchor holds, namespace set, status present.
         │   - [ ] Each step's Expected Result is observable — checkable, not vague.
         │   - [ ] Conforms to the format contract (docs/tests/README.md).
         │
