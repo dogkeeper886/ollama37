@@ -29,7 +29,9 @@ those docs to a runner and running them is the project's own layer.
 
 `qw-plan`'s scenarios persist as a **GitHub issue**, titled `[STORY-XXX] Test Plan`, labelled
 `test-plan` (distinct from dev's `[STORY-XXX] Plan`). `qw-review-plan` reviews it; `qw-cases`
-reads it and records the issue number in each `TS-*.md` `plan:` field.
+reads it and records the issue number in each `TS-*.md` `plan:` field. Closing it falls to
+`dw-merge`: this pipeline has no terminal gate of its own, and the docs reach the default
+branch through the dev-workflow like any other change.
 
 ## Producer → review pairing
 

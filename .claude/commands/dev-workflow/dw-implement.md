@@ -111,6 +111,14 @@ history — start, failures, fixes, and resolution.
 
 ---
 
+## OUTPUT
+
+The implementation state, against what the issue asked for. Trace carries the branch,
+the issue, and the commits. Reported per `.claude/rules/agent-report.md` — the verdict
+first, and a section with nothing to report says so.
+
+---
+
 ## API Notes
 
 - Uses `gh` CLI for issue operations

@@ -66,9 +66,10 @@ Fits between `/dw-implement` (does the work) and `/dw-create-pr` (opens the PR):
         │     comment the issue and route back to /dw-implement
         │
         └─► Step 6: Report
-            - Per finding: the exact file:line + the smallest fix
-            - A delivery verdict against the issue's "Done When"
-            - The issue link + suggested next step
+            - Report per .claude/rules/agent-report.md
+            - The verdict is the delivery state against the issue's "Done When";
+              every finding gives the exact file:line and the smallest fix
+            - Trace carries the issue link and the branch
 
 ---
 

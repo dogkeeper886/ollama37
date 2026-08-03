@@ -33,7 +33,8 @@ These are **lenses, not steps** — they interact, and which bites hardest depen
 doc in hand. Weigh them together, and flag anything that weakens the writing even if it
 isn't named here.
 
-- **Reader.** Who actually reads this, and what do they already know? The phrasing meets
+- **Reader.** Who actually reads this, and what do they already know? Default to the
+  project's audience in `project-profile.md` when the doc doesn't say. The phrasing meets
   them there — no unexplained jargon for a newcomer, no over-explaining to a peer.
 - **Lead with the point.** The reader should hit what matters first, not after a runway of
   setup. Context that arrives before the point reads as not knowing the priority — or as
@@ -57,8 +58,8 @@ redundant, buried, or missing a hook. That spot is the finding.
 
 ## Steps
 
-1. **Scope.** Which doc(s), and who the reader is. If the reader isn't clear from the doc
-   or its context, ask before reviewing.
+1. **Scope.** Which doc(s), and who the reader is — default to the audience in
+   `project-profile.md` when the doc and its context don't say. If still unclear, ask.
 2. **Read it as that reader would** — once, straight through, for whether it lands.
 3. **Weigh the lenses** above by judgment; note anything else that hurts the phrasing.
 4. **Report** (below).
@@ -68,15 +69,12 @@ redundant, buried, or missing a hook. That spot is the finding.
 
 ## Report
 
-Per doc, a short verdict and specific findings — no numeric score.
-
-```
-<doc> — PASS | REVISE
-
-- <what hurts the phrasing, quoted> → <smallest fix>
-```
+Report per `.claude/rules/agent-report.md` — the verdict first, findings as a table,
+and a section with nothing to report saying so. The verdict vocabulary is
+`project-profile.md` → Reports. No numeric score. In this review they mean:
 
 - **PASS** — fits its reader, leads with the point, says the right thing.
 - **REVISE** — specific, fixable findings (buried point, padding, wrong register, missing fact).
 
-End with what was reviewed and the suggested next step.
+Each finding quotes what hurts the phrasing and gives the smallest fix. Trace carries
+the doc(s) reviewed.

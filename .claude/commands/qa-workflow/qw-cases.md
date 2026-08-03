@@ -44,6 +44,15 @@ Fits in the qa-workflow:
 
 ---
 
+## OUTPUT
+
+The test docs written. Trace carries each doc's path. Reported per
+`.claude/rules/agent-report.md` — the verdict first, and a section with nothing to
+report says so.
+
+
+---
+
 ## API Notes
 
 - Reuse keeps coverage converging instead of duplicating: skim the existing

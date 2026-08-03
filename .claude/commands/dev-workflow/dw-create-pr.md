@@ -60,11 +60,10 @@ via "Fixes #N" for auto-closure. Updates issue labels to reflect PR status.
         │   - Skip silently if no story link or docs/stories/ doesn't exist
         │
         └─► Step 6: Report
-            - Show the PR URL to the user
-            - Stop here — don't auto-advance. The PR now waits for a HUMAN to
-              review and test it. Merge with /dw-merge <PR> only once a human is
-              satisfied. (The change's substance was already gated locally by
-              /dw-review-implement before the PR.)
+            - Report per .claude/rules/agent-report.md; Trace carries the PR URL
+            - Next is the HUMAN review + test — stop here, don't auto-advance. Merge
+              with /dw-merge <PR> only once a human is satisfied. (The change's
+              substance was already gated locally by /dw-review-implement.)
 
 ---
 

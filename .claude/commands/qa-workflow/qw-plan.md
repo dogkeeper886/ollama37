@@ -44,6 +44,15 @@ Fits in the qa-workflow:
 
 ---
 
+## OUTPUT
+
+The test-plan issue. Trace carries its URL; Next is the paired review. Reported per
+`.claude/rules/agent-report.md` — the verdict first, and a section with nothing to
+report says so.
+
+
+---
+
 ## API Notes
 
 - A scenario here is a *plan item*, not yet a file — `qw-cases` writes the doc.
