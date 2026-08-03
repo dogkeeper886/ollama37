@@ -86,6 +86,21 @@ project's choice.
   whatever this declares; they do not assume hashing.
 - default status: `green`
 
+## Reports
+
+The words a gate report uses. The contract itself — the questions a report answers and
+why — is `.claude/rules/agent-report.md`; a unit resolves the wording from here.
+
+- verdict vocabulary: `PASS` · `REVISE` · `HAND BACK`
+- extra verdict (artifact review only): `CUT` — the artifact duplicates another or does
+  nothing useful; propose removal
+- section names: `Verdict` · `Findings` · `Checked` · `Not done` · `Unresolved` ·
+  `Trace` · `Next`
+- empty-section marker: `none` (a section with nothing to report says so; it is not dropped)
+- finding columns: `# · severity · location · what's wrong · smallest fix`
+- formats by medium: chat session → plain text, tables, ASCII diagrams · document or
+  issue → whatever renders there.
+
 ## Review semantics
 
 - canonical format (source of truth): `markdown`

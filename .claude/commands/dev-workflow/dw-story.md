@@ -80,5 +80,7 @@ Show the user the created story and suggest next steps:
 
 ## OUTPUT
 
-The path to the created story file.
+The story captured, and whether it is ready to be gated. Reported per
+`.claude/rules/agent-report.md` — the verdict first, and a section with nothing to
+report says so. Trace carries the story file's path.
 ```

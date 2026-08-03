@@ -54,8 +54,8 @@ hands it back to `/dw-story` if the need itself is unclear.
         │     wording), stop and route to /dw-story to re-capture it with the user
         │
         └─► Step 5: Report
-            - Print the verdict (PASS / REVISED / HAND BACK) and the findings
-            - Print the path to the story and the suggested next step
+            - Report per .claude/rules/agent-report.md
+            - Checked carries both checklists; Trace carries the story path
 
 ---
 
@@ -82,8 +82,12 @@ hands it back to `/dw-story` if the need itself is unclear.
 **Output:**
 
     PASS — STORY-001 is complete and stays a goal.
-    docs/stories/STORY-001.md
-    Next: /dw-tasks STORY-001 to open the issue where the "how" gets decided.
+
+    Checked     both checklists above — completeness, and goal-not-spec
+    Not done    none
+    Unresolved  none
+    Trace       docs/stories/STORY-001.md
+    Next        /dw-tasks STORY-001 — the issue is where the "how" gets decided
 
 ---
 

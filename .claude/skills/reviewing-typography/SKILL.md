@@ -2,7 +2,7 @@
 name: reviewing-typography
 description: |
   Reviews how a human-read document looks — the README, the prose and tables in docs/, or
-  any markdown written for a person — for visual hierarchy, Gestalt proximity, restraint,
+  any human-read document — for visual hierarchy, Gestalt proximity, restraint,
   and walls of text, so a reader can find the point at a glance. The look half of the
   human-read doc review (reviewing-phrasing handles the words). Use when such a doc is
   written or restructured. Judgment over checklist; floor, not ceiling.
@@ -14,15 +14,17 @@ One reviewer for how a human-read document **looks**. Its partner `reviewing-phr
 judges how a doc *reads*; this judges how it *scans*. Together they are the human-read doc
 review.
 
-This skill's job is **human-read** markdown — the README, the prose, tables, and lists in
+This skill's job is **human-read** documents in the project's canonical format
+(`project-profile.md` — markdown by default) — the README, the prose, tables, and lists in
 `docs/`, and any doc aimed at a person. The **agent-read** workflow tooling — commands,
 skills, rules, CLAUDE.md, stories — is **not** this skill's job; whether those do their job
 goes to `reviewing-artifacts`.
 
-A markdown doc has no fonts to set, but it has the same levers UI typography uses, and the
-same principles decide whether it works: **heading levels** are size/weight, **blank lines
-and grouping** are spacing, **bold/italic** are weight, and **paragraph and list length**
-decide whether the page reads as structure or as soup.
+The principles are medium-agnostic; each format expresses them through its own levers. In
+markdown (the default) a doc has no fonts to set, but it has the same levers UI typography
+uses: **heading levels** are size/weight, **blank lines and grouping** are spacing,
+**bold/italic** are weight, and **paragraph and list length** decide whether the page reads
+as structure or as soup.
 
 ## Why this is a judgment skill, not a checklist
 
@@ -79,15 +81,12 @@ and watch where their eye snags or stalls; that spot is the finding.
 
 ## Report
 
-Per doc, a short verdict and specific findings — no numeric score.
-
-```
-<doc> — PASS | REVISE
-
-- <what hurts the look, with the location> → <smallest fix>
-```
+Report per `.claude/rules/agent-report.md` — the verdict first, findings as a table,
+and a section with nothing to report saying so. The verdict vocabulary is
+`project-profile.md` → Reports. No numeric score. In this review they mean:
 
 - **PASS** — the eye finds the point; hierarchy and grouping hold.
 - **REVISE** — specific, fixable findings (no hierarchy, fused groups, bold inflation, wall of text).
 
-End with what was reviewed and the suggested next step.
+Each finding names the location of what hurts the look and gives the smallest fix. Trace
+carries the doc(s) reviewed.

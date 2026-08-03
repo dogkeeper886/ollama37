@@ -38,6 +38,8 @@ The plan is a **GitHub issue**, one per story, labelled `plan`, titled `[STORY-X
 Its body holds the researched approach, acceptance criteria, and the commands/files it
 expects to touch. It is the **parent** of the task issues (`dw-tasks` links each task back
 with "Part of #<plan>"), and the durable checkpoint that survives a lost session.
+Nothing auto-closes it — no PR targets a plan — so `dw-merge` closes it when the
+story's last task lands.
 
 Its review is a **human gate**: a person reads, comments, and approves the issue on GitHub
 before `dw-tasks` decomposes it — no `dw-*` command produces or gates it (mirrors the
@@ -69,3 +71,11 @@ review passes plus a plan issue on a typo is ritual, not rigor.
 - **GitHub issues** already hold the work; the plan is one too (the parent), so the
   approach, its review, and its history live where the tasks do — no separate plan store.
 - **CI** is the project's existing checks + human review — the merge gate, not a new pipeline.
+
+## Project-specific values
+
+Story paths, the `STORY-XXX` id scheme, label names + colours, the `[STORY-XXX]` /
+`Part of #<plan>` linking patterns, the `issue-<N>-<slug>` branch name, and the merge
+strategy are **not** owned by the `dw-*` commands — they resolve from
+`.claude/rules/project-profile.md`. The values a command shows are the defaults; change
+them in the profile, not the command.

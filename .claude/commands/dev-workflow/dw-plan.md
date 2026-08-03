@@ -119,8 +119,21 @@ This command produces the plan only. It does NOT create task issues — that is 
 
 **Output:**
 
-    Plan issue #28 created: https://github.com/owner/repo/issues/28
-    A human reviews + approves it; then /dw-tasks STORY-003 breaks it into tasks.
+    PASS — plan #28 written; the approach covers STORY-003.
+
+    Checked     the story's Success Looks Like; repo conventions; no existing plan
+    Not done    task issues — /dw-tasks opens those, after the gate
+    Unresolved  2 open questions, recorded on the issue
+    Trace       https://github.com/owner/repo/issues/28 · docs/stories/STORY-003.md
+    Next        a human reads and approves #28 on GitHub
+
+---
+
+## OUTPUT
+
+The plan issue. Reported per `.claude/rules/agent-report.md` — the verdict first, and a
+section with nothing to report says so. Trace carries the issue URL; Next is the human
+reading it on GitHub, never `/dw-tasks` — that comes after the gate, not from here.
 
 ---
 
