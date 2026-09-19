@@ -59,6 +59,8 @@ func rendererForName(name string) Renderer {
 	case "qwen3.5":
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
+	case "qwen3.8":
+		return newQwen38Renderer()
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
 	case "gemma4", "gemma4-small":

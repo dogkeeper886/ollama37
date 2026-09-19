@@ -402,7 +402,10 @@ func inferRecurrentLayers(headCountKV []uint64, numLayers int, fullAttentionInte
 }
 
 func New(c fs.Config) (model.Model, error) {
-	numLayers := int(c.Uint("block_count"))
+	// llama.cpp-converted GGUFs count the MTP (nextn) draft layers in
+	// block_count and append them as trailing blocks; they are not part of
+	// the main decoder stack.
+	numLayers := int(c.Uint("block_count")) - int(c.Uint("nextn_predict_layers"))
 	layers := make([]Layer, numLayers)
 
 	// Get per-layer head counts (for detecting layer type)
