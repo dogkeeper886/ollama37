@@ -1,8 +1,10 @@
 package qwen35
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
+	"image"
 	"log/slog"
 	"math"
 	"slices"
@@ -14,6 +16,7 @@ import (
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/model/models/qwen3vl"
 )
 
 // Options contains model configuration
@@ -231,11 +234,30 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	Layers []Layer `gguf:"blk"`
+	Layers []Layer              `gguf:"blk"`
+	Vision *qwen3vl.VisionModel `gguf:"v"`
+
+	ImageProcessor *qwen3vl.ImageProcessor
 
 	*Options
 
 	logOnce sync.Once
+
+	positionCache    []int32
+	imageToken       int32
+	visionStart      int32
+	visionEnd        int32
+	spatialMergeSize uint32
+}
+
+func (m *Model) mapPosition(id int32) int32 {
+	if id < int32(len(m.positionCache)) {
+		return m.positionCache[id]
+	}
+	if len(m.positionCache) > 0 {
+		return id - int32(len(m.positionCache)) + m.positionCache[len(m.positionCache)-1] + 1
+	}
+	return id
 }
 
 func (m *Model) buildPositions(ctx ml.Context, batch input.Batch) ml.Tensor {
@@ -244,7 +266,8 @@ func (m *Model) buildPositions(ctx ml.Context, batch input.Batch) ml.Tensor {
 	}
 
 	// MRoPE expects [time, height, width, extra] for each token.
-	// For text-only, all four components are the same position.
+	// For text, all components are the same position; image tokens add
+	// their row and column within the merged patch grid.
 	positionSlice := [][]int32{
 		make([]int32, len(batch.Positions)),
 		make([]int32, len(batch.Positions)),
@@ -253,12 +276,99 @@ func (m *Model) buildPositions(ctx ml.Context, batch input.Batch) ml.Tensor {
 	}
 
 	for i, id := range batch.Positions {
-		positionSlice[0][i] = id
-		positionSlice[1][i] = id
-		positionSlice[2][i] = id
+		p := m.mapPosition(id)
+		positionSlice[0][i] = p
+		positionSlice[1][i] = p
+		positionSlice[2][i] = p
+	}
+
+	if m.Vision != nil {
+		for _, mi := range batch.Multimodal {
+			grid, ok := mi.Multimodal[0].Data.(*qwen3vl.Grid)
+			if !ok {
+				continue
+			}
+			w := max(1, grid.Width/int(m.spatialMergeSize))
+			for i := range mi.Multimodal[0].Tensor.Dim(1) {
+				positionSlice[1][mi.Index+i] += int32(i / w)
+				positionSlice[2][mi.Index+i] += int32(i % w)
+			}
+		}
 	}
 
 	return ctx.Input().FromInts(slices.Concat(positionSlice...), len(positionSlice[0])*len(positionSlice))
+}
+
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
+	if m.Vision == nil || m.ImageProcessor == nil || len(m.Vision.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		return nil, err
+	}
+
+	pixelValues, grid, err := m.ImageProcessor.ProcessImage(ctx, img)
+	if err != nil {
+		return nil, err
+	}
+
+	visionOutputs, deepstackVisualEmbeds := m.Vision.Forward(ctx, pixelValues, grid)
+	mm := []input.Multimodal{{Tensor: visionOutputs, Data: grid}}
+	for i := range deepstackVisualEmbeds {
+		mm = append(mm, input.Multimodal{Tensor: deepstackVisualEmbeds[i]})
+	}
+
+	return mm, nil
+}
+
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	m.positionCache = m.positionCache[:0]
+	var result []*input.Input
+	appendInput := func(inp *input.Input, position int32) {
+		result = append(result, inp)
+		m.positionCache = append(m.positionCache, position)
+	}
+
+	var p int32
+	for _, inp := range inputs {
+		if inp.Multimodal == nil {
+			appendInput(inp, p)
+			p++
+			continue
+		}
+
+		grid := inp.Multimodal[0].Data.(*qwen3vl.Grid)
+		tokensPerGrid := inp.Multimodal[0].Tensor.Dim(1)
+
+		appendInput(&input.Input{
+			Token:     m.visionStart,
+			SameBatch: tokensPerGrid + 1,
+		}, p)
+		p++
+
+		appendInput(&input.Input{
+			Token:          m.imageToken,
+			Multimodal:     inp.Multimodal,
+			MultimodalHash: inp.MultimodalHash,
+		}, p)
+
+		for range tokensPerGrid - 1 {
+			appendInput(&input.Input{
+				Token: m.imageToken,
+			}, p)
+		}
+
+		gridSpan := max(grid.Width/int(m.spatialMergeSize), grid.Height/int(m.spatialMergeSize))
+		p = p + int32(gridSpan)
+		appendInput(&input.Input{
+			Token: m.visionEnd,
+		}, p)
+		p++
+	}
+
+	return result, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
@@ -269,6 +379,26 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := m.buildPositions(ctx, batch)
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+
+	var deepstackVisualEmbeds []ml.Tensor
+	if len(batch.Multimodal) > 0 {
+		hiddenStates = hiddenStates.Duplicate(ctx)
+
+		for _, mi := range batch.Multimodal {
+			visionOutputs := mi.Multimodal[0].Tensor
+			ctx.Forward(visionOutputs.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+
+			if len(mi.Multimodal[1:]) > len(deepstackVisualEmbeds) {
+				deepstackVisualEmbeds = append(deepstackVisualEmbeds, make([]ml.Tensor, len(mi.Multimodal[1:])-len(deepstackVisualEmbeds))...)
+			}
+			for i, mm := range mi.Multimodal[1:] {
+				if deepstackVisualEmbeds[i] == nil {
+					deepstackVisualEmbeds[i] = ctx.Input().Zeros(mm.Tensor.DType(), hiddenStates.Shape()...)
+				}
+				ctx.Forward(mm.Tensor.Copy(ctx, deepstackVisualEmbeds[i].View(ctx, mi.Index*deepstackVisualEmbeds[i].Stride(1), mm.Tensor.Dim(0)*mm.Tensor.Dim(1))))
+			}
+		}
+	}
 
 	cache := m.Cache.(*HybridCache)
 
@@ -287,6 +417,9 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		hiddenStates, err = layer.Forward(ctx, i, hiddenStates, positions, outputs, cache, m.Options)
 		if err != nil {
 			return nil, err
+		}
+		if i < len(deepstackVisualEmbeds) {
+			hiddenStates = hiddenStates.Add(ctx, deepstackVisualEmbeds[i])
 		}
 	}
 
@@ -335,13 +468,27 @@ func (m *Model) Validate() error {
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	m.positionCache = nil
 	if len(m.mropeSections) > 0 {
 		shift = shift.Repeat(ctx, 1, 4).Reshape(ctx, -1)
 	}
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
-var _ model.Model = (*Model)(nil)
+var (
+	_ model.Model               = (*Model)(nil)
+	_ model.MultimodalProcessor = (*Model)(nil)
+)
+
+// visionTokenID reads a vision token id from metadata, falling back to a
+// vocabulary lookup: llama.cpp-format GGUFs carry no *_token_id keys, and the
+// Qwen3.5 vocabulary does not use Qwen3-VL's ids.
+func visionTokenID(c fs.Config, key, token string, vocab []string) int32 {
+	if id := c.Uint(key); id != 0 {
+		return int32(id)
+	}
+	return int32(slices.Index(vocab, token))
+}
 
 func defaultVHeadReordered(arch string) bool {
 	return arch == "qwen35" || arch == "qwen35moe"
@@ -494,7 +641,8 @@ func New(c fs.Config) (model.Model, error) {
 				}
 			}
 		}),
-		mropeInterleaved: c.Bool("rope.mrope_interleaved", c.Bool("mrope_interleaved", false)),
+		// llama.cpp-format GGUFs omit this key; qwen35 uses interleaved M-RoPE.
+		mropeInterleaved: c.Bool("rope.mrope_interleaved", c.Bool("mrope_interleaved", slices.Contains([]string{"qwen35", "qwen35moe"}, c.Architecture()))),
 	}
 	if opts.numKVHeads == 0 {
 		return nil, fmt.Errorf("qwen35: attention.head_count_kv must include at least one non-zero value")
@@ -535,6 +683,21 @@ func New(c fs.Config) (model.Model, error) {
 		return nil, fmt.Errorf("qwen35: headKDim (%d) != headVDim (%d) not supported; state computations require equal dimensions", headKDim, headVDim)
 	}
 
+	var vision *qwen3vl.VisionModel
+	var imageProcessor *qwen3vl.ImageProcessor
+	if c.Uint("vision.block_count", 0) > 0 {
+		vision = qwen3vl.NewVisionModel(c)
+		processor := qwen3vl.NewImageProcessor(c)
+		imageProcessor = &processor
+	}
+
+	spatialMergeSize := c.Uint("vision.spatial_merge_size", 2)
+	if spatialMergeSize == 0 {
+		spatialMergeSize = 2
+	}
+
+	vocab := c.Strings("tokenizer.ggml.tokens")
+
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			&model.Vocabulary{
@@ -551,8 +714,14 @@ func New(c fs.Config) (model.Model, error) {
 			},
 			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
-		Layers:  layers,
-		Options: opts,
+		Layers:           layers,
+		Vision:           vision,
+		ImageProcessor:   imageProcessor,
+		Options:          opts,
+		imageToken:       visionTokenID(c, "image_token_id", "<|image_pad|>", vocab),
+		visionStart:      visionTokenID(c, "vision_start_token_id", "<|vision_start|>", vocab),
+		visionEnd:        visionTokenID(c, "vision_end_token_id", "<|vision_end|>", vocab),
+		spatialMergeSize: spatialMergeSize,
 	}
 
 	m.Cache = NewHybridCache(m.Shift, convDim, convChannels, deltaStateSize)

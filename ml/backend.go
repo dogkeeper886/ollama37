@@ -75,6 +75,10 @@ type BackendParams struct {
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention bool
+
+	// ProjectorPath is an optional separate vision projector GGUF whose tensors
+	// and vision metadata are loaded alongside the model's
+	ProjectorPath string
 }
 
 var backends = make(map[string]func(string, BackendParams) (Backend, error))

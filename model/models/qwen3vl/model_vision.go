@@ -15,6 +15,10 @@ type VisionAttention struct {
 	Key    *nn.Linear `gguf:"attn_k"`
 	Value  *nn.Linear `gguf:"attn_v"`
 	Output *nn.Linear `gguf:"attn_out"`
+
+	// QKV is the fused projection llama.cpp mmproj files store instead of
+	// separate attn_q/attn_k/attn_v, concatenated in that order.
+	QKV *nn.Linear `gguf:"attn_qkv"`
 }
 
 func rotateHalf(ctx ml.Context, t ml.Tensor) ml.Tensor {
@@ -28,15 +32,25 @@ func applyRotaryPositionalEmbedding(ctx ml.Context, t, cos, sin ml.Tensor) ml.Te
 }
 
 func (sa *VisionAttention) Forward(ctx ml.Context, hiddenStates, cos, sin ml.Tensor, opts VisionOptions) ml.Tensor {
-	query := sa.Query.Forward(ctx, hiddenStates)
+	var query, key, value ml.Tensor
+	if sa.QKV != nil {
+		qkv := sa.QKV.Forward(ctx, hiddenStates)
+		part := func(i int) ml.Tensor {
+			return qkv.View(ctx, i*opts.hiddenSize*qkv.Stride(0), opts.hiddenSize, qkv.Stride(1), qkv.Dim(1)).Contiguous(ctx)
+		}
+		query, key, value = part(0), part(1), part(2)
+	} else {
+		query = sa.Query.Forward(ctx, hiddenStates)
+		key = sa.Key.Forward(ctx, hiddenStates)
+		value = sa.Value.Forward(ctx, hiddenStates)
+	}
+
 	query = query.Reshape(ctx, opts.headDim(), opts.numHeads, query.Dim(1))
 	query = applyRotaryPositionalEmbedding(ctx, query, cos, sin)
 
-	key := sa.Key.Forward(ctx, hiddenStates)
 	key = key.Reshape(ctx, opts.headDim(), opts.numHeads, key.Dim(1))
 	key = applyRotaryPositionalEmbedding(ctx, key, cos, sin)
 
-	value := sa.Value.Forward(ctx, hiddenStates)
 	value = value.Reshape(ctx, opts.headDim(), opts.numHeads, value.Dim(1))
 
 	attention := nn.Attention(ctx, query, key, value, math.Pow(float64(opts.headDim()), -0.5), nil)
@@ -171,7 +185,13 @@ func (m *VisionPositionEmbedding) Forward(ctx ml.Context, hiddenStates ml.Tensor
 }
 
 type VisionModel struct {
-	PatchEmbedding    *nn.Conv3D `gguf:"patch_embed"`
+	PatchEmbedding *nn.Conv3D `gguf:"patch_embed"`
+
+	// llama.cpp mmproj files split the Conv3D patch kernel into one 2D kernel
+	// per temporal slice, with the bias on the first.
+	PatchEmbeddingSlice0 *nn.Conv2D `gguf:"patch_embd"`
+	PatchEmbeddingSlice1 *nn.Conv2D `gguf:"patch_embd_1"`
+
 	PositionEmbedding *VisionPositionEmbedding
 	Layers            []VisionEncoderLayer `gguf:"blk"`
 	PatchMerger       *VisionPatchMerger   `gguf:"merger"`
@@ -217,10 +237,41 @@ func (m *VisionModel) positions(ctx ml.Context, grid *Grid) (_, _ ml.Tensor) {
 	return embeds.Cos(ctx), embeds.Sin(ctx)
 }
 
+// patchEmbedSlices is the Conv3D patch embedding computed from per-temporal-slice
+// 2D kernels. Kernel and stride are both the patch size, so each slice is a
+// matmul of its flattened kernel with that frame of every patch.
+func (m *VisionModel) patchEmbedSlices(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
+	patchArea := m.patchSize * m.patchSize
+	// pixelValues is laid out per patch as [channel][frame][y][x]
+	pixelValues = pixelValues.Reshape(ctx, patchArea, m.temporalPatchSize, m.numChannels, -1)
+
+	var hiddenStates ml.Tensor
+	for i, slice := range []*nn.Conv2D{m.PatchEmbeddingSlice0, m.PatchEmbeddingSlice1} {
+		frame := pixelValues.View(ctx, i*pixelValues.Stride(1),
+			patchArea, pixelValues.Stride(2), m.numChannels, pixelValues.Stride(3), pixelValues.Dim(3)).
+			Contiguous(ctx, patchArea*m.numChannels, pixelValues.Dim(3))
+		out := slice.Weight.Reshape(ctx, patchArea*m.numChannels, -1).Mulmat(ctx, frame)
+		if hiddenStates == nil {
+			hiddenStates = out
+		} else {
+			hiddenStates = hiddenStates.Add(ctx, out)
+		}
+		if slice.Bias != nil {
+			hiddenStates = hiddenStates.Add(ctx, slice.Bias)
+		}
+	}
+	return hiddenStates
+}
+
 // Forward computes the vision model for an input tensor
 func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid) (ml.Tensor, []ml.Tensor) {
-	pixelValues = pixelValues.Reshape(ctx, m.patchSize, m.patchSize, m.temporalPatchSize, -1)
-	hiddenStates := m.PatchEmbedding.Forward(ctx, pixelValues, m.numChannels, m.patchSize, m.patchSize, m.temporalPatchSize, 0, 0, 0, 1, 1, 1)
+	var hiddenStates ml.Tensor
+	if m.PatchEmbedding == nil && m.PatchEmbeddingSlice0 != nil && m.PatchEmbeddingSlice1 != nil {
+		hiddenStates = m.patchEmbedSlices(ctx, pixelValues)
+	} else {
+		pixelValues = pixelValues.Reshape(ctx, m.patchSize, m.patchSize, m.temporalPatchSize, -1)
+		hiddenStates = m.PatchEmbedding.Forward(ctx, pixelValues, m.numChannels, m.patchSize, m.patchSize, m.temporalPatchSize, 0, 0, 0, 1, 1, 1)
+	}
 	hiddenStates = m.PositionEmbedding.Forward(ctx, hiddenStates, grid, m.VisionOptions)
 
 	cos, sin := m.positions(ctx, grid)
@@ -237,8 +288,8 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	return hiddenStates, deepstackStates
 }
 
-// newVisionModel creates a new instance of the Qwen vision model
-func newVisionModel(c fs.Config) *VisionModel {
+// NewVisionModel creates a new instance of the Qwen vision model
+func NewVisionModel(c fs.Config) *VisionModel {
 	deepstackVisualIndexes := c.Ints("vision.deepstack_visual_indexes")
 	model := &VisionModel{
 		Layers:          make([]VisionEncoderLayer, c.Uint("vision.block_count", 32)),
