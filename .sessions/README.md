@@ -28,6 +28,7 @@ All three cost a round of questions that the log answers in one read.
 | Session | Date | Produced |
 |---|---|---|
 | [`0cbcb148-7038-4b0f-b0b4-04fc95877a69.jsonl`](./0cbcb148-7038-4b0f-b0b4-04fc95877a69.jsonl) | 2026-09-09 | #479, #480, #481 (model ports), #482 (hardcoded model lists); the model-trim disk cleanup |
+| [`d665bb45-58bb-4fd2-b820-91535e9a55f1.jsonl`](./d665bb45-58bb-4fd2-b820-91535e9a55f1.jsonl) | 2026-09-19 | #479 text path — qwen3.8 GGUF study, upstream diff, the K80 inference runs behind `0c5eb3bd` |
 
 ## Adding one
 
