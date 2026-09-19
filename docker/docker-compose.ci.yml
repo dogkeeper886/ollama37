@@ -1,0 +1,18 @@
+# CI-only override: serve models from the CI host's model store.
+#
+# The only difference from docker-compose.yml is where models come from. The
+# testbed's store is an NFS share mounted on the host, bind-mounted here over
+# /root/.ollama/models; everything else (image, port, keys in the ollama-data
+# volume) is the public compose file, so CI keeps exercising what users run.
+#
+# The CI host enables it through the runner's .env, not the workflows:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.ci.yml
+#   OLLAMA37_MODELS_DIR=/path/to/models
+# Every `docker compose` call runs from docker/, so the relative paths resolve.
+#
+# Models are pulled from the host as the share's owner; the container only
+# reads them, so NFS root squashing never applies.
+services:
+  ollama:
+    volumes:
+      - ${OLLAMA37_MODELS_DIR:?OLLAMA37_MODELS_DIR must be set on the CI host}:/root/.ollama/models
