@@ -1,5 +1,5 @@
 id: TC-MODELS-006
-name: gemma4:e4b Inference
+name: gemma4:e2b Inference
 suite: models
 priority: 4
 timeout: 900000
@@ -7,13 +7,13 @@ dependencies: []
 issue: 55
 intent:
   user_story: |
-    Validate gemma4:e4b runs on K80 compute 3.7 (single GPU)
+    Validate gemma4:e2b runs on K80 compute 3.7 (single GPU)
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma4:e4b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
+        -d '{"model":"gemma4:e2b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -48,13 +48,15 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma4:e4b","keep_alive":0}'
+        -d '{"model":"gemma4:e2b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate gemma4:e4b (~9.6GB VRAM, single GPU) runs on K80 (compute 3.7).
+  Validate gemma4:e2b (~7.2GB, single GPU) runs on K80 (compute 3.7).
+  Covers the Go gemma4 path with per-layer embeddings, shared KV layers and the audio
+  tower (same code as e4b, smaller).
   First test of the gemma4 architecture ported from upstream ollama.
   Prerequisite: Model must be pre-pulled before running this test.
 

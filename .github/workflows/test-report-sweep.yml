@@ -18,11 +18,11 @@ on:
       throughput_models:
         description: "Throughput models (space-separated)"
         type: string
-        default: "deepseek-r1:14b deepseek-r1:32b gemma4:e4b gemma4:12b gemma4:31b gpt-oss:20b qwen3.6:27b qwen3.6:35b"
+        default: "deepseek-r1:1.5b gemma4:e2b gemma4:12b gemma4:31b gpt-oss:20b qwen3.6:27b qwen3.6:35b"
       mcp_models:
         description: "MCP models (space-separated; native tool support)"
         type: string
-        default: "gemma4:e4b gemma4:12b gemma4:31b gpt-oss:20b qwen3.6:27b qwen3.6:35b"
+        default: "gemma4:e2b gemma4:12b gemma4:31b gpt-oss:20b qwen3.6:27b qwen3.6:35b"
       throughput_contexts:
         description: "Throughput context sizes (space-separated)"
         type: string

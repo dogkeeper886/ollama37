@@ -114,22 +114,10 @@ jobs:
         if: always()
         run: |
           echo "Unloading test models from VRAM..."
-          curl -s http://localhost:11434/api/generate -d '{"model":"gpt-oss:20b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"gemma3:27b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"gemma3:12b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"deepseek-r1:14b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"deepseek-r1:32b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"qwen3.5:9b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"qwen3.5:27b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-vl:8b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-vl:30b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"gemma4:e4b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"gemma4:31b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"functiongemma:270m","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"ministral-3:14b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"ornith:9b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"ornith:35b","keep_alive":0}' || true
-          curl -s http://localhost:11434/api/generate -d '{"model":"lfm2.5-thinking:1.2b","keep_alive":0}' || true
+          # Derived from the suite, so adding or removing a testcase needs no edit here.
+          for m in $(grep -ohE '"model":"[^"]+"' cicd/tests/testcases/models/*.yml | cut -d'"' -f4 | sort -u); do
+            curl -s http://localhost:11434/api/generate -d "{\"model\":\"$m\",\"keep_alive\":0}" || true
+          done
           echo "Models unloaded"
 
       - name: Upload models results

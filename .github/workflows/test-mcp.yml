@@ -6,7 +6,7 @@ on:
       models:
         description: "Models to test (space-separated)"
         required: true
-        default: "gemma4:e4b"
+        default: "gemma4:e2b"
         type: string
       prompt:
         description: "Prompt that should trigger a tool call"

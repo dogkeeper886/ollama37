@@ -1,28 +1,25 @@
-id: TC-MODELS-005
-name: FunctionGemma Tool Calling
+id: TC-MODELS-022
+name: deepseek-r1:8b Inference
 suite: models
-priority: 4
-timeout: 600000
+priority: 22
+timeout: 900000
 dependencies: []
-issue: 39
 intent:
   user_story: |
-    Validate FunctionGemma generates valid tool calls on K80 compute 3.7
+    Validate deepseek-r1:8b runs on K80 compute 3.7 — covers the Go qwen3 path
+  notes: |
+    num_predict is 400, not the usual 200: deepseek-r1 thinks by default and spends about
+    300 tokens in the thinking span before answering, leaving "response" empty at 200.
+    Thinking stays on — this case covers the qwen3 path as users run it.
 
 steps:
-  - name: Test tool calling via chat API
+  - name: Test inference
     command: |
-      curl -s http://localhost:11434/api/chat \
-        -d '{
-          "model":"functiongemma:270m",
-          "messages":[{"role":"user","content":"What is the weather in San Francisco?"}],
-          "tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather in a given location","parameters":{"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"The city and state"}}}}}],
-          "stream":false,
-          "options":{"temperature":0,"num_predict":200}
-        }' | head -c 4000
+      curl -s http://localhost:11434/api/generate \
+        -d '{"model":"deepseek-r1:8b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":400}}' \
+        | head -c 2000
     expectPatterns:
-      - "get_weather"
-      - "San Francisco"
+      - "response"
     rejectPatterns:
       - "CUBLAS_STATUS"
       - "CUDA error"
@@ -54,21 +51,25 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"functiongemma:270m","keep_alive":0}'
+        -d '{"model":"deepseek-r1:8b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate FunctionGemma (270M params) generates valid tool calls on K80 (compute 3.7).
-  This is a small model ideal for CI — fast to load and test.
+  Validate deepseek-r1:8b (qwen3 arch, ~5.2GB) runs on K80 (compute 3.7).
+  Covers the Ollama-engine qwen3 path (model/models/qwen3), which qwen3 is routed to by
+  default; the other deepseek-r1 tags are qwen2 (TC-MODELS-003), llama or deepseek2.
   Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:
-  - Model maps natural language intent to the correct function (get_weather)
-  - Model extracts the correct argument (San Francisco) from context
+  - API returns JSON with "response" field
   - GPU memory is allocated (visible in nvidia-smi)
   - GPU count: model must not use more GPUs than needed. Each K80 GPU has 11441 MiB.
     If total VRAM fits in (active_gpus - 1) GPUs, the model is wasting GPUs.
   - No CUDA/CUBLAS errors in output
   - Model unloads successfully
+
+  Acceptable warnings (NOT errors):
+  - "flash attention enabled but not supported by gpu" - K80 does not support
+    flash attention, this is a normal fallback warning, NOT an error
