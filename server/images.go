@@ -346,6 +346,13 @@ func GetModel(name string) (*Model, error) {
 		if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
 			return nil, err
 		}
+
+		// qwen3.8 ships parser "qwen3.5", which this fork maps to the JSON-tool
+		// Qwen3VLParser; the qwen3.8 renderer prompts for the XML tool format
+		// that Qwen35Parser reads.
+		if model.Config.Renderer == "qwen3.8" && model.Config.Parser == "qwen3.5" {
+			model.Config.Parser = "qwen3.8"
+		}
 	}
 
 	for _, layer := range manifest.Layers {
