@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"cmp"
 	"bufio"
 	"bytes"
 	"context"
@@ -150,6 +151,24 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	return ggml, err
 }
 
+// projectorType reads a projector's type, which qwen3vl_merger stores at
+// clip.projector_type and gemma4 at clip.vision.projector_type. An unreadable
+// projector returns "", which keeps the model on the llama.cpp runner.
+func projectorType(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	meta, err := ggml.Decode(f, 0)
+	if err != nil {
+		return ""
+	}
+
+	return cmp.Or(meta.KV().String("projector_type"), meta.KV().String("vision.projector_type"))
+}
+
 // NewLlamaServer will run a server for the given GPUs
 func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
@@ -158,9 +177,15 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	arch := f.KV().Architecture()
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
 		// The vendored llama.cpp can't load llama.cpp-format qwen35 GGUFs or
-		// their qwen3vl_merger projector; the Ollama engine loads the projector
-		// alongside the model instead.
-		splitVision := len(projectors) > 0 && (arch == "qwen35" || arch == "qwen35moe")
+		// their qwen3vl_merger projector, nor gemma4's newer MoE text layout;
+		// the Ollama engine loads the projector alongside the model instead.
+		//
+		// gemma4 splits by projector type: gemma4v is a vision tower the Ollama
+		// engine implements, while gemma4uv is a patch embedder whose image
+		// tokens the language model encodes itself — a path it has no code for,
+		// so those models stay on llama.cpp, which does.
+		splitVision := len(projectors) > 0 && (arch == "qwen35" || arch == "qwen35moe" ||
+			(arch == "gemma4" && projectorType(projectors[0]) == "gemma4v"))
 		if len(projectors) == 0 || splitVision {
 			textProcessor, err = model.NewTextProcessor(modelPath)
 		} else {
