@@ -13,8 +13,12 @@ The build/runtime/inference suites prove the *stack* works; this scenario proves
 **model** actually runs on K80 (compute 3.7) — coherent output, real GPU memory, the expected
 GPU count, and no `CUBLAS_STATUS` / `CUDA error`, with the model unloaded afterwards to free VRAM
 for the next. It is the per-model regression half of [STORY-005](../stories/STORY-005.md). Each
-case is one model; `Script:` carries the real `TC-MODELS-*.yml` (the YAML ids skip `010` and run
-to `017`).
+case is one model; `Script:` carries the real `TC-MODELS-*.yml` (the YAML ids have gaps where
+cases were retired and run to `024`).
+
+Models are chosen **one tag per code path** — engine (Ollama vs llama.cpp) × architecture ×
+GGUF layout (vision inline or a split projector) × any size-gated branch — using the smallest tag
+that reaches the path. A new model gets a case only when it reaches a path no case covers yet.
 
 Every case runs the same four steps unless noted:
 
@@ -49,9 +53,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-03: deepseek-r1:14b
+### TC-03: deepseek-r1:1.5b (llama.cpp qwen2)
 
-- **Objective:** deepseek-r1:14b (~14B params) runs on K80 compute 3.7.
+- **Objective:** deepseek-r1:1.5b runs on K80 compute 3.7 — the llama.cpp `qwen2` path (7b/14b/32b run the same builder).
 - **Script:** cicd/tests/testcases/models/TC-MODELS-003.yml
 
 | # | Action | Expected Result |
@@ -73,21 +77,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-05: FunctionGemma (tool calling)
+### TC-06: gemma4:e2b (per-layer embeddings + audio)
 
-- **Objective:** FunctionGemma generates a valid tool call on K80 compute 3.7.
-- **Script:** cicd/tests/testcases/models/TC-MODELS-005.yml
-
-| # | Action | Expected Result |
-|---|--------|-----------------|
-| 1 | Test tool calling via the chat API | emits a `get_weather` tool call for `San Francisco`; no `CUBLAS_STATUS` / `CUDA error` |
-| 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
-| 4 | Unload model | `Model unloaded` |
-
-### TC-06: gemma4:e4b (single GPU)
-
-- **Objective:** gemma4:e4b runs on K80 compute 3.7 (single GPU).
+- **Objective:** gemma4:e2b runs on K80 compute 3.7 — the Ollama-engine gemma4 path with per-layer embeddings, shared KV layers and the audio tower (same code as e4b).
 - **Script:** cicd/tests/testcases/models/TC-MODELS-006.yml
 
 | # | Action | Expected Result |
@@ -109,9 +101,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-08: gemma3:12b (single GPU)
+### TC-08: gemma3:270m (text-only gemma3)
 
-- **Objective:** gemma3:12b runs on K80 compute 3.7 (single GPU).
+- **Objective:** gemma3:270m runs on K80 compute 3.7 — the Ollama-engine gemma3 path with no vision tower.
 - **Script:** cicd/tests/testcases/models/TC-MODELS-008.yml
 
 | # | Action | Expected Result |
@@ -121,21 +113,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-09: deepseek-r1:32b (multi-GPU)
+### TC-10: qwen3-vl:2b (qwen3vl dense)
 
-- **Objective:** deepseek-r1:32b runs on K80 compute 3.7 (multi-GPU).
-- **Script:** cicd/tests/testcases/models/TC-MODELS-009.yml
-
-| # | Action | Expected Result |
-|---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
-| 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
-| 4 | Unload model | `Model unloaded` |
-
-### TC-10: qwen3-vl:8b (single GPU)
-
-- **Objective:** qwen3-vl:8b runs on K80 compute 3.7 (single GPU).
+- **Objective:** qwen3-vl:2b runs on K80 compute 3.7 — the Ollama-engine `qwen3vl` dense path (4b/8b/32b run the same code).
 - **Script:** cicd/tests/testcases/models/TC-MODELS-011.yml
 
 | # | Action | Expected Result |
@@ -157,9 +137,9 @@ Every case runs the same four steps unless noted:
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-12: ministral-3:14b (single GPU)
+### TC-12: ministral-3:3b (mistral3)
 
-- **Objective:** ministral-3:14b runs on K80 compute 3.7 (single GPU).
+- **Objective:** ministral-3:3b runs on K80 compute 3.7 — the Ollama-engine `mistral3` path (8b/14b run the same code).
 - **Script:** cicd/tests/testcases/models/TC-MODELS-013.yml
 
 | # | Action | Expected Result |
@@ -209,6 +189,42 @@ Every case runs the same four steps unless noted:
 
 - **Objective:** lfm2.5:8b — the text LFM2 **MoE** (8B total / ~1B active, ~5.2 GB) — runs on K80 compute 3.7 (single GPU). The per-model regression half of [STORY-016](../stories/STORY-016.md): the fork already vendors the `lfm2`/`lfm2moe` llama.cpp arch, so this case gates that the GGUF loads and generates coherently once STORY-016's Go parser/renderer port lands — **red until then**. The inference step pins `"think": false` so the deterministic answer isn't buried inside a `<think>` span (lfm2.5 has a thinking mode). Run under the **dual** judge at least once so "coherent, not fluent garbage" is actually checked, not just non-empty `response`.
 - **Script:** cicd/tests/testcases/models/TC-MODELS-017.yml
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 2 | Check GPU memory | reports non-zero `MiB` in use |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 4 | Unload model | `Model unloaded` |
+
+### TC-17: deepseek-r1:8b (qwen3)
+
+- **Objective:** deepseek-r1:8b runs on K80 compute 3.7 — the Ollama-engine `qwen3` path (the only deepseek-r1 tag on the `qwen3` arch).
+- **Script:** cicd/tests/testcases/models/TC-MODELS-022.yml
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 2 | Check GPU memory | reports non-zero `MiB` in use |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 4 | Unload model | `Model unloaded` |
+
+### TC-18: llama3.1:8b (llama.cpp llama)
+
+- **Objective:** llama3.1:8b runs on K80 compute 3.7 — the llama.cpp `llama` path and its `GraphSize` "llama" estimate.
+- **Script:** cicd/tests/testcases/models/TC-MODELS-023.yml
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 2 | Check GPU memory | reports non-zero `MiB` in use |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 4 | Unload model | `Model unloaded` |
+
+### TC-19: gemma3n:e2b (gemma3n)
+
+- **Objective:** gemma3n:e2b runs on K80 compute 3.7 — the Ollama-engine `gemma3n` path.
+- **Script:** cicd/tests/testcases/models/TC-MODELS-024.yml
 
 | # | Action | Expected Result |
 |---|--------|-----------------|

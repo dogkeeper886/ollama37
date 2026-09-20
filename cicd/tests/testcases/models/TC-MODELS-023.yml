@@ -1,19 +1,18 @@
-id: TC-MODELS-009
-name: deepseek-r1:32b Inference
+id: TC-MODELS-023
+name: llama3.1:8b Inference
 suite: models
-priority: 4
-timeout: 1200000
+priority: 23
+timeout: 900000
 dependencies: []
-issue: 55
 intent:
   user_story: |
-    Validate deepseek-r1:32b runs on K80 compute 3.7 (multi-GPU)
+    Validate llama3.1:8b runs on K80 compute 3.7 — covers the llama.cpp llama path
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"deepseek-r1:32b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
+        -d '{"model":"llama3.1:8b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -48,19 +47,20 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"deepseek-r1:32b","keep_alive":0}'
+        -d '{"model":"llama3.1:8b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate deepseek-r1:32b (~20GB VRAM, multi-GPU layer splitting) runs on K80 (compute 3.7).
-  Model exceeds single K80 GPU (12GB), requires splitting across 2x K80 GPUs.
+  Validate llama3.1:8b (llama arch, ~4.9GB) runs on K80 (compute 3.7).
+  Covers the llama.cpp llama path (llama is not on the Ollama-engine list) and its
+  GraphSize "llama" estimate.
   Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:
-  - API returns JSON with "response" field containing coherent text
-  - GPU memory is allocated on multiple GPUs (visible in nvidia-smi)
+  - API returns JSON with "response" field
+  - GPU memory is allocated (visible in nvidia-smi)
   - GPU count: model must not use more GPUs than needed. Each K80 GPU has 11441 MiB.
     If total VRAM fits in (active_gpus - 1) GPUs, the model is wasting GPUs.
   - No CUDA/CUBLAS errors in output

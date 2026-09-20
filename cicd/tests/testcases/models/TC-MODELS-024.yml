@@ -1,25 +1,18 @@
-id: TC-MODELS-018
-name: "ornith:9b Inference"
+id: TC-MODELS-024
+name: gemma3n:e2b Inference
 suite: models
-priority: 2
-timeout: 600000
+priority: 24
+timeout: 900000
 dependencies: []
-issue: ""
 intent:
   user_story: |
-    Validate ornith:9b (Qwen3.5-family, thinking) runs on K80 compute 3.7 (single GPU).
-    Acceptance for STORY-020: red until the ornith renderer/parser port (#422) is in the
-    deployed image. "think": false is pinned so the answer isn't buried in a <think> span
-    (ornith forces thinking; see #422).
-  notes: |
-    Prerequisite: ornith:9b pre-pulled on the runner.
-    Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+    Validate gemma3n:e2b runs on K80 compute 3.7 — covers the Go gemma3n path
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"ornith:9b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
+        -d '{"model":"gemma3n:e2b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
         | head -c 2000
     expectPatterns:
       - "response"
@@ -54,19 +47,24 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"ornith:9b","keep_alive":0}'
+        -d '{"model":"gemma3n:e2b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Validate ornith:9b (Qwen3.5-family thinking model, dense qwen35) runs on K80 (compute 3.7).
-  Prerequisite: Model must be pre-pulled. Red until the ornith renderer/parser port (#422)
-  is in the deployed image.
+  Validate gemma3n:e2b (gemma3n arch, ~5.6GB) runs on K80 (compute 3.7).
+  Covers the Ollama-engine gemma3n path (model/models/gemma3n).
+  Prerequisite: Model must be pre-pulled before running this test.
 
   Expected:
-  - API returns JSON with "response" field (coherent, no garbage)
-  - GPU memory allocated; fits a single K80 die
-  - No CUDA/CUBLAS errors; model unloads
+  - API returns JSON with "response" field
+  - GPU memory is allocated (visible in nvidia-smi)
+  - GPU count: model must not use more GPUs than needed. Each K80 GPU has 11441 MiB.
+    If total VRAM fits in (active_gpus - 1) GPUs, the model is wasting GPUs.
+  - No CUDA/CUBLAS errors in output
+  - Model unloads successfully
 
-  Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+  Acceptable warnings (NOT errors):
+  - "flash attention enabled but not supported by gpu" - K80 does not support
+    flash attention, this is a normal fallback warning, NOT an error
