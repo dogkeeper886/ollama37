@@ -30,9 +30,9 @@ steps:
   - name: Text inference
     command: |
       out=$(curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma4:12b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
+        -d '{"model":"gemma4:12b","prompt":"What is 2+2? Reply with only the number, no punctuation.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
       echo "$out" | head -c 2000
-      echo "$out" | jq -e '.error == null and (.response | test("4"))' >/dev/null \
+      echo "$out" | jq -e '.error == null and .response == "4"' >/dev/null \
         && echo "ANSWER_OK" || echo "ANSWER_FAIL"
     expectPatterns:
       - "ANSWER_OK"
@@ -65,9 +65,9 @@ steps:
       PY
       )
       out=$(curl -s http://localhost:11434/api/chat \
-        -d "{\"model\":\"gemma4:12b\",\"messages\":[{\"role\":\"user\",\"content\":\"What shape is in this image? Answer in one short sentence.\",\"images\":[\"$IMG\"]}],\"stream\":false,\"options\":{\"num_predict\":400}}")
+        -d "{\"model\":\"gemma4:12b\",\"messages\":[{\"role\":\"user\",\"content\":\"What shape is in this image? Reply with one lowercase word, no punctuation.\",\"images\":[\"$IMG\"]}],\"stream\":false,\"options\":{\"num_predict\":400}}")
       echo "$out" | head -c 2000
-      echo "$out" | jq -e '.error == null and (.message.content | test("circle|disc|round|white|shape|oval|dot|sphere|black"; "i"))' >/dev/null \
+      echo "$out" | jq -e '.error == null and .message.content == "circle"' >/dev/null \
         && echo "VISION_OK" || echo "VISION_FAIL"
     expectPatterns:
       # the answer names the white disc — thinking about it is not an answer
@@ -82,10 +82,10 @@ steps:
   - name: Audio inference (spoken word)
     command: |
       espeak-ng -s 130 -w /tmp/tc016_audio.wav "hello hello hello" 2>/dev/null
-      python3 -c "import base64,json; b=base64.b64encode(open('/tmp/tc016_audio.wav','rb').read()).decode(); json.dump({'model':'gemma4:12b','messages':[{'role':'user','content':'Is a single word repeated in this audio? Answer in one short sentence.','images':[b]}],'stream':False,'options':{'num_predict':400}}, open('/tmp/tc016_req.json','w'))"
+      python3 -c "import base64,json; b=base64.b64encode(open('/tmp/tc016_audio.wav','rb').read()).decode(); json.dump({'model':'gemma4:12b','messages':[{'role':'user','content':'Which word is spoken in this audio? Reply with one lowercase word, no punctuation.','images':[b]}],'stream':False,'options':{'num_predict':400}}, open('/tmp/tc016_req.json','w'))"
       out=$(curl -s http://localhost:11434/api/chat -d @/tmp/tc016_req.json)
       echo "$out" | head -c 2000
-      echo "$out" | jq -e '.error == null and (.message.content | test("word|repeat|audio|sound|three|times|phrase|hello|spoken"; "i"))' >/dev/null \
+      echo "$out" | jq -e '.error == null and .message.content == "hello"' >/dev/null \
         && echo "AUDIO_OK" || echo "AUDIO_FAIL"
     expectPatterns:
       # the answer engages with the audio (transcription accuracy is a quality metric,
@@ -109,8 +109,8 @@ steps:
 criteria: |
   Verify gemma4:12b answers on the K80 and gives its dies back:
   - Model loads (the warm-up shows "WARM_OK")
-  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Answer is exactly 4 (api/generate shows "response":"4")
   - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
-  - Image is described (api/chat shows the shape or its colour)
-  - Audio is heard (api/chat shows the spoken word or that it repeats)
+  - Image is named (api/chat shows "content":"circle")
+  - Spoken word is named (api/chat shows "content":"hello")
   - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

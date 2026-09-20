@@ -13,9 +13,9 @@ steps:
   - name: Test inference
     command: |
       out=$(curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma3:270m","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
+        -d '{"model":"gemma3:270m","prompt":"What is 2+2? Reply with only the number, no punctuation.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
       echo "$out" | head -c 2000
-      echo "$out" | jq -e '.error == null and (.response | test("4"))' >/dev/null \
+      echo "$out" | jq -e '.error == null and .response == "4"' >/dev/null \
         && echo "ANSWER_OK" || echo "ANSWER_FAIL"
     expectPatterns:
       - "ANSWER_OK"
@@ -58,7 +58,7 @@ steps:
 
 criteria: |
   Verify gemma3:270m answers on the K80 and gives its dies back:
-  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Answer is exactly 4 (api/generate shows "response":"4")
   - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
   - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
   - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")
