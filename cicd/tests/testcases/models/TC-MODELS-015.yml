@@ -8,30 +8,16 @@ issue: 182
 
 intent:
   user_story: |
-    Validate qwen3.6:35b (35B-A3B) runs on K80 compute 3.7 through the MoE path.
-    This is the qwen35moe architecture (HF model_type qwen3_5_moe) -> the sparse
-    expert-routing MLP, wired in #179 and first validated in #182. It is distinct
-    from TC-MODELS-014 (qwen3.6:27b, the DENSE qwen35 path) and is the only test
-    that exercises the MoE / expert-routing code.
-  acceptance:
-    - API returns a coherent response (no garbage), proving the qwen35moe sparse path computes correctly
-    - No CUDA / CUBLAS errors
-    - Model does not spread across more GPUs than its footprint needs
-    - Model unloads cleanly
-  notes: |
-    Prerequisite: qwen3.6:35b must be pre-pulled on the runner before this test.
-    MoE variant (~24GB Q4_K_M): 40 layers (30 recurrent DeltaNet + 10 attention)
-    with a 256-expert MoE FFN. Needs 3x K80 dies (total exceeds 2x ~11441 MiB).
-    Flash attention is off for qwen35moe (not in the new-engine FA allowlist).
+    Verify qwen3.6:35b answers on the K80
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"qwen3.6:35b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":512}}' \
+        -d '{"model":"qwen3.6:35b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":512,"temperature":0,"seed":0}}' \
         | head -c 2000
     expectPatterns:
-      - "response"
+      - '"response":"[^"]*4'
     rejectPatterns:
       - "CUBLAS_STATUS"
       - "CUDA error"
@@ -69,19 +55,8 @@ steps:
       - "Model unloaded"
 
 criteria: |
-  Validate qwen3.6:35b (35B-A3B MoE, ~24GB VRAM, multi-GPU) runs on K80 (compute 3.7)
-  through the qwen35moe -> sparse expert-routing path (distinct from the dense qwen35
-  path in TC-MODELS-014). The model exceeds 2x K80 GPUs (2x ~11441 MiB), so 3x is
-  expected and correct.
-  Prerequisite: Model must be pre-pulled before running this test.
-
-  Expected:
-  - API returns JSON with "response" field containing coherent text (MoE path computes correctly)
-  - GPU memory is allocated on multiple GPUs (visible in nvidia-smi)
-  - GPU count: model must not use more GPUs than needed. Each K80 GPU has 11441 MiB.
-    35B-A3B legitimately needs 3 GPUs; flag only if total fits in (active_gpus - 1).
-  - No CUDA/CUBLAS errors in output
-  - Model unloads successfully
-
-  Acceptable warnings (NOT errors):
-  - "flash attention enabled but not supported by gpu" - K80 has no FA; normal fallback.
+  Verify qwen3.6:35b answers on the K80 and gives its dies back:
+  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
+  - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
+  - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

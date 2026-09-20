@@ -7,21 +7,16 @@ dependencies: []
 issue: ""
 intent:
   user_story: |
-    Validate ornith:35b (Qwen3.5-family MoE, thinking) runs on K80 compute 3.7. Larger than a
-    single die, so it may span both K80 dies. Acceptance for STORY-020: red until the ornith
-    renderer/parser port (#422) is in the deployed image. "think": false pinned (see #422).
-  notes: |
-    Prerequisite: ornith:35b pre-pulled on the runner.
-    Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+    Verify ornith:35b answers on the K80
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"ornith:35b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
+        -d '{"model":"ornith:35b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200,"temperature":0,"seed":0}}' \
         | head -c 2000
     expectPatterns:
-      - "response"
+      - '"response":"[^"]*4'
     rejectPatterns:
       - "CUBLAS_STATUS"
       - "CUDA error"
@@ -62,6 +57,8 @@ steps:
       - "Model unloaded"
 
 criteria: |
-  Validate ornith:35b (Qwen3.5-family MoE, qwen35moe) runs on K80 (compute 3.7). At ~22.8 GB it
-  is ~99.5% of two K80 dies, so a 3-die split is expected and accepted — the GPU-count gate flags
-  waste only if the model would fit in fewer dies with ~10% headroom. Prerequisite: pre-pulled.
+  Verify ornith:35b answers on the K80 and gives its dies back:
+  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
+  - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
+  - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

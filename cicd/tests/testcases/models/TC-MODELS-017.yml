@@ -6,23 +6,16 @@ timeout: 900000
 dependencies: []
 intent:
   user_story: |
-    Validate lfm2.5:8b (Liquid LFM2 MoE, 8B total / ~1B active, ~5.2 GB) runs on
-    K80 compute 3.7 (single GPU). Acceptance for STORY-016: the fork already vendors the
-    lfm2/lfm2moe llama.cpp arch, so this gates that the GGUF loads and generates coherently
-    once the Go parser/renderer port lands — red until then.
-  notes: |
-    Prerequisite: lfm2.5:8b pre-pulled on the runner. The request pins "think": false
-    so the answer isn't buried inside a <think> span (lfm2.5 has a thinking mode).
-    Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+    Verify lfm2.5:8b answers on the K80
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"lfm2.5:8b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
+        -d '{"model":"lfm2.5:8b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200,"temperature":0,"seed":0}}' \
         | head -c 2000
     expectPatterns:
-      - "response"
+      - '"response":"[^"]*4'
     rejectPatterns:
       - "CUBLAS_STATUS"
       - "CUDA error"
@@ -60,16 +53,8 @@ steps:
       - "Model unloaded"
 
 criteria: |
-  Validate lfm2.5:8b (Liquid LFM2 MoE, ~5.2 GB VRAM) runs on K80 (compute 3.7).
-  Prerequisite: Model must be pre-pulled before running this test.
-
-  Expected:
-  - API returns JSON with "response" field (coherent, no garbage)
-  - GPU memory is allocated (visible in nvidia-smi)
-  - GPU count: ~5.2 GB fits a single K80 die (11441 MiB), so GPU_COUNT_OK on one GPU.
-  - No CUDA/CUBLAS errors in output
-  - Model unloads successfully
-
-  Acceptable warnings (NOT errors):
-  - "flash attention enabled but not supported by gpu" - K80 does not support
-    flash attention, this is a normal fallback warning, NOT an error
+  Verify lfm2.5:8b answers on the K80 and gives its dies back:
+  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
+  - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
+  - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

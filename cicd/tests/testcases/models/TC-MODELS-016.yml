@@ -7,20 +7,7 @@ dependencies: []
 issue: 367
 intent:
   user_story: |
-    Validate gemma4:12b runs TEXT + VISION + AUDIO on K80 compute 3.7 via the legacy
-    llama.cpp/clip path (split-vision model: separate mmproj projector blob). This is the
-    acceptance for the #367 port: gemma4 arch + GPU offload fix + the gemma4uv vision
-    embedder + the encoder-free gemma4ua audio path.
-  acceptance:
-    - Text: /api/generate returns coherent text (no garbage), no CUDA/CUBLAS errors
-    - GPU: weights offloaded to GPU (not CPU) — the graph-size estimate fix
-    - Vision: /api/chat with an image returns a non-empty description (no error)
-    - Audio: /api/chat with a spoken-word WAV returns the recognized word
-    - Model unloads cleanly
-  notes: |
-    Prerequisite: gemma4:12b pre-pulled on the runner. Audio rides the existing `images`
-    field (mtmd auto-detects WAV). Fixtures are generated inline (python + espeak-ng).
-    Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+    Verify gemma4:12b answers text, image and audio prompts on the K80
 
 steps:
   - name: Warm up (tolerate transient cold-load retry under suite GPU pressure)
@@ -43,10 +30,10 @@ steps:
   - name: Text inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma4:12b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":64}}' \
+        -d '{"model":"gemma4:12b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":64,"temperature":0,"seed":0}}' \
         | head -c 2000
     expectPatterns:
-      - "response"
+      - '"response":"[^"]*4'
     rejectPatterns:
       - "CUBLAS_STATUS"
       - "CUDA error"
@@ -110,19 +97,10 @@ steps:
       - "Model unloaded"
 
 criteria: |
-  Validate gemma4:12b (~10 GB, text+vision+audio) runs on K80 (compute 3.7) via the legacy
-  llama.cpp / clip path — the #367 acceptance.
-
-  Expected:
-  - Text: /api/generate returns JSON with "response" (coherent), no CUDA/CUBLAS errors
-  - GPU: nvidia-smi shows the model resident in GPU memory (the graph-size fix offloads it;
-    before the fix it ran on CPU)
-  - Vision: /api/chat with an image returns "content" (a description; the gemma4uv embedder +
-    <|image> markers + non-causal attention), no "does not support" error
-  - Audio: /api/chat with espeak "hello x3" returns "hello" (the encoder-free gemma4ua path +
-    <|audio> markers); no "does not support audio" error
-  - Model unloads successfully
-
-  Acceptable warnings (NOT errors):
-  - "flash attention enabled but not supported by gpu" - normal K80 fallback
-  - "audio input is in experimental stage" - expected for the audio path
+  Verify gemma4:12b answers on the K80 and gives its dies back:
+  - Model loads (the warm-up shows "WARM_OK")
+  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
+  - Image is described (api/chat shows the shape or its colour)
+  - Audio is heard (api/chat shows the spoken word or that it repeats)
+  - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")
