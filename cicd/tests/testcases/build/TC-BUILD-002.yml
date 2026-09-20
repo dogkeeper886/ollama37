@@ -7,7 +7,7 @@ dependencies:
   - TC-BUILD-001
 intent:
   user_story: |
-    Build the ollama37 runtime Docker image from local source without errors
+    Build the ollama37 runtime Docker image from local source successfully
 
 steps:
   - name: Navigate and build runtime image
@@ -25,17 +25,7 @@ steps:
       - "ollama37:latest"
 
 criteria: |
-  Build the ollama37 runtime Docker image from source.
-
-  Expected:
-  - Build completes without errors
-  - Final message: "Runtime image built successfully!"
-  - Runtime image exists (ollama37:latest)
-  - Image size is somewhat larger than the old sm_37-only build (multi-stage build)
-    because the CUDA library now bundles native cubin for the full 470 datacenter
-    sweep (sm_37/50/52/60/61/70/75/80/86)
-
-  Note: CUDA compilation now covers 9 architectures, but nvcc shares the compile
-  front-end across targets, so the build is only modestly slower than the old
-  single-arch ~18 min — measured ~20 min for the full suite on run 27895485876.
-  Timeout is 1 h for margin. Each GPU still loads only its own cubin at runtime.
+  Verify the ollama37 runtime Docker image builds from local source and is tagged:
+  - Build reports success (make build-runtime-local-no-cache shows "Runtime image built successfully")
+  - Build completes without errors (make build-runtime-local-no-cache shows no "error:" or "Error:")
+  - Image is tagged for later stages (docker images shows "ollama37:latest")
