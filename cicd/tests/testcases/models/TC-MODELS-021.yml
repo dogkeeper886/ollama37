@@ -13,7 +13,7 @@ steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"lfm2.5-thinking:1.2b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200,"temperature":0,"seed":0}}' \
+        -d '{"model":"lfm2.5-thinking:1.2b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}' \
         | head -c 2000
     expectPatterns:
       - '"response":"[^"]*4'
