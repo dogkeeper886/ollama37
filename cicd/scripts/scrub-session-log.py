@@ -48,9 +48,14 @@ PATTERNS = [
 COMPILED = [(kind, re.compile(rx)) for kind, rx in PATTERNS]
 
 # Not a credential, but this project's memory forbids publishing the K80 host's address.
-PRIVATE_IP = re.compile(r"\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"
-                        r"|\b192\.168\.\d{1,3}\.\d{1,3}\b"
-                        r"|\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b")
+#
+# The bounds are lookarounds, not \b: in a JSONL log an address usually follows an escaped
+# newline, so the character before it is the literal "n" of "\n" — a word character, which
+# means \b never fires there and the address survives both scan and scrub. Only digits and
+# dots may touch the match; any other neighbour (a letter, a quote, a slash) is fine.
+PRIVATE_IP = re.compile(r"(?<![\d.])(?:(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+                        r"|192\.168\.\d{1,3}\.\d{1,3}"
+                        r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(?![\d.])")
 
 
 def load_denylist():
