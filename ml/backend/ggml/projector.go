@@ -1,6 +1,7 @@
 package ggml
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"strings"
@@ -20,6 +21,10 @@ type tensorSource struct {
 // llama-server compat layer applies to Ollama-format qwen35 vision towers.
 // The fused attn_qkv and the two patch_embd slices keep their clip names; the
 // vision model reads those directly.
+//
+// gemma4v needs no table: its v.* and mm.* names already match what the Go
+// gemma4 vision model loads. gemma4uv is not accepted — it carries a patch
+// embedder rather than a vision tower, which that model has no path for.
 var qwen3vlMergerRenames = []struct{ from, to string }{
 	{"v.position_embd.", "v.pos_embed."},
 	{"v.post_ln.", "v.merger.norm."},
@@ -52,8 +57,16 @@ func loadProjector(path string, kv fsggml.KV) ([]*fsggml.Tensor, tensorSource, e
 		return nil, tensorSource{}, fmt.Errorf("unsupported projector architecture %q", arch)
 	}
 
-	projectorType := proj.KV().String("projector_type")
-	if projectorType != "qwen3vl_merger" {
+	// qwen3vl_merger declares its type at clip.projector_type, gemma4v at
+	// clip.vision.projector_type. fsggml prefixes the architecture, which is
+	// clip either way.
+	projectorType := cmp.Or(proj.KV().String("projector_type"), proj.KV().String("vision.projector_type"))
+	var renames []struct{ from, to string }
+	switch projectorType {
+	case "qwen3vl_merger":
+		renames = qwen3vlMergerRenames
+	case "gemma4v":
+	default:
 		return nil, tensorSource{}, fmt.Errorf("unsupported projector type %q", projectorType)
 	}
 
@@ -68,7 +81,7 @@ func loadProjector(path string, kv fsggml.KV) ([]*fsggml.Tensor, tensorSource, e
 
 	tensors := proj.Tensors().Items()
 	for _, t := range tensors {
-		for _, r := range qwen3vlMergerRenames {
+		for _, r := range renames {
 			t.Name = strings.Replace(t.Name, r.from, r.to, 1)
 		}
 	}
