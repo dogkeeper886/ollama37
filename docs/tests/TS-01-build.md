@@ -38,12 +38,11 @@ build half of [STORY-005](../stories/STORY-005.md).
 | 1 | Build the runtime image | prints `Runtime image built successfully`, no `error:` / `Error:` |
 | 2 | Verify the runtime image exists | `ollama37:latest` is present |
 
-### TC-03: Image size validation
+### TC-03: Runtime image slimness
 
-- **Objective:** the builder and runtime image sizes are within expected ranges.
+- **Objective:** the multi-stage build ships a runtime image without the build toolchain.
 - **Script:** cicd/tests/testcases/build/TC-BUILD-003.yml
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Check the builder image size | within range (`SIZE_OK`) |
-| 2 | Check the runtime image size | within range (`SIZE_OK`) |
+| 1 | Check the runtime image size | 1-3 GB (`SIZE_OK`) |
