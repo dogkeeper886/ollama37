@@ -63,6 +63,8 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: true}
 	case "ornith":
 		return &Qwen35Parser{}
+	case "qwen3.8":
+		return &Qwen35Parser{honorThink: true}
 	case "passthrough":
 		return &PassthroughParser{}
 	case "harmony":

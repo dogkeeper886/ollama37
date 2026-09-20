@@ -77,6 +77,12 @@ type Backend struct {
 	// modelPath is the location of the model data
 	modelPath string
 
+	// tensorItems is every tensor to load: the model's, then any projector's
+	tensorItems []*fsggml.Tensor
+
+	// tensorSources locates tensors that are not in the model file
+	tensorSources map[string]tensorSource
+
 	meta *fsggml.GGML
 
 	// allocMemory means that memory should be allocated for tensors and not
@@ -134,6 +140,19 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
+	}
+
+	items := meta.Tensors().Items()
+	sources := make(map[string]tensorSource)
+	if params.ProjectorPath != "" {
+		projTensors, src, err := loadProjector(params.ProjectorPath, meta.KV())
+		if err != nil {
+			return nil, fmt.Errorf("loading projector: %w", err)
+		}
+		for _, t := range projTensors {
+			sources[t.Name] = src
+		}
+		items = append(slices.Clip(items), projTensors...)
 	}
 
 	once.Do(func() {
@@ -231,7 +250,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// outputs are assigned iff allowed by splits and configured number of gpu layers
 	output := assignLayer(blocks)
 
-	maxTensors := len(meta.Tensors().Items())
+	maxTensors := len(items)
 	maxTensors += 1
 	// each layer has at most 2 extra tensors for rope operations
 	maxTensors += blocks * 2
@@ -307,7 +326,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		return false
 	}
 
-	for _, t := range meta.Tensors().Items() {
+	for _, t := range items {
 		switch {
 		case contains(t.Name, "position_embd", "token_embd", "token_norm_embd", "token_types"):
 			createTensor(tensor{source: t}, input.bts, -1)
@@ -382,7 +401,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	maxGraphNodes := max(1024, len(meta.Tensors().Items())*32)
+	maxGraphNodes := max(1024, len(items)*32)
 
 	sched := C.ggml_backend_sched_new_ext(
 		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
@@ -425,6 +444,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 	return &Backend{
 		modelPath:         modelPath,
+		tensorItems:       items,
+		tensorSources:     sources,
 		allocMemory:       params.AllocMemory,
 		flashAttention:    params.FlashAttention,
 		meta:              meta,
@@ -499,12 +520,19 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(b.layers)+1))
 
 	var doneBytes atomic.Uint64
-	totalBytes := uint64(b.meta.Length) - b.meta.Tensors().Offset
+	var totalBytes uint64
+	for _, t := range b.tensorItems {
+		totalBytes += t.Size()
+	}
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
-	for _, t := range b.meta.Tensors().Items() {
+	for _, t := range b.tensorItems {
 		t := t
+		src, ok := b.tensorSources[t.Name]
+		if !ok {
+			src = tensorSource{path: b.modelPath, dataOffset: b.meta.Tensors().Offset}
+		}
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
 			for i := range tts {
@@ -523,13 +551,13 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 
 			// Create a new FD for each goroutine so that each FD is read sequentially, rather than
 			// seeking around within an FD shared between all goroutines.
-			file, err := os.Open(b.modelPath)
+			file, err := os.Open(src.path)
 			if err != nil {
-				slog.Warn("file open error", "file", b.modelPath, "error", err)
+				slog.Warn("file open error", "file", src.path, "error", err)
 				return err
 			}
 			defer file.Close()
-			sr := io.NewSectionReader(file, int64(b.meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			sr := io.NewSectionReader(file, int64(src.dataOffset+t.Offset), int64(t.Size()))
 
 			if t.Kind == 4 && tts[0]._type == 39 {
 				// source is mxfp4, target is ggml mxfp4
@@ -545,7 +573,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 					}
 					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 					if err != nil {
-						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						slog.Warn("file read error", "file", src.path, "error", err)
 						return err
 					}
 					for j := range n / BS {
@@ -583,7 +611,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 					}
 					n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Elements()-e)*2)])
 					if err != nil {
-						slog.Warn("file read error", "file", b.modelPath, "error", err)
+						slog.Warn("file read error", "file", src.path, "error", err)
 						return err
 					}
 					fp32 := ConvertToF32(bts, uint32(fsggml.TensorTypeBF16), uint64(n/2))
@@ -611,7 +639,7 @@ func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
 
 				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 				if err != nil {
-					slog.Warn("file read error", "file", b.modelPath, "error", err)
+					slog.Warn("file read error", "file", src.path, "error", err)
 					return err
 				}
 

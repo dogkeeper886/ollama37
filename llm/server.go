@@ -157,7 +157,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	var err error
 	arch := f.KV().Architecture()
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
-		if len(projectors) == 0 {
+		// The vendored llama.cpp can't load llama.cpp-format qwen35 GGUFs or
+		// their qwen3vl_merger projector; the Ollama engine loads the projector
+		// alongside the model instead.
+		splitVision := len(projectors) > 0 && (arch == "qwen35" || arch == "qwen35moe")
+		if len(projectors) == 0 || splitVision {
 			textProcessor, err = model.NewTextProcessor(modelPath)
 		} else {
 			err = errors.New("split vision models aren't supported")
@@ -281,7 +285,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		loadRequest.MainGPU = opts.MainGPU
 	}
 
-	if len(projectors) > 0 && llamaModel != nil {
+	if len(projectors) > 0 {
 		loadRequest.ProjectorPath = projectors[0]
 	}
 
