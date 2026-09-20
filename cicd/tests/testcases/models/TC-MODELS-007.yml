@@ -7,16 +7,16 @@ dependencies: []
 issue: 55
 intent:
   user_story: |
-    Validate gemma4:31b runs on K80 compute 3.7 (multi-GPU)
+    Verify gemma4:31b answers on the K80
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"gemma4:31b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200}}' \
+        -d '{"model":"gemma4:31b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200,"temperature":0,"seed":0}}' \
         | head -c 2000
     expectPatterns:
-      - "response"
+      - '"response":"[^"]*4'
     rejectPatterns:
       - "CUBLAS_STATUS"
       - "CUDA error"
@@ -54,18 +54,8 @@ steps:
       - "Model unloaded"
 
 criteria: |
-  Validate gemma4:31b (~20GB VRAM, multi-GPU layer splitting) runs on K80 (compute 3.7).
-  Model exceeds single K80 GPU (12GB), requires splitting across 2x K80 GPUs.
-  Prerequisite: Model must be pre-pulled before running this test.
-
-  Expected:
-  - API returns JSON with "response" field containing coherent text
-  - GPU memory is allocated on multiple GPUs (visible in nvidia-smi)
-  - GPU count: model must not use more GPUs than needed. Each K80 GPU has 11441 MiB.
-    If total VRAM fits in (active_gpus - 1) GPUs, the model is wasting GPUs.
-  - No CUDA/CUBLAS errors in output
-  - Model unloads successfully
-
-  Acceptable warnings (NOT errors):
-  - "flash attention enabled but not supported by gpu" - K80 does not support
-    flash attention, this is a normal fallback warning, NOT an error
+  Verify gemma4:31b answers on the K80 and gives its dies back:
+  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
+  - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
+  - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

@@ -20,11 +20,12 @@ Models are chosen **one tag per code path** — engine (Ollama vs llama.cpp) × 
 GGUF layout (vision inline or a split projector) × any size-gated branch — using the smallest tag
 that reaches the path. A new model gets a case only when it reaches a path no case covers yet.
 
-Every case runs the same four steps unless noted:
+Every case runs the same four steps unless noted, at `temperature` 0 with a fixed
+`seed` so the answer is reproducible:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -36,7 +37,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -48,7 +49,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -60,7 +61,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -72,7 +73,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -84,7 +85,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -96,7 +97,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -108,7 +109,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -120,7 +121,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -132,7 +133,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -144,7 +145,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -156,7 +157,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -168,7 +169,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -180,7 +181,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -192,7 +193,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -204,7 +205,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -216,7 +217,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -228,7 +229,7 @@ Every case runs the same four steps unless noted:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | returns a `response`; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |

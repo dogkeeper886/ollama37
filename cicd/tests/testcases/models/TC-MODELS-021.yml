@@ -7,24 +7,16 @@ dependencies: []
 issue: "438"
 intent:
   user_story: |
-    Validate lfm2.5-thinking:1.2b (Liquid LFM2, thinking, ~0.7 GB) runs on K80 compute 3.7
-    (single GPU). The ollama-library GGUF is mis-converted — feed_forward_length metadata
-    (12288) disagrees with its 8192-wide FFN tensors, and its final norm ships as output_norm
-    (no token_embd_norm); patch 0034 loads it by deriving n_ff from the ffn_gate tensor and
-    resolving tok_norm from output_norm. "think": false pinned so the answer isn't buried in a
-    <think> span.
-  notes: |
-    Prerequisite: lfm2.5-thinking:1.2b pre-pulled on the runner.
-    Acceptable warning (NOT an error): "flash attention enabled but not supported by gpu".
+    Verify lfm2.5-thinking:1.2b answers on the K80
 
 steps:
   - name: Test inference
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"lfm2.5-thinking:1.2b","prompt":"What is 2+2? Answer briefly.","stream":false,"think":false,"options":{"num_predict":200}}' \
+        -d '{"model":"lfm2.5-thinking:1.2b","prompt":"What is 2+2? Answer briefly.","stream":false,"options":{"num_predict":200,"temperature":0,"seed":0}}' \
         | head -c 2000
     expectPatterns:
-      - "response"
+      - '"response":"[^"]*4'
     rejectPatterns:
       - "CUBLAS_STATUS"
       - "CUDA error"
@@ -64,7 +56,8 @@ steps:
       - "Model unloaded"
 
 criteria: |
-  Validate lfm2.5-thinking:1.2b (Liquid LFM2 thinking, ~0.7 GB) runs on K80 (compute 3.7),
-  single die. Prerequisite: pre-pulled. Loads via patch 0034 (#438) — feed_forward_length
-  corrected from the ffn_gate tensor width, final norm resolved from output_norm; no
-  "wrong shape" or "missing tensor" load failure.
+  Verify lfm2.5-thinking:1.2b answers on the K80 and gives its dies back:
+  - Answer contains a 4 (api/generate shows "response":"[^"]*4")
+  - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
+  - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
+  - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")
