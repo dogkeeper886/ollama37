@@ -62,7 +62,7 @@ steps:
       PY
       )
       curl -s http://localhost:11434/api/chat \
-        -d "{\"model\":\"gemma4:12b\",\"messages\":[{\"role\":\"user\",\"content\":\"What shape is in this image? Answer in one short sentence.\",\"images\":[\"$IMG\"]}],\"stream\":false,\"think\":false,\"options\":{\"num_predict\":64}}" \
+        -d "{\"model\":\"gemma4:12b\",\"messages\":[{\"role\":\"user\",\"content\":\"What shape is in this image? Answer in one short sentence.\",\"images\":[\"$IMG\"]}],\"stream\":false,\"options\":{\"num_predict\":400}}" \
         | head -c 2000
     expectPatterns:
       # the model perceives the white disc — any of these confirms vision works
@@ -76,7 +76,7 @@ steps:
   - name: Audio inference (spoken word)
     command: |
       espeak-ng -s 130 -w /tmp/tc016_audio.wav "hello hello hello" 2>/dev/null
-      python3 -c "import base64,json; b=base64.b64encode(open('/tmp/tc016_audio.wav','rb').read()).decode(); json.dump({'model':'gemma4:12b','messages':[{'role':'user','content':'Is a single word repeated in this audio? Answer in one short sentence.','images':[b]}],'stream':False,'think':False,'options':{'num_predict':64}}, open('/tmp/tc016_req.json','w'))"
+      python3 -c "import base64,json; b=base64.b64encode(open('/tmp/tc016_audio.wav','rb').read()).decode(); json.dump({'model':'gemma4:12b','messages':[{'role':'user','content':'Is a single word repeated in this audio? Answer in one short sentence.','images':[b]}],'stream':False,'options':{'num_predict':400}}, open('/tmp/tc016_req.json','w'))"
       curl -s http://localhost:11434/api/chat -d @/tmp/tc016_req.json | head -c 2000
     expectPatterns:
       # the model perceives + engages with the audio (transcription accuracy is a quality
