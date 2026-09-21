@@ -82,6 +82,15 @@ jobs:
           # dual mode runs the keyless agent judge; the runner reads JUDGE_MODE.
           JUDGE_MODE: ${{ inputs.judge_mode || 'simple' }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # JUDGE_BASE_URL (cicd-1 variable) points the judge at an ollama server
+          # instead of Anthropic — a judge off the box under test. Unset it and
+          # the judge falls back to Claude on the OAuth token above; the auth
+          # token has to follow the base URL or it would break that fallback.
+          ANTHROPIC_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ vars.JUDGE_BASE_URL && 'ollama' || '' }}
+          ANTHROPIC_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+          # Claude Code's side-call model; ollama has no haiku tag to serve it.
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
         run: |
           cd cicd/tests
           echo "Judge mode: ${JUDGE_MODE}"
