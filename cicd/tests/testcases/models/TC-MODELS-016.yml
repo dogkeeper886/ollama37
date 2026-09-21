@@ -66,7 +66,7 @@ steps:
       PY
       )
       out=$(curl -s http://localhost:11434/api/chat \
-        -d "{\"model\":\"gemma4:12b\",\"messages\":[{\"role\":\"user\",\"content\":\"What shape is in this image? Reply with one lowercase word, no punctuation.\",\"images\":[\"$IMG\"]}],\"stream\":false,\"options\":{\"num_predict\":400}}")
+        -d "{\"model\":\"gemma4:12b\",\"messages\":[{\"role\":\"user\",\"content\":\"What shape is in this image? Reply with one lowercase word, no punctuation.\",\"images\":[\"$IMG\"]}],\"stream\":false,\"options\":{\"num_predict\":400,\"temperature\":0,\"seed\":0}}")
       echo "$out" | jq -r '"content: " + (.message.content // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
       { [ -n "$out" ] && echo "$out" | jq -e '.error == null and .done == true' >/dev/null 2>&1; } \
@@ -86,7 +86,7 @@ steps:
     command: |
       command -v espeak-ng >/dev/null || { echo "espeak-ng missing on this host"; echo "AUDIO_FAIL"; exit 1; }
       espeak-ng -s 130 -w /tmp/tc016_audio.wav "hello hello hello" 2>/dev/null
-      python3 -c "import base64,json; b=base64.b64encode(open('/tmp/tc016_audio.wav','rb').read()).decode(); json.dump({'model':'gemma4:12b','messages':[{'role':'user','content':'Which word is spoken in this audio? Reply with one lowercase word, no punctuation.','images':[b]}],'stream':False,'options':{'num_predict':400}}, open('/tmp/tc016_req.json','w'))"
+      python3 -c "import base64,json; b=base64.b64encode(open('/tmp/tc016_audio.wav','rb').read()).decode(); json.dump({'model':'gemma4:12b','messages':[{'role':'user','content':'Which word is spoken in this audio? Reply with one lowercase word, no punctuation.','images':[b]}],'stream':False,'options':{'num_predict':400,'temperature':0,'seed':0}}, open('/tmp/tc016_req.json','w'))"
       out=$(curl -s http://localhost:11434/api/chat -d @/tmp/tc016_req.json)
       echo "$out" | jq -r '"content: " + (.message.content // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
