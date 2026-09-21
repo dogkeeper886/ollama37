@@ -30,7 +30,7 @@ All three cost a round of questions that the log answers in one read.
 | [`0cbcb148-7038-4b0f-b0b4-04fc95877a69.jsonl`](./0cbcb148-7038-4b0f-b0b4-04fc95877a69.jsonl) | 2026-09-09 | #479, #480, #481 (model ports), #482 (hardcoded model lists); the model-trim disk cleanup |
 | [`e94f8744-926e-4170-a772-dbdfe88165e2.jsonl`](./e94f8744-926e-4170-a772-dbdfe88165e2.jsonl) | 2026-09-20 | #487 — the models suite trimmed to one tag per code path. Carries the per-family trace behind every choice: which engine and package each arch loads through, which tags differ only in size, and why gemma3:27b, gemma4:12b and both lfm2 tags stay while ornith:9b and functiongemma go |
 | [`d665bb45-58bb-4fd2-b820-91535e9a55f1.jsonl`](./d665bb45-58bb-4fd2-b820-91535e9a55f1.jsonl) | 2026-09-20 | #479 (qwen3.8 text + vision on the K80), #484 (gemma4:26b split vision), #489 (MTP block VRAM waste), #492 (qwen3.8 suite coverage), #498 (testcases regex the raw reply), #486 #488 #494 #495 #496 (CI host setup and models-suite assertions) |
-| [`a35b8673-ab88-4b7a-b50d-82d39aad564c.jsonl`](./a35b8673-ab88-4b7a-b50d-82d39aad564c.jsonl) | 2026-09-21 | #501 — the two judges split by what each asserts. Carries why the agent judge moved onto an ollama server rather than Anthropic (branch `ci-judge-on-ollama`), the ACP-vs-CLI dead end that `claude-ollama.sh --acp` came out of, and the TC-MODELS-008 run that separated a wrong answer from a broken model — including the container that had been down for seven hours because a local `ollama serve` held port 11434 |
+| [`a35b8673-ab88-4b7a-b50d-82d39aad564c.jsonl`](./a35b8673-ab88-4b7a-b50d-82d39aad564c.jsonl) | 2026-09-21 | #501 and PR #502 / #503 — the agent judge moved onto an ollama server, and the two judges split by what each asserts. Then the investigation behind the judge hardening on `ci-judge-loop-guard`: the single session that grew to 98% of the 64k window, the 18k tokens of unused tools, the per-session side call, the 15-case labeled set with its false passes, and the judge looping while it quoted repeated text back. Also the email exposure in these logs and the rule that now redacts it |
 
 ## Adding one
 
@@ -61,6 +61,11 @@ carries that secret in plain text; the session that wrote this README carried a 
 Grafana password and the K80 host's private IP. See
 [`../cicd/scripts/scrub-session-log.py`](../cicd/scripts/scrub-session-log.py) for what is
 detected and for the local denylist that catches secrets no regex can recognise by shape.
+
+Every log also carries **your own email address**: Claude Code writes it into each session's
+context. The scrubber redacts every address it finds, but a handle or a mangled form (inside a
+regex, say) has no email shape — put those in the denylist too. Four logs went public with the
+address before this rule existed; they were re-scrubbed from their published copies.
 
 Then link it from the issue — `Context: .sessions/<uuid>.jsonl` — and never paste the log
 into the body.
