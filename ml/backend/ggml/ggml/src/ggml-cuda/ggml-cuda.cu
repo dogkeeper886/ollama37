@@ -143,9 +143,37 @@ int ggml_cuda_get_device() {
     return id;
 }
 
+// ollama (#509): 1 if this process holds a primary context on the device, 0 if not, -1 if
+// the driver can't say. The driver query never creates a context.
+static int ggml_cuda_primary_ctx_state(int device) {
+    CUdevice cudev;
+    unsigned int flags = 0;
+    int active = 0;
+    if (cuDeviceGet(&cudev, device) != CUDA_SUCCESS ||
+        cuDevicePrimaryCtxGetState(cudev, &flags, &active) != CUDA_SUCCESS) {
+        return -1;
+    }
+    return active ? 1 : 0;
+}
+
 void ggml_cuda_reset_device(int device) {
+    // ollama (#509): Backend.Load resets every GPU the model didn't end up using. On a GPU
+    // this process never touched there is nothing to reset, and touching it creates a
+    // primary context (~93 MiB on a K80). Worse, switching to it left the thread's current
+    // device on the last GPU reset, so the next CUDA call on that thread that didn't set
+    // its own device created a context there — a "ghost" on a layerless GPU. Skip GPUs
+    // with no context, and switch back afterwards — but only to a device that already has
+    // a context, since from CUDA 12 cudaSetDevice itself creates one.
+    if (ggml_cuda_primary_ctx_state(device) == 0) {
+        return;
+    }
+    int prev_device;
+    CUDA_CHECK(cudaGetDevice(&prev_device));
     ggml_cuda_set_device(device);
     CUDA_CHECK(cudaDeviceReset());
+    if (prev_device != device && ggml_cuda_primary_ctx_state(prev_device) == 1) {
+        ggml_cuda_set_device(prev_device);
+    }
 }
 
 static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
