@@ -116,7 +116,7 @@ A K80 has **12 GB VRAM per GPU** (24 GB for a dual-GPU board). Size quantization
 | Large (13B+)  | Q4_0 or multi-GPU    |
 
 Verified on K80: `gemma3:4b`, `gemma3:27b`, `gemma4:e4b`, `gemma4:26b`, `qwen3.5:9b`,
-`qwen3.5:27b`, `gpt-oss:20b`, `deepseek-r1:7b`, `ministral-3`, `functiongemma`.
+`qwen3.5:27b`, `qwen3.8:27b`, `gpt-oss:20b`, `deepseek-r1:7b`, `ministral-3`, `functiongemma`.
 
 ## How It's Built
 
