@@ -57,6 +57,15 @@ PRIVATE_IP = re.compile(r"(?<![\d.])(?:(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}"
                         r"|192\.168\.\d{1,3}\.\d{1,3}"
                         r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(?![\d.])")
 
+# Not a credential either, but an address in a public log is published for good. Claude Code
+# writes the user's own address into every session log's context ("userEmail"), so a raw log
+# always carries one — four logs went public that way before this rule existed. Every address
+# is redacted rather than deciding whose is safe to publish.
+#
+# (?<!\\) for the same reason as the IP bounds: after an escaped newline the match would
+# otherwise start at the "n" of "\n", and redacting it leaves a lone backslash — invalid JSON.
+EMAIL = re.compile(r"(?<!\\)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
 
 def load_denylist():
     path = os.environ.get("SCRUB_DENYLIST_FILE",
@@ -87,6 +96,8 @@ def find(line, denylist, flag_ips):
     for lit in denylist:
         if lit in line:
             hits.append(("denylist", lit))
+    for m in EMAIL.finditer(line):
+        hits.append(("email", m.group(0)))
     if flag_ips:
         for m in PRIVATE_IP.finditer(line):
             hits.append(("private-ip", m.group(0)))
@@ -99,6 +110,7 @@ def redact(line, denylist, flag_ips):
         line = line.replace(lit, "[REDACTED-denylist]")
     for kind, rx in COMPILED:
         line = rx.sub("[REDACTED-%s]" % kind, line)
+    line = EMAIL.sub("[REDACTED-email]", line)
     if flag_ips:
         line = PRIVATE_IP.sub("[REDACTED-private-ip]", line)
     return line
