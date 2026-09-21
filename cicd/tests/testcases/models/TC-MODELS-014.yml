@@ -1,20 +1,20 @@
 id: TC-MODELS-014
-name: qwen3.6:27b Inference
+name: qwen3.8:27b Inference
 suite: models
 priority: 4
 timeout: 1200000
 dependencies: []
-issue: 176
+issue: 492
 
 intent:
   user_story: |
-    Verify qwen3.6:27b answers on the K80
+    Verify qwen3.8:27b answers and calls a tool on the K80
 
 steps:
   - name: Test inference
     command: |
       out=$(curl -s http://localhost:11434/api/generate \
-        -d '{"model":"qwen3.6:27b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
+        -d '{"model":"qwen3.8:27b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
       echo "$out" | jq -r '"response: " + (.response // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
       # A reply with nothing to read, or one short unit over and over, is broken whatever it
@@ -31,6 +31,23 @@ steps:
       - "LOAD_FAIL"
       - "REPLY_NO_TEXT"
       - "REPLY_REPEAT"
+      - "CUBLAS_STATUS"
+      - "CUDA error"
+
+  - name: Tool call
+    command: |
+      # qwen3.8 is in the suite for its chat path: the qwen3.8 renderer prompts for an XML tool
+      # format that only Qwen35Parser reads (#491). A tool call that comes back parsed proves
+      # that path, whatever the model chose to say around it.
+      out=$(curl -s http://localhost:11434/api/chat \
+        -d '{"model":"qwen3.8:27b","messages":[{"role":"user","content":"What time is it? Use the tool."}],"tools":[{"type":"function","function":{"name":"get_current_time","description":"Get the current time","parameters":{"type":"object","properties":{}}}}],"stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
+      echo "$out" | jq -c '{tool_calls: .message.tool_calls, error, done, done_reason, eval_count}'
+      { [ -n "$out" ] && echo "$out" | jq -e '.error == null and .message.tool_calls[0].function.name == "get_current_time"' >/dev/null 2>&1; } \
+        && echo "TOOL_OK" || echo "TOOL_FAIL"
+    expectPatterns:
+      - "TOOL_OK"
+    rejectPatterns:
+      - "TOOL_FAIL"
       - "CUBLAS_STATUS"
       - "CUDA error"
 
@@ -56,9 +73,9 @@ steps:
         echo "GPU_COUNT_OK"
       else
         echo "RELOAD: ${total} MiB fits in $((active - 1)) GPUs but using $active; reloading once"
-        curl -s http://localhost:11434/api/generate -d '{"model":"qwen3.6:27b","keep_alive":0}' >/dev/null
+        curl -s http://localhost:11434/api/generate -d '{"model":"qwen3.8:27b","keep_alive":0}' >/dev/null
         curl -s http://localhost:11434/api/generate \
-          -d '{"model":"qwen3.6:27b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}' >/dev/null
+          -d '{"model":"qwen3.8:27b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}' >/dev/null
         if die_check; then
           echo "GPU_COUNT_OK (after one reload)"
         else
@@ -73,18 +90,19 @@ steps:
   - name: Unload model
     command: |
       curl -s http://localhost:11434/api/generate \
-        -d '{"model":"qwen3.6:27b","keep_alive":0}'
+        -d '{"model":"qwen3.8:27b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:
       - "Model unloaded"
 
 criteria: |
-  Verify qwen3.6:27b loads on the K80, answers in readable language and gives its dies back:
+  Verify qwen3.8:27b loads on the K80, answers in readable language, calls a tool and gives its dies back:
   - The model loads and the request completes (the inference step shows "LOAD_OK")
   - The reply is language a person can read, not emptiness or repeated junk; a wrong
     answer is still a pass (api/generate shows a readable "response")
   - The reply has text and is not one short unit repeated (the inference step shows neither
     "REPLY_NO_TEXT" nor "REPLY_REPEAT")
+  - A tool call comes back parsed through the XML tool path (the tool step shows "TOOL_OK")
   - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
   - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
   - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

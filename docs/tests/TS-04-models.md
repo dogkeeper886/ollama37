@@ -167,17 +167,20 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
-### TC-13: qwen3.6:27b (qwen35 arch)
+### TC-13: qwen3.8:27b (qwen3.8 renderer + parser)
 
-- **Objective:** qwen3.6:27b runs on K80 compute 3.7 (reuses the Qwen3.5 architecture — GGUF arch `qwen35`).
+- **Objective:** qwen3.8:27b runs on K80 compute 3.7 and its tool calls parse. On the model side it is identical to `qwen3.6:27b` — Ollama engine, `qwen35` graph, split `qwen3vl_merger` projector, the 27B `num_batch` branch — but its chat path is not: the `qwen3.8` renderer (`Qwen35Renderer`, variant 38, always renders the think block) prompts for an XML tool format that only `Qwen35Parser` reads, and it stops on `<|im_end|>` alone. `qwen3.6:27b`, which this case covered before [#492](https://github.com/dogkeeper886/ollama37/issues/492), left the suite: its engine and size branch are covered here, and its `Qwen3VL` renderer and parser by TC-04 and TC-14.
 - **Script:** cicd/tests/testcases/models/TC-MODELS-014.yml
+
+Five steps — the tool call is what this case exists for:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
-| 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
-| 4 | Unload model | `Model unloaded` |
+| 2 | Tool call | `TOOL_OK` — a no-arg `get_current_time` call comes back in `message.tool_calls`, parsed by `Qwen35Parser` |
+| 3 | Check GPU memory | reports non-zero `MiB` in use |
+| 4 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
+| 5 | Unload model | `Model unloaded` |
 
 ### TC-14: qwen3.6:35b MoE (qwen35moe arch)
 
