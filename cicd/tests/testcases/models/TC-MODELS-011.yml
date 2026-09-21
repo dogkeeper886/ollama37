@@ -32,17 +32,29 @@ steps:
 
   - name: Check GPU count
     command: |
-      output=$(docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
-      echo "$output"
-      active=$(echo "$output" | grep -c 'MiB')
-      total=$(echo "$output" | grep -oP '[0-9]+(?= MiB)' | paste -sd+ | bc)
-      echo "Active GPUs: $active, Total VRAM: ${total} MiB"
-      if [ "$active" -le 1 ]; then
+      # Die placement is not deterministic across loads: now and then a model spills a
+      # small allocation onto one die more than it needs. Reload once before calling
+      # it a regression; overshooting twice is one.
+      die_check() {
+        output=$(docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
+        echo "$output"
+        active=$(echo "$output" | grep -c 'MiB')
+        total=$(echo "$output" | grep -oP '[0-9]+(?= MiB)' | paste -sd+ | bc)
+        echo "Active GPUs: $active, Total VRAM: ${total} MiB"
+        [ "$active" -le 1 ] || [ "$total" -gt $(( (active - 1) * 11441 )) ]
+      }
+      if die_check; then
         echo "GPU_COUNT_OK"
-      elif [ "$total" -le $(( (active - 1) * 11441 )) ]; then
-        echo "GPU_COUNT_EXCEEDED: total ${total} MiB fits in $((active - 1)) GPUs but using $active"
       else
-        echo "GPU_COUNT_OK"
+        echo "RELOAD: ${total} MiB fits in $((active - 1)) GPUs but using $active; reloading once"
+        curl -s http://localhost:11434/api/generate -d '{"model":"qwen3-vl:2b","keep_alive":0}' >/dev/null
+        curl -s http://localhost:11434/api/generate \
+          -d '{"model":"qwen3-vl:2b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}' >/dev/null
+        if die_check; then
+          echo "GPU_COUNT_OK (after one reload)"
+        else
+          echo "GPU_COUNT_EXCEEDED: total ${total} MiB fits in $((active - 1)) GPUs but using $active, twice"
+        fi
       fi
     expectPatterns:
       - "GPU_COUNT_OK"

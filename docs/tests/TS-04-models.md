@@ -36,7 +36,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-01: gpt-oss:20b
@@ -48,7 +48,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-02: gemma3:27b
@@ -60,7 +60,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-03: deepseek-r1:1.5b (llama.cpp qwen2)
@@ -72,7 +72,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-04: qwen3.5:9b (DeltaNet)
@@ -84,7 +84,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-06: gemma4:e2b (per-layer embeddings + audio)
@@ -96,7 +96,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-07: gemma4:31b (multi-GPU)
@@ -108,7 +108,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-08: gemma3:270m (text-only gemma3)
@@ -120,7 +120,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-10: qwen3-vl:2b (qwen3vl dense)
@@ -132,7 +132,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-11: qwen3-vl:30b (multi-GPU)
@@ -144,7 +144,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-12: ministral-3:3b (mistral3)
@@ -156,7 +156,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-13: qwen3.6:27b (qwen35 arch)
@@ -168,7 +168,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-14: qwen3.6:35b MoE (qwen35moe arch)
@@ -180,7 +180,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-15: gemma4:12b (split-vision gemma4)
@@ -208,7 +208,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-17: deepseek-r1:8b (qwen3)
@@ -220,7 +220,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-18: llama3.1:8b (llama.cpp llama)
@@ -232,7 +232,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-19: gemma3n:e2b (gemma3n)
@@ -244,5 +244,29 @@ Six steps, not four — it is the only case that exercises image and audio input
 |---|--------|-----------------|
 | 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
+| 4 | Unload model | `Model unloaded` |
+
+### TC-20: ornith:35b (ornith renderer + parser)
+
+- **Objective:** ornith:35b (35B-A3B) runs on K80 compute 3.7 through the ornith renderer and parser ported for [STORY-020](../stories/STORY-020.md) — a Qwen3.5-family model with its own chat template and thinking forced on. At ~22.8 GB it is ~99.5% of two dies, too tight for KV growth, so a **3-die split is expected**: its die check only flags waste when the model would fit in one die fewer with ~10% headroom to spare.
+- **Script:** cicd/tests/testcases/models/TC-MODELS-019.yml
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 2 | Check GPU memory | reports non-zero `MiB` in use |
+| 3 | Check GPU count | `GPU_COUNT_OK`, judged with ~10% headroom per die. One overshoot reloads the model once, and a second overshoot fails |
+| 4 | Unload model | `Model unloaded` |
+
+### TC-21: lfm2.5-thinking:1.2b (LFM2 thinking)
+
+- **Objective:** lfm2.5-thinking:1.2b runs on K80 compute 3.7 — the thinking variant of LFM2 from [STORY-019](../stories/STORY-019.md), which ships without the embedding norm the other LFM2 GGUFs carry ([#438](https://github.com/dogkeeper886/ollama37/issues/438)).
+- **Script:** cicd/tests/testcases/models/TC-MODELS-021.yml
+
+| # | Action | Expected Result |
+|---|--------|-----------------|
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 2 | Check GPU memory | reports non-zero `MiB` in use |
+| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
