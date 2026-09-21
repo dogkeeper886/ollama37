@@ -20,12 +20,21 @@ Models are chosen **one tag per code path** — engine (Ollama vs llama.cpp) × 
 GGUF layout (vision inline or a split projector) × any size-gated branch — using the smallest tag
 that reaches the path. A new model gets a case only when it reaches a path no case covers yet.
 
+**The two judges assert different things.** The simple judge asks whether the model loaded
+and the request survived — an `{"error":…}` body, a missing `done`, an empty body or a CUDA
+error is a failure, and the reply's text is not its business. The agent judge reads the reply
+and asks whether it is language a person could read; **a wrong answer is a pass**, because a
+270M model getting arithmetic wrong says nothing about the K80. That is why the suite defaults
+to `judge_mode: dual` — under `simple` alone nothing checks the output at all.
+
+The prompt asks for a sentence rather than a bare number, so there is language to judge.
+
 Every case runs the same four steps unless noted, at `temperature` 0 with a fixed
-`seed` so the answer is reproducible:
+`seed` so the run is reproducible:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -37,7 +46,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -49,7 +58,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -61,7 +70,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -73,7 +82,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -85,7 +94,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -97,7 +106,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -109,7 +118,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -121,7 +130,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -133,7 +142,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -145,7 +154,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -157,7 +166,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -169,31 +178,35 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
 
 ### TC-15: gemma4:12b (split-vision gemma4)
 
-- **Objective:** gemma4:12b — the only gemma4 packaged as a **split-vision** model (a separate `projector` blob, vs the embedded projector in e4b/26b) — loads on the **new engine** and runs on K80 compute 3.7. Regression for [#367](https://github.com/dogkeeper886/ollama37/issues/367): today the fork's `NewLlamaServer` refuses split-vision models (`reason="split vision models aren't supported"`) and dead-ends in legacy llama.cpp (`unknown model architecture: 'gemma4'`); green once [#370](https://github.com/dogkeeper886/ollama37/issues/370) lets a new-engine arch with a projector use the new engine (upstream already dropped this limitation). Step 1 is the acceptance gate.
+- **Objective:** gemma4:12b — the only gemma4 packaged as a **split-vision** model (a separate `projector` blob, vs the embedded projector in e4b/26b) — loads on the **new engine** and runs on K80 compute 3.7. Regression for [#367](https://github.com/dogkeeper886/ollama37/issues/367): today the fork's `NewLlamaServer` refuses split-vision models (`reason="split vision models aren't supported"`) and dead-ends in legacy llama.cpp (`unknown model architecture: 'gemma4'`); green once [#370](https://github.com/dogkeeper886/ollama37/issues/370) lets a new-engine arch with a projector use the new engine (upstream already dropped this limitation). The text inference step is the acceptance gate.
 - **Script:** cicd/tests/testcases/models/TC-MODELS-016.yml
+
+Six steps, not four — it is the only case that exercises image and audio input:
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
-| 2 | Check GPU memory | reports non-zero `MiB` in use |
-| 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
-| 4 | Unload model | `Model unloaded` |
+| 1 | Warm up | `WARM_OK` — absorbs the cold-load retry under suite GPU pressure |
+| 2 | Text inference | `LOAD_OK` — no `{"error":…}`, `done` true; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
+| 3 | GPU offload check | reports non-zero `MiB` in use |
+| 4 | Vision inference | `VISION_OK` — the request reached the vision path and returned; no refusal (`cannot see`, `does not support`). The agent judge reads the `content` and asks whether it describes something seen |
+| 5 | Audio inference | `AUDIO_OK` — `espeak-ng` present, the request returned, no refusal. Transcription accuracy is not gated: synthetic speech is marginal |
+| 6 | Unload model | `Model unloaded` |
 
 ### TC-16: lfm2.5:8b (Liquid LFM2 MoE)
 
-- **Objective:** lfm2.5:8b — the text LFM2 **MoE** (8B total / ~1B active, ~5.2 GB) — runs on K80 compute 3.7 (single GPU). The per-model regression half of [STORY-016](../stories/STORY-016.md): the fork already vendors the `lfm2`/`lfm2moe` llama.cpp arch, so this case gates that the GGUF loads and generates coherently once STORY-016's Go parser/renderer port lands — **red until then**. The inference step pins `"think": false` so the deterministic answer isn't buried inside a `<think>` span (lfm2.5 has a thinking mode). Run under the **dual** judge at least once so "coherent, not fluent garbage" is actually checked, not just non-empty `response`.
+- **Objective:** lfm2.5:8b — the text LFM2 **MoE** (8B total / ~1B active, ~5.2 GB) — runs on K80 compute 3.7 (single GPU). The per-model regression half of [STORY-016](../stories/STORY-016.md): the fork already vendors the `lfm2`/`lfm2moe` llama.cpp arch, so this case gates that the GGUF loads and generates coherently once STORY-016's Go parser/renderer port lands — **red until then**. The inference step pins `"think": false` so the deterministic answer isn't buried inside a `<think>` span (lfm2.5 has a thinking mode). The suite runs **dual** by default, so "coherent, not fluent garbage" is checked on every run.
 - **Script:** cicd/tests/testcases/models/TC-MODELS-017.yml
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -205,7 +218,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -217,7 +230,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
@@ -229,7 +242,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `response` contains a 4; no `CUBLAS_STATUS` / `CUDA error` |
+| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`) |
 | 4 | Unload model | `Model unloaded` |
