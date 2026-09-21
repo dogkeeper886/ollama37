@@ -179,6 +179,31 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 
 	blocks := int(meta.KV().BlockCount())
 
+	// llama.cpp-format GGUFs (qwen35, qwen35moe) count their MTP (nextn) draft blocks in
+	// block_count and append them after the decoder stack. No model here runs them — they
+	// are the speculative-decoding head (#461), and qwen35 builds block_count minus
+	// nextn_predict_layers blocks — so allocating them only costs VRAM: 251-525 MiB per
+	// model on the K80 (#489). Drop them from the tensor list, so they are neither
+	// allocated nor read. block_count keeps its slots: layer indices, the output layer's
+	// included, stay where the scheduler put them, and the unused slot weighs nothing.
+	if nextn := int(meta.KV().Uint("nextn_predict_layers")); nextn > 0 && nextn < blocks {
+		firstUnused := blocks - nextn
+		kept := make([]*fsggml.Tensor, 0, len(items))
+		var skipped int
+		var skippedBytes uint64
+		for _, t := range items {
+			if i, ok := blockIndex(t.Name); ok && i >= firstUnused {
+				skipped++
+				skippedBytes += t.Size()
+				continue
+			}
+			kept = append(kept, t)
+		}
+		items = kept
+		slog.Info("skipping unused nextn blocks", "blocks", nextn, "first", firstUnused,
+			"tensors", skipped, "size", format.HumanBytes2(skippedBytes))
+	}
+
 	// create list of buffer types for the cpu
 	cpuDeviceBufferType := deviceBufferType{d: C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU)}
 	for _, d := range append(accels, append(gpus, cpus...)...) {
@@ -933,6 +958,21 @@ func shapeToGGML(shape []int) *C.int64_t {
 
 func pad(length, pad C.size_t) C.size_t {
 	return ((length + pad - 1) / pad) * pad
+}
+
+// blockIndex returns N for a decoder-block tensor named "blk.N.…". A projector's
+// "v.blk.N.…" is not one: its blocks count from zero separately.
+func blockIndex(name string) (int, bool) {
+	rest, ok := strings.CutPrefix(name, "blk.")
+	if !ok {
+		return 0, false
+	}
+	n, _, ok := strings.Cut(rest, ".")
+	if !ok {
+		return 0, false
+	}
+	i, err := strconv.Atoi(n)
+	return i, err == nil
 }
 
 func (c *Context) newTensor(dtype ml.DType, shape []int) *Tensor {

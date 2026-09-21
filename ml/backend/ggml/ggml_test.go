@@ -375,3 +375,25 @@ func TestPermute(t *testing.T) {
 		})
 	}
 }
+
+func TestBlockIndex(t *testing.T) {
+	cases := []struct {
+		name  string
+		index int
+		ok    bool
+	}{
+		{"blk.0.attn_q.weight", 0, true},
+		{"blk.64.nextn.eh_proj.weight", 64, true},
+		{"v.blk.3.attn_q.weight", 0, false}, // a projector's blocks, not the decoder's
+		{"token_embd.weight", 0, false},
+		{"output_norm.weight", 0, false},
+		{"blk.x.attn_q.weight", 0, false},
+		{"blk.12", 0, false},
+	}
+	for _, c := range cases {
+		i, ok := blockIndex(c.name)
+		if i != c.index || ok != c.ok {
+			t.Errorf("blockIndex(%q) = (%d, %v), want (%d, %v)", c.name, i, ok, c.index, c.ok)
+		}
+	}
+}
