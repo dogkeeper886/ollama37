@@ -30,6 +30,13 @@ export const CONFIG = {
     // agent's command to swap models/vendors — config, not code.
     agent: process.env.JUDGE_AGENT || '',
     timeout: 300000,
+    // Loop guard: every loopCheckMs, count 3-word phrases in the last loopWindowMs of the
+    // agent's streamed thinking and reply. A phrase seen loopLimit times means the agent is
+    // repeating itself (it copies repeated text and cannot stop), so the turn is cancelled.
+    // Real loops hit 385+ in a 30s window; healthy judge reasoning peaked at 21.
+    loopWindowMs: 30000,
+    loopCheckMs: 5000,
+    loopLimit: 100,
     stdoutLimit: 1000,
     stderrLimit: 500,
     logsLimit: 3000,

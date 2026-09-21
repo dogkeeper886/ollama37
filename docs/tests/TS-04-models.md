@@ -27,6 +27,14 @@ and asks whether it is language a person could read; **a wrong answer is a pass*
 270M model getting arithmetic wrong says nothing about the K80. That is why the suite defaults
 to `judge_mode: dual` — under `simple` alone nothing checks the output at all.
 
+Two kinds of reply are broken whatever they say, and the step flags them itself rather than
+leave them to the agent judge: **`REPLY_NO_TEXT`** (no letter or digit in any script — empty,
+whitespace, punctuation) and **`REPLY_REPEAT`** (one short unit over and over, e.g. `4 4 4 …`).
+Either fails the simple judge. **The agent judge is not run on a test the simple judge already
+failed** — the verdict is already FAIL — which also keeps repeated text away from it: it loops
+when it quotes repetition back. A loop that starts anyway is cancelled by its loop guard (a
+3-word phrase seen 100 times in 30 seconds) and recorded as FAIL.
+
 The prompt asks for a sentence rather than a bare number, so there is language to judge.
 
 Every case runs the same four steps unless noted, at `temperature` 0 with a fixed
@@ -34,7 +42,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -46,7 +54,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -58,7 +66,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -70,7 +78,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -82,7 +90,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -94,7 +102,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -106,7 +114,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -118,7 +126,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -130,7 +138,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -142,7 +150,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -154,7 +162,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -166,7 +174,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -178,7 +186,7 @@ Every case runs the same four steps unless noted, at `temperature` 0 with a fixe
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -193,10 +201,10 @@ Six steps, not four — it is the only case that exercises image and audio input
 | # | Action | Expected Result |
 |---|--------|-----------------|
 | 1 | Warm up | `WARM_OK` — absorbs the cold-load retry under suite GPU pressure |
-| 2 | Text inference | `LOAD_OK` — no `{"error":…}`, `done` true; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
+| 2 | Text inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true; no `unknown model architecture: 'gemma4'` fallback, no `CUBLAS_STATUS` / `CUDA error` |
 | 3 | GPU offload check | reports non-zero `MiB` in use |
-| 4 | Vision inference | `VISION_OK` — the request reached the vision path and returned; no refusal (`cannot see`, `does not support`). The agent judge reads the `content` and asks whether it describes something seen |
-| 5 | Audio inference | `AUDIO_OK` — `espeak-ng` present, the request returned, no refusal. Transcription accuracy is not gated: synthetic speech is marginal |
+| 4 | Vision inference | `VISION_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — the request reached the vision path and returned; no refusal (`cannot see`, `does not support`). The agent judge reads the `content` and asks whether it describes something seen |
+| 5 | Audio inference | `AUDIO_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — `espeak-ng` present, the request returned, no refusal. Transcription accuracy is not gated: synthetic speech is marginal |
 | 6 | Unload model | `Model unloaded` |
 
 ### TC-16: lfm2.5:8b (Liquid LFM2 MoE)
@@ -206,7 +214,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -218,7 +226,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -230,7 +238,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -242,7 +250,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -254,7 +262,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK`, judged with ~10% headroom per die. One overshoot reloads the model once, and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |
@@ -266,7 +274,7 @@ Six steps, not four — it is the only case that exercises image and audio input
 
 | # | Action | Expected Result |
 |---|--------|-----------------|
-| 1 | Test inference | `LOAD_OK` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
+| 1 | Test inference | `LOAD_OK`, no `REPLY_NO_TEXT` / `REPLY_REPEAT` — no `{"error":…}`, `done` true, no `CUBLAS_STATUS` / `CUDA error`. The agent judge reads the `response` |
 | 2 | Check GPU memory | reports non-zero `MiB` in use |
 | 3 | Check GPU count | `GPU_COUNT_OK` (not `GPU_COUNT_EXCEEDED`). One overshoot reloads the model once — placement is not deterministic — and a second overshoot fails |
 | 4 | Unload model | `Model unloaded` |

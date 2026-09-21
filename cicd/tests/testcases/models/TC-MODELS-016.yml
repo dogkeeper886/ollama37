@@ -33,12 +33,20 @@ steps:
         -d '{"model":"gemma4:12b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
       echo "$out" | jq -r '"response: " + (.response // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
+      # A reply with nothing to read, or one short unit over and over, is broken whatever it
+      # says. Flag it here: the simple judge fails it, and the agent judge never reads it.
+      echo "$out" | jq -r 'select(.error == null) | (.response // "" | sub("\\s+$"; "")) as $r | ($r | length) as $n
+        | if ($r | test("[\\p{L}\\p{N}]") | not) then "REPLY_NO_TEXT"
+          elif any(range(1; 51); . as $u | $n >= ([100, 5 * $u] | max) and (($r[0:$u] * (($n / $u | ceil) + 1))[0:$n] == $r)) then "REPLY_REPEAT"
+          else empty end' 2>/dev/null
       { [ -n "$out" ] && echo "$out" | jq -e '.error == null and .done == true' >/dev/null 2>&1; } \
         && echo "LOAD_OK" || echo "LOAD_FAIL"
     expectPatterns:
       - "LOAD_OK"
     rejectPatterns:
       - "LOAD_FAIL"
+      - "REPLY_NO_TEXT"
+      - "REPLY_REPEAT"
       - "CUBLAS_STATUS"
       - "CUDA error"
 
@@ -69,6 +77,12 @@ steps:
         -d "{\"model\":\"gemma4:12b\",\"messages\":[{\"role\":\"user\",\"content\":\"What shape is in this image? Reply with one lowercase word, no punctuation.\",\"images\":[\"$IMG\"]}],\"stream\":false,\"options\":{\"num_predict\":400,\"temperature\":0,\"seed\":0}}")
       echo "$out" | jq -r '"content: " + (.message.content // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
+      # A reply with nothing to read, or one short unit over and over, is broken whatever it
+      # says. Flag it here: the simple judge fails it, and the agent judge never reads it.
+      echo "$out" | jq -r 'select(.error == null) | (.message.content // "" | sub("\\s+$"; "")) as $r | ($r | length) as $n
+        | if ($r | test("[\\p{L}\\p{N}]") | not) then "REPLY_NO_TEXT"
+          elif any(range(1; 51); . as $u | $n >= ([100, 5 * $u] | max) and (($r[0:$u] * (($n / $u | ceil) + 1))[0:$n] == $r)) then "REPLY_REPEAT"
+          else empty end' 2>/dev/null
       { [ -n "$out" ] && echo "$out" | jq -e '.error == null and .done == true' >/dev/null 2>&1; } \
         && echo "VISION_OK" || echo "VISION_FAIL"
     expectPatterns:
@@ -77,6 +91,8 @@ steps:
       - "VISION_OK"
     rejectPatterns:
       - "VISION_FAIL"
+      - "REPLY_NO_TEXT"
+      - "REPLY_REPEAT"
       - "CUBLAS_STATUS"
       - "CUDA error"
       - "does not support"
@@ -90,6 +106,12 @@ steps:
       out=$(curl -s http://localhost:11434/api/chat -d @/tmp/tc016_req.json)
       echo "$out" | jq -r '"content: " + (.message.content // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
+      # A reply with nothing to read, or one short unit over and over, is broken whatever it
+      # says. Flag it here: the simple judge fails it, and the agent judge never reads it.
+      echo "$out" | jq -r 'select(.error == null) | (.message.content // "" | sub("\\s+$"; "")) as $r | ($r | length) as $n
+        | if ($r | test("[\\p{L}\\p{N}]") | not) then "REPLY_NO_TEXT"
+          elif any(range(1; 51); . as $u | $n >= ([100, 5 * $u] | max) and (($r[0:$u] * (($n / $u | ceil) + 1))[0:$n] == $r)) then "REPLY_REPEAT"
+          else empty end' 2>/dev/null
       { [ -n "$out" ] && echo "$out" | jq -e '.error == null and .done == true' >/dev/null 2>&1; } \
         && echo "AUDIO_OK" || echo "AUDIO_FAIL"
     expectPatterns:
@@ -98,6 +120,8 @@ steps:
       - "AUDIO_OK"
     rejectPatterns:
       - "AUDIO_FAIL"
+      - "REPLY_NO_TEXT"
+      - "REPLY_REPEAT"
       - "CUBLAS_STATUS"
       - "CUDA error"
       - "does not support audio"
@@ -125,4 +149,6 @@ criteria: |
   - The audio reply engages with the sound rather than refusing; the wrong word is still a
     pass, since transcription of synthetic speech is marginal (api/chat shows a readable
     "content")
+  - Each reply has text and is not one short unit repeated (no step shows "REPLY_NO_TEXT" or
+    "REPLY_REPEAT")
   - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

@@ -39,6 +39,10 @@ export class AgentJudge {
   private sessionId?: string;
   /** Accumulates the current turn's agent text (reset before each prompt). */
   private turnText = '';
+  /** The current turn's streamed thinking and reply, timestamped, for the loop guard. */
+  private streamed: { at: number; text: string }[] = [];
+  /** Set by the loop guard when it cancels a turn; the turn then fails with this reason. */
+  private loopReason?: string;
 
   constructor(agentCmd: string = CONFIG.judge.agent, cwd: string = process.cwd()) {
     this.agentCmd = agentCmd;
@@ -108,8 +112,12 @@ export class AgentJudge {
     const client: Client = {
       sessionUpdate: async (params: SessionNotification): Promise<void> => {
         const u = params.update;
-        if (u.sessionUpdate === 'agent_message_chunk' && u.content.type === 'text') {
-          this.turnText += u.content.text;
+        // Thinking streams separately from the reply, and a loop can live entirely in the
+        // thinking (the agent never reaches its answer), so the guard watches both.
+        if ((u.sessionUpdate === 'agent_message_chunk' || u.sessionUpdate === 'agent_thought_chunk')
+            && u.content.type === 'text') {
+          this.streamed.push({ at: Date.now(), text: u.content.text });
+          if (u.sessionUpdate === 'agent_message_chunk') this.turnText += u.content.text;
         }
       },
       // A judge must not execute anything — refuse every tool-permission request.
@@ -258,6 +266,9 @@ export class AgentJudge {
    */
   private async promptAgent(prompt: string): Promise<string> {
     this.turnText = '';
+    this.streamed = [];
+    this.loopReason = undefined;
+    const guard = setInterval(() => this.checkForLoop(), CONFIG.judge.loopCheckMs);
     try {
       await this.withTimeout(
         this.conn!.prompt({ sessionId: this.sessionId!, prompt: [{ type: 'text', text: prompt }] }),
@@ -265,9 +276,43 @@ export class AgentJudge {
       );
     } catch (e) {
       this.kill();
-      throw e;
+      throw this.loopReason ? new Error(this.loopReason) : e;
+    } finally {
+      clearInterval(guard);
+    }
+    if (this.loopReason) {
+      // The cancelled turn left loop text in the session; start the next test clean.
+      this.kill();
+      throw new Error(this.loopReason);
     }
     return this.turnText;
+  }
+
+  /**
+   * Loop guard, run every loopCheckMs during a turn. Counts 3-word phrases across the last
+   * loopWindowMs of streamed thinking and reply; if one reaches loopLimit, the agent is
+   * repeating itself — it copies repeated text back and cannot stop — so cancel the turn.
+   * A phrase rather than a sentence is the unit because the loops seen ("4 4 4 …",
+   * "the the the …") never end a sentence.
+   */
+  private checkForLoop(): void {
+    if (this.loopReason || !this.conn || !this.sessionId) return;
+    const since = Date.now() - CONFIG.judge.loopWindowMs;
+    this.streamed = this.streamed.filter((c) => c.at >= since);
+    const words = this.streamed.map((c) => c.text).join('').toLowerCase().split(/\s+/).filter(Boolean);
+    const counts = new Map<string, number>();
+    let top = '';
+    let topCount = 0;
+    for (let i = 0; i + 2 < words.length; i++) {
+      const phrase = `${words[i]} ${words[i + 1]} ${words[i + 2]}`;
+      const n = (counts.get(phrase) ?? 0) + 1;
+      counts.set(phrase, n);
+      if (n > topCount) { top = phrase; topCount = n; }
+    }
+    if (topCount < CONFIG.judge.loopLimit) return;
+    this.loopReason = `judge looped: "${top.slice(0, 40)}" repeated ${topCount}x in ${CONFIG.judge.loopWindowMs / 1000}s; turn cancelled`;
+    process.stderr.write(`  [judge] ${this.loopReason}\n`);
+    this.conn.cancel({ sessionId: this.sessionId }).catch(() => { /* the kill after the turn ends covers it */ });
   }
 
   /**
