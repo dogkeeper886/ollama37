@@ -102,10 +102,11 @@ jobs:
             echo "Running single test: ${{ inputs.test_id }}"
           fi
 
-          # Run models tests
-          rc=0
-          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts run --suite models $ID_FLAG --format json > /tmp/models-results.json || rc=$?
-          [ "$rc" -eq 75 ] && exit 1   # overheat → fail the job; any other non-zero stays tolerated (gated by the JSON below)
+          # Run models tests. No gpu-temp-guard: its 80°C abort killed full-suite runs
+          # (35549667518, peak 81°C at case 9 of 19) while the K80 itself only slows at
+          # 88°C and shuts down at 93°C. The card's own thresholds are the protection
+          # here. A non-zero exit stays tolerated — the JSON below is the gate.
+          npx tsx src/cli.ts run --suite models $ID_FLAG --format json > /tmp/models-results.json || true
 
           echo "--- JSON Results ---"
           cat /tmp/models-results.json
