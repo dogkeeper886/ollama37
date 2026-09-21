@@ -15,12 +15,20 @@ steps:
         -d '{"model":"gpt-oss:20b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
       echo "$out" | jq -r '"response: " + (.response // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
+      # A reply with nothing to read, or one short unit over and over, is broken whatever it
+      # says. Flag it here: the simple judge fails it, and the agent judge never reads it.
+      echo "$out" | jq -r 'select(.error == null) | (.response // "" | sub("\\s+$"; "")) as $r | ($r | length) as $n
+        | if ($r | test("[\\p{L}\\p{N}]") | not) then "REPLY_NO_TEXT"
+          elif any(range(1; 51); . as $u | $n >= ([100, 5 * $u] | max) and (($r[0:$u] * (($n / $u | ceil) + 1))[0:$n] == $r)) then "REPLY_REPEAT"
+          else empty end' 2>/dev/null
       { [ -n "$out" ] && echo "$out" | jq -e '.error == null and .done == true' >/dev/null 2>&1; } \
         && echo "LOAD_OK" || echo "LOAD_FAIL"
     expectPatterns:
       - "LOAD_OK"
     rejectPatterns:
       - "LOAD_FAIL"
+      - "REPLY_NO_TEXT"
+      - "REPLY_REPEAT"
       - "CUBLAS_STATUS"
       - "CUDA error"
 
@@ -73,6 +81,8 @@ criteria: |
   - The model loads and the request completes (the inference step shows "LOAD_OK")
   - The reply is language a person can read, not emptiness or repeated junk; a wrong
     answer is still a pass (api/generate shows a readable "response")
+  - The reply has text and is not one short unit repeated (the inference step shows neither
+    "REPLY_NO_TEXT" nor "REPLY_REPEAT")
   - Weights are resident on the GPU (nvidia-smi shows "<N> MiB")
   - No more dies than the footprint needs (the die check shows "GPU_COUNT_OK")
   - Model unloads (api/generate with keep_alive 0 shows "Model unloaded")

@@ -148,14 +148,31 @@ program
     }));
 
     if (config.judgeMode === 'dual') {
-      process.stderr.write('[JUDGE] Running agent judge...\n');
-      const agentJudge = new AgentJudge();
+      // A test the simple judge already failed is failed whatever the agent says (both
+      // must pass), so don't ask it. That also keeps flagged replies — REPLY_REPEAT above
+      // all — away from the agent, which loops when it quotes repeated text back.
+      const simpleFailed = new Map(simpleJudgments.filter((j) => !j.pass).map((j) => [j.testId, j]));
+      const toJudge = results.filter((r) => !simpleFailed.has(r.testCase.id));
+      const skipped = [...simpleFailed.values()].map((j) => ({
+        testId: j.testId,
+        pass: false,
+        reason: `Skipped — simple judge already failed: ${j.reason}`,
+      }));
+      agentJudgments = skipped;
 
-      const available = await agentJudge.isAvailable();
-      if (available) {
-        agentJudgments = await agentJudge.judgeResults(results);
+      if (toJudge.length === 0) {
+        process.stderr.write('[JUDGE] Agent judge skipped: every test already failed the simple judge\n');
       } else {
-        process.stderr.write('[WARN] Agent judge not available, using simple judge results\n');
+        process.stderr.write(`[JUDGE] Running agent judge on ${toJudge.length} test(s), ${skipped.length} skipped...\n`);
+        const agentJudge = new AgentJudge();
+
+        const available = await agentJudge.isAvailable();
+        if (available) {
+          agentJudgments = [...skipped, ...(await agentJudge.judgeResults(toJudge))];
+        } else {
+          process.stderr.write('[WARN] Agent judge not available, using simple judge results\n');
+          agentJudgments = simpleJudgments;
+        }
       }
     }
 
