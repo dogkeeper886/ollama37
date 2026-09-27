@@ -16,7 +16,8 @@ on:
         type: choice
         options:
           - "sm37"
-          - "sm75"
+          - "sm61"
+          - "sm86"
 
 env:
   DOCKERHUB_REPO: dogkeeper886/ollama37

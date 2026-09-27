@@ -27,13 +27,14 @@ on:
           - "simple"
           - "dual"
       runner_label:
-        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm75 = RTX 2060 (models must fit ~5.1 GiB)."
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti, sm86 = RTX 3060 (models must fit one card: 11 / 12 GiB)."
         required: false
         default: "sm37"
         type: choice
         options:
           - "sm37"
-          - "sm75"
+          - "sm61"
+          - "sm86"
       flash_attention:
         description: "OLLAMA_FLASH_ATTENTION for this run: 0 = off (cuBLAS, the stable baseline), 1 = on (FA)."
         required: false
