@@ -60,9 +60,6 @@ on:
         description: "Inference test result"
         value: ${{ jobs.inference.outputs.result }}
 
-env:
-  OLLAMA_HOST: http://localhost:11434
-
 jobs:
   inference:
     name: Inference Tests
@@ -139,7 +136,7 @@ jobs:
           TEST_MODEL: ${{ inputs.model || 'gemma3:4b' }}
         run: |
           echo "Unloading test models from VRAM..."
-          curl -s http://localhost:11434/api/generate -d "{\"model\":\"${TEST_MODEL}\",\"keep_alive\":0}" || true
+          curl -s ${OLLAMA_HOST:-http://localhost:11434}/api/generate -d "{\"model\":\"${TEST_MODEL}\",\"keep_alive\":0}" || true
           echo "Models unloaded"
 
       - name: Upload inference results

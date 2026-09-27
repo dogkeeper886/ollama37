@@ -68,9 +68,6 @@ on:
           - "sm37"
           - "sm75"
 
-env:
-  OLLAMA_HOST: http://localhost:11434
-
 jobs:
   sweep:
     name: Report Sweep
@@ -217,7 +214,7 @@ jobs:
           ALL_MODELS: ${{ inputs.throughput_models }} ${{ inputs.mcp_models }} ${{ inputs.fit_map_models }}
         run: |
           for M in $ALL_MODELS; do
-            curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${M}\",\"keep_alive\":0}" || true
+            curl -s "${OLLAMA_HOST:-http://localhost:11434}/api/generate" -d "{\"model\":\"${M}\",\"keep_alive\":0}" || true
           done
 
       - name: Aggregate → TSV + report-row markdown

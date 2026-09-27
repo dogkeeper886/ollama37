@@ -23,11 +23,11 @@ steps:
       # registry. A locally-imported model (`ollama create`) is pulled even though
       # it is not in the registry, so a forced `ollama pull` would 404 on it. So:
       # confirm presence first, and consult the registry only when it is absent.
-      if docker exec ollama37 ollama show "$m" >/dev/null 2>&1; then
+      if docker exec $OLLAMA37_CONTAINER ollama show "$m" >/dev/null 2>&1; then
         echo "MODEL_PRESENT: $m already pulled"
       else
         echo "MODEL_ABSENT: pulling $m from registry"
-        docker exec ollama37 ollama pull "$m"
+        docker exec $OLLAMA37_CONTAINER ollama pull "$m"
       fi
     timeout: 600000
     expectPatterns:
@@ -40,7 +40,7 @@ steps:
   - name: Verify model available
     command: |
       m="${TEST_MODEL:-gemma3:4b}"
-      docker exec ollama37 ollama list | grep -F "$m" && echo "MODEL_PRESENT: $m"
+      docker exec $OLLAMA37_CONTAINER ollama list | grep -F "$m" && echo "MODEL_PRESENT: $m"
     expectPatterns:
       - "MODEL_PRESENT:"
 

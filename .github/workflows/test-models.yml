@@ -76,21 +76,21 @@ jobs:
       - name: Install test runner dependencies
         run: cd cicd/tests && npm ci
 
+      - name: Yield GPU
+        run: |
+          [ -n "${OLLAMA37_SERVICE:-}" ] || { echo "No OLLAMA37_SERVICE on this host"; exit 0; }
+          systemctl --user stop 'ollama37-*'
+          if [ -n "${OLLAMA37_YIELD_SERVICE:-}" ]; then systemctl --user stop "$OLLAMA37_YIELD_SERVICE"; fi
+          systemctl --user start "$OLLAMA37_SERVICE"
+          # integer >= 1 tries, 2 s apart
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
+          echo "::error::$OLLAMA37_SERVICE did not come up"; exit 1
+
       - name: Run models tests
         id: models-tests
         env:
-          # dual mode runs the keyless agent judge; the runner reads JUDGE_MODE.
-          JUDGE_MODE: ${{ inputs.judge_mode || 'dual' }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # JUDGE_BASE_URL (cicd-1 variable) points the judge at an ollama server
-          # instead of Anthropic — a judge off the box under test. Unset it and
-          # the judge falls back to Claude on the OAuth token above; the auth
-          # token has to follow the base URL or it would break that fallback.
-          ANTHROPIC_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ vars.JUDGE_BASE_URL && 'ollama' || '' }}
-          ANTHROPIC_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
-          # Claude Code's side-call model; ollama has no haiku tag to serve it.
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+          # simple | dual
+          JUDGE_MODE: simple
         run: |
           cd cicd/tests
           echo "Judge mode: ${JUDGE_MODE}"
@@ -106,9 +106,53 @@ jobs:
           # (35549667518, peak 81°C at case 9 of 19) while the K80 itself only slows at
           # 88°C and shuts down at 93°C. The card's own thresholds are the protection
           # here. A non-zero exit stays tolerated — the JSON below is the gate.
-          npx tsx src/cli.ts run --suite models $ID_FLAG --format json > /tmp/models-results.json || true
+          # --output-dir: any path, same in the Agent judge step
+          npx tsx src/cli.ts run --suite models $ID_FLAG --output-dir ../results/models --format json > /tmp/models-results.json || true
 
           echo "--- JSON Results ---"
+          cat /tmp/models-results.json
+
+      - name: Unload test models from VRAM
+        if: always()
+        run: |
+          echo "Unloading test models from VRAM..."
+          # Derived from the suite, so adding or removing a testcase needs no edit here.
+          for m in $(grep -ohE '"model":"[^"]+"' cicd/tests/testcases/models/*.yml | cut -d'"' -f4 | sort -u); do
+            curl -s ${OLLAMA_HOST:-http://localhost:11434}/api/generate -d "{\"model\":\"$m\",\"keep_alive\":0}" || true
+          done
+          echo "Models unloaded"
+
+      - name: Restore GPU
+        if: always()
+        run: |
+          [ -n "${OLLAMA37_SERVICE:-}" ] || exit 0
+          systemctl --user stop "$OLLAMA37_SERVICE"
+          [ -n "${OLLAMA37_YIELD_SERVICE:-}" ] || exit 0
+          systemctl --user is-enabled --quiet "$OLLAMA37_YIELD_SERVICE" || exit 0
+          systemctl --user start "$OLLAMA37_YIELD_SERVICE"
+          # integer >= 1 tries, 2 s apart
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
+          echo "::error::$OLLAMA37_YIELD_SERVICE did not come back"; exit 1
+
+      - name: Agent judge
+        if: ${{ !cancelled() && (inputs.judge_mode || 'dual') == 'dual' }}
+        env:
+          # simple | dual
+          JUDGE_MODE: dual
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # JUDGE_BASE_URL (cicd-1 variable) points the judge at an ollama server
+          # instead of Anthropic — a judge off the box under test. Unset it and
+          # the judge falls back to Claude on the OAuth token above; the auth
+          # token has to follow the base URL or it would break that fallback.
+          ANTHROPIC_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ vars.JUDGE_BASE_URL && 'ollama' || '' }}
+          ANTHROPIC_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+          # Claude Code's side-call model; ollama has no haiku tag to serve it.
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+        run: |
+          cd cicd/tests
+          # the Run models tests step's --output-dir
+          npx tsx src/cli.ts judge ../results/models --format json > /tmp/models-results.json || true
           cat /tmp/models-results.json
 
       - name: Check test results
@@ -119,16 +163,6 @@ jobs:
             echo "::error::$FAILED models test(s) failed"
             exit 1
           fi
-
-      - name: Unload test models from VRAM
-        if: always()
-        run: |
-          echo "Unloading test models from VRAM..."
-          # Derived from the suite, so adding or removing a testcase needs no edit here.
-          for m in $(grep -ohE '"model":"[^"]+"' cicd/tests/testcases/models/*.yml | cut -d'"' -f4 | sort -u); do
-            curl -s http://localhost:11434/api/generate -d "{\"model\":\"$m\",\"keep_alive\":0}" || true
-          done
-          echo "Models unloaded"
 
       - name: Upload models results
         uses: actions/upload-artifact@v4

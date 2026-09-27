@@ -53,9 +53,6 @@ on:
         default: ""
         type: string
 
-env:
-  OLLAMA_HOST: http://localhost:11434
-
 jobs:
   throughput:
     name: Throughput Benchmark
@@ -106,8 +103,8 @@ jobs:
           cd docker
           echo "Applying experiment env: OLLAMA_FLASH_ATTENTION=${FA} OLLAMA_KV_CACHE_TYPE='${KV}'"
           OLLAMA_FLASH_ATTENTION="${FA}" OLLAMA_KV_CACHE_TYPE="${KV}" docker compose up -d --force-recreate
-          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
-          curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 || { echo "server did not come up"; docker compose logs 2>&1 | tail -30; exit 1; }
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
+          curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1 || { echo "server did not come up"; docker compose logs 2>&1 | tail -30; exit 1; }
           docker compose logs 2>&1 | grep -i "flash_attn" | tail -2 || true
 
       - name: Run throughput benchmark
@@ -147,7 +144,7 @@ jobs:
           MODELS: ${{ inputs.models }}
         run: |
           for MODEL in $MODELS; do
-            curl -s "${OLLAMA_HOST}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
+            curl -s "${OLLAMA_HOST:-http://localhost:11434}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
           done
 
       # Guaranteed revert: restore the stable baseline (FA off) whatever happened above —
@@ -158,7 +155,7 @@ jobs:
           cd docker
           echo "Reverting testbed to stable baseline: OLLAMA_FLASH_ATTENTION=0"
           OLLAMA_FLASH_ATTENTION=0 docker compose up -d --force-recreate
-          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
           echo "Baseline restored (FA off)."
 
       - name: Upload results

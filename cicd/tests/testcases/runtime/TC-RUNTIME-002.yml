@@ -15,7 +15,7 @@ intent:
 
 steps:
   - name: Check nvidia-smi inside container
-    command: docker exec ollama37 nvidia-smi
+    command: docker exec $OLLAMA37_CONTAINER nvidia-smi
     expectPatterns:
       - "CUDA Version"
     rejectPatterns:
@@ -23,7 +23,7 @@ steps:
       - "No devices were found"
 
   - name: Check CUDA libraries
-    command: docker exec ollama37 ldconfig -p | grep -i cuda | head -5
+    command: docker exec $OLLAMA37_CONTAINER ldconfig -p | grep -i cuda | head -5
     expectPatterns:
       - "cuda"
 
@@ -38,7 +38,7 @@ steps:
       - "nvidia-uvm"
 
   - name: Check Ollama GPU detection in logs
-    command: docker compose -f ${OLLAMA37_ROOT}/docker/docker-compose.yml logs 2>&1 | grep -i "inference compute" | tail -5
+    command: docker logs $OLLAMA37_CONTAINER 2>&1 | grep -i "inference compute" | tail -5
     expectPatterns:
       - "library=CUDA"
       - "compute=[0-9]+\\.[0-9]+"

@@ -1,9 +1,9 @@
 /**
- * LogCollector - Captures docker compose logs with text markers for precise
+ * LogCollector - Captures the server container's logs with text markers for precise
  * test boundary extraction.
  *
  * Design:
- * - Spawns `docker compose logs --follow --timestamps` as background process
+ * - Spawns `docker logs --follow --timestamps $OLLAMA37_CONTAINER` as background process
  * - Writes all logs to persistent session file: /tmp/ollama37-session-{timestamp}.log
  * - Injects text markers for test start/end boundaries
  * - Extracts per-test logs using sed
@@ -35,15 +35,14 @@ export class LogCollector {
   private process: ChildProcess | null = null;
   private sessionFile: string;
   private logFileStream: WriteStream | null = null;
-  private dockerComposeDir: string;
+  private container = process.env.OLLAMA37_CONTAINER!;
   private isRunning: boolean = false;
   private testMarkers: Map<string, TestMarkerState> = new Map();
   private writeQueue: Promise<void> = Promise.resolve();
   private lineBuffer: string = '';
   private outputDir: string;
 
-  constructor(dockerComposeDir: string, outputDir: string) {
-    this.dockerComposeDir = dockerComposeDir;
+  constructor(outputDir: string) {
     this.outputDir = outputDir;
     this.sessionFile = `/tmp/ollama37-session-${Date.now()}.log`;
   }
@@ -68,15 +67,7 @@ export class LogCollector {
         `===SESSION:START:${new Date().toISOString()}===\n`
       );
 
-      // Spawn docker compose logs --follow
-      this.process = spawn(
-        'docker',
-        ['compose', 'logs', '--follow', '--timestamps'],
-        {
-          cwd: this.dockerComposeDir,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        }
-      );
+      this.process = this.spawnLogs([]);
 
       this.isRunning = true;
 
@@ -99,7 +90,7 @@ export class LogCollector {
         this.isRunning = false;
       });
 
-      // Give docker compose time to start
+      // Give docker logs time to start
       setTimeout(() => {
         if (this.isRunning) {
           resolve();
@@ -174,14 +165,7 @@ export class LogCollector {
     }
 
     return new Promise((resolve, reject) => {
-      this.process = spawn(
-        'docker',
-        ['compose', 'logs', '--follow', '--timestamps', '--since', '1s'],
-        {
-          cwd: this.dockerComposeDir,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        }
-      );
+      this.process = this.spawnLogs(['--since', '1s']);
 
       this.isRunning = true;
 
@@ -369,6 +353,18 @@ export class LogCollector {
   // Private methods
   // ============================================
 
+  /**
+   * Follow the container's log by name, however it was started. The server writes to
+   * both streams; 2>&1 keeps them one ordered stream, as compose did.
+   */
+  private spawnLogs(extraArgs: string[]): ChildProcess {
+    return spawn(
+      'sh',
+      ['-c', 'exec docker logs --follow --timestamps "$@" 2>&1', 'sh', ...extraArgs, this.container],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+  }
+
   private getTestLogPath(testId: string): string {
     return path.join(this.outputDir, `${testId}.log`);
   }
@@ -416,7 +412,7 @@ export class LogCollector {
 
   private fallbackDockerLogs(sinceTime: string, untilTime: string): string {
     try {
-      const args = ['logs', 'ollama37', '--since', sinceTime];
+      const args = ['logs', this.container, '--since', sinceTime];
       if (untilTime) {
         args.push('--until', untilTime);
       }
