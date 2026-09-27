@@ -17,13 +17,14 @@ on:
         required: false
         type: string
       runner_label:
-        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm75 = RTX 2060."
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti. sm86 = RTX 3060."
         required: false
         default: "sm37"
         type: choice
         options:
           - "sm37"
-          - "sm75"
+          - "sm61"
+          - "sm86"
   workflow_call:
     inputs:
       debug:

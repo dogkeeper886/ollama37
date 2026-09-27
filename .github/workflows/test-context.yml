@@ -46,13 +46,14 @@ on:
           - "simple"
           - "dual"
       runner_label:
-        description: "Which GPU testbed. sm37 = Tesla K80 (reference). sm75 = RTX 2060 (~5.1 GiB) — pick this for the FA study."
+        description: "Which GPU testbed. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti (11 GiB). sm86 = RTX 3060 (12 GiB)."
         required: false
         default: "sm37"
         type: choice
         options:
           - "sm37"
-          - "sm75"
+          - "sm61"
+          - "sm86"
 
 jobs:
   context:

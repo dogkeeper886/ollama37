@@ -72,16 +72,19 @@ runs-on: [self-hosted, sm37]      # Tesla K80 — the only hardware-validated ta
 
 | Label | Host | Notes |
 |---|---|---|
-| `sm37` | Tesla K80 box (`rocky9-k80-cicd-1`) | 4 dies, ~11.4 GiB each. The reference testbed. |
-| `sm75` | RTX 2060 box (`rocky9-2060-cicd-1`) | 1 card, **5.1 GiB usable** (display attached). |
+| `sm37` | Tesla K80 box (`rocky8-k80-cicd-1`) | 4 dies, ~11.4 GiB each. The reference testbed. |
+| `sm61` | host B, GTX 1080 Ti (`rocky9-1080ti-cicd-1`) | 1 card, 11 GiB. `models` suite only. |
+| `sm86` | host B, RTX 3060 (`rocky9-3060-cicd-1`) | 1 card, 12 GiB. `models` suite only. |
 
 A workflow that can run on more than one testbed takes a `runner_label` input defaulting to
 `sm37`, and uses `runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]`.
 
-**Not every suite fits every host.** `sm75` holds no model the `models` suite uses
-(`deepseek-r1:32b`, `gemma3:27b`, …), and the `build` suite is a multi-hour no-cache compile that
-belongs on `sm37` where the builder image is cached. The `runtime` suite needs no model and runs
-anywhere.
+**Not every suite fits every host.** Host B's cards also serve the agent judge's `ollama`, so
+`sm61` and `sm86` run only `test-models.yml`: its Yield GPU / Restore GPU steps lend one card to
+the test, and the runner's `OLLAMA37_TEST_IDS` limits the suite to the models that fit. Workflows
+that `docker compose up` (runtime, build, perf) are not set up there, and host B runs one job at a
+time (both cards share port 11434). The `build` suite is a multi-hour no-cache compile that belongs
+on `sm37` where the builder image is cached.
 
 **Order of operations when adding a runner:** add the label to the runner *first*, then pin
 workflows to it. Pinning to a label no runner carries makes every job queue forever.

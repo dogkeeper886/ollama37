@@ -63,13 +63,14 @@ on:
         default: ""
         type: string
       runner_label:
-        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm75 = RTX 2060 (models must fit ~5.1 GiB)."
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti, sm86 = RTX 3060 (models must fit one card: 11 / 12 GiB)."
         required: false
         default: "sm37"
         type: choice
         options:
           - "sm37"
-          - "sm75"
+          - "sm61"
+          - "sm86"
       num_batch:
         description: "num_batch (micro-batch) per request. Empty = model default (512). Lower shrinks the Q·Kᵀ compute-graph reservation at long context."
         required: false
