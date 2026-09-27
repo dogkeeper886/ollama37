@@ -14,6 +14,11 @@ denylist file (one per line, blank lines and #-comments ignored):
 
   ~/.claude/scrub-denylist.txt        (override with $SCRUB_DENYLIST_FILE)
 
+A line starting with "re:" is a regex instead of a literal, for private values that do
+have a shape on this host (a hostname pattern, a hardware ID):
+
+  re:GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}
+
 Usage:
   scrub-session-log.py scan  <file.jsonl> [...]      exit 1 if anything is found
   scrub-session-log.py scrub <in.jsonl> <out.jsonl>  write a redacted copy
@@ -71,15 +76,17 @@ def load_denylist():
     path = os.environ.get("SCRUB_DENYLIST_FILE",
                           os.path.expanduser("~/.claude/scrub-denylist.txt"))
     if not os.path.exists(path):
-        return [], path
-    literals = []
+        return [], [], path
+    literals, regexes = [], []
     with open(path, encoding="utf-8") as fh:
         for raw in fh:
             s = raw.strip()
-            if s and not s.startswith("#"):
+            if s.startswith("re:"):
+                regexes.append(re.compile(s[3:]))
+            elif s and not s.startswith("#"):
                 literals.append(s)
     # longest first, so a substring never redacts ahead of the full secret
-    return sorted(set(literals), key=len, reverse=True), path
+    return sorted(set(literals), key=len, reverse=True), regexes, path
 
 
 def mask(s):
@@ -88,7 +95,7 @@ def mask(s):
     return (s[:3] + "*" * min(len(s) - 3, 12)) if len(s) > 6 else "*" * len(s)
 
 
-def find(line, denylist, flag_ips):
+def find(line, denylist, deny_res, flag_ips):
     hits = []
     for kind, rx in COMPILED:
         for m in rx.finditer(line):
@@ -96,6 +103,9 @@ def find(line, denylist, flag_ips):
     for lit in denylist:
         if lit in line:
             hits.append(("denylist", lit))
+    for rx in deny_res:
+        for m in rx.finditer(line):
+            hits.append(("denylist-re", m.group(0)))
     for m in EMAIL.finditer(line):
         hits.append(("email", m.group(0)))
     if flag_ips:
@@ -104,10 +114,12 @@ def find(line, denylist, flag_ips):
     return hits
 
 
-def redact(line, denylist, flag_ips):
+def redact(line, denylist, deny_res, flag_ips):
     # Placeholders contain no quotes or backslashes, so JSON stays valid.
     for lit in denylist:
         line = line.replace(lit, "[REDACTED-denylist]")
+    for rx in deny_res:
+        line = rx.sub("[REDACTED-denylist]", line)
     for kind, rx in COMPILED:
         line = rx.sub("[REDACTED-%s]" % kind, line)
     line = EMAIL.sub("[REDACTED-email]", line)
@@ -124,8 +136,8 @@ def main():
         return 2
 
     mode, args = argv[0], argv[1:]
-    denylist, denylist_path = load_denylist()
-    if not denylist:
+    denylist, deny_res, denylist_path = load_denylist()
+    if not denylist and not deny_res:
         print("WARNING: no denylist at %s — shape-less secrets (plain passwords) "
               "will NOT be caught.\n" % denylist_path, file=sys.stderr)
 
@@ -135,7 +147,7 @@ def main():
             per_file = {}
             with open(path, encoding="utf-8", errors="replace") as fh:
                 for n, line in enumerate(fh, 1):
-                    for kind, value in find(line, denylist, flag_ips):
+                    for kind, value in find(line, denylist, deny_res, flag_ips):
                         per_file.setdefault(kind, []).append((n, value))
             if per_file:
                 print("%s" % path)
@@ -159,7 +171,7 @@ def main():
     with open(src, encoding="utf-8", errors="replace") as fin, \
             open(dst, "w", encoding="utf-8") as fout:
         for n, line in enumerate(fin, 1):
-            out = redact(line, denylist, flag_ips)
+            out = redact(line, denylist, deny_res, flag_ips)
             if out != line:
                 changed += 1
             fout.write(out)
@@ -171,7 +183,7 @@ def main():
                     print("ERROR: line %d is not valid JSON after redaction: %s"
                           % (n, e), file=sys.stderr)
                     return 3
-    leftover = sum(len(find(l, denylist, flag_ips))
+    leftover = sum(len(find(l, denylist, deny_res, flag_ips))
                    for l in open(dst, encoding="utf-8", errors="replace"))
     print("%s -> %s: %d line(s) redacted, %d finding(s) remaining"
           % (src, dst, changed, leftover))
