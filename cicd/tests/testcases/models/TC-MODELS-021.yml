@@ -46,9 +46,11 @@ steps:
       # small allocation onto one die more than it needs. Reload once before calling
       # it a regression; overshooting twice is one.
       die_check() {
-        output=$(docker exec $OLLAMA37_CONTAINER nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
+        pids=$(docker top $OLLAMA37_CONTAINER -eo pid | tail -n +2 | paste -sd'|')
+        output=$(docker exec $OLLAMA37_CONTAINER nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory --format=csv,noheader \
+          | awk -F', ' -v p="^($pids)$" '$2 ~ p')
         echo "$output"
-        active=$(echo "$output" | grep -c 'MiB')
+        active=$(echo "$output" | cut -d, -f1 | sort -u | grep -c .)
         total=$(echo "$output" | grep -oP '[0-9]+(?= MiB)' | paste -sd+ | bc)
         echo "Active GPUs: $active, Total VRAM: ${total} MiB"
         [ "$active" -le 1 ] || [ "$total" -gt $(( (active - 1) * 11441 )) ]
