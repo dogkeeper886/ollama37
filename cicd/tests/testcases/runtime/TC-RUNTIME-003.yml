@@ -11,17 +11,17 @@ intent:
 
 steps:
   - name: Check container health status
-    command: docker inspect ollama37 --format='{{.State.Health.Status}}'
+    command: docker inspect $OLLAMA37_CONTAINER --format='{{.State.Health.Status}}'
     expectPatterns:
       - "healthy"
 
   - name: Test API endpoint
-    command: curl -s http://localhost:11434/api/tags
+    command: curl -s $OLLAMA_HOST/api/tags
     expectPatterns:
       - "models"
 
   - name: Check Ollama version
-    command: docker exec ollama37 ollama --version
+    command: docker exec $OLLAMA37_CONTAINER ollama --version
     expectPatterns:
       - "ollama"
 

@@ -14,7 +14,7 @@ steps:
   - name: Test generate endpoint
     command: |
       m="${TEST_MODEL:-gemma3:4b}"
-      curl -s http://localhost:11434/api/generate \
+      curl -s $OLLAMA_HOST/api/generate \
         -d "{\"model\":\"$m\",\"prompt\":\"What is 2+2? Answer with just the number.\",\"stream\":false}" \
         | head -c 1000
     expectPatterns:
@@ -25,14 +25,14 @@ steps:
       - "CUDA error"
 
   - name: Check GPU memory usage
-    command: docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
+    command: docker exec $OLLAMA37_CONTAINER nvidia-smi --query-compute-apps=pid,used_memory --format=csv
     expectPatterns:
       - "[0-9]+ MiB"
 
   - name: Unload model after test
     command: |
       m="${TEST_MODEL:-gemma3:4b}"
-      curl -s http://localhost:11434/api/generate \
+      curl -s $OLLAMA_HOST/api/generate \
         -d "{\"model\":\"$m\",\"keep_alive\":0}"
       echo "Model unload requested"
     expectPatterns:

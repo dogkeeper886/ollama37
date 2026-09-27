@@ -279,13 +279,10 @@ ${r.stderr || '(empty)'}
     );
 
     if (needsLogCollector) {
-      this.logCollector = new LogCollector(
-        this.config.dockerComposePath,
-        this.config.outputDir
-      );
+      this.logCollector = new LogCollector(this.config.outputDir);
       try {
         await this.logCollector.start();
-        this.progress(`[LOG] Docker log collector started`);
+        this.progress(`[LOG] Docker log collector started on ${process.env.OLLAMA37_CONTAINER}`);
       } catch (err) {
         this.progress(`[WARN] Failed to start log collector: ${err}`);
         this.logCollector = null;

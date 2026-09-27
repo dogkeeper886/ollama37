@@ -261,8 +261,6 @@ export interface RunConfig {
   outputFormat: 'console' | 'json' | 'junit';
   /** Working directory (project root) */
   workingDir: string;
-  /** Path to docker-compose.yml for test subject */
-  dockerComposePath: string;
 }
 
 /**

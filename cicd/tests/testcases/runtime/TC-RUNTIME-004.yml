@@ -13,7 +13,7 @@ intent:
 steps:
   - name: Endpoint returns HTTP 200
     command: |
-      CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:11434/api/metrics)
+      CODE=$(curl -s -o /dev/null -w '%{http_code}' $OLLAMA_HOST/api/metrics)
       echo "HTTP_CODE:$CODE"
     expectPatterns:
       - "HTTP_CODE:200"
@@ -22,7 +22,7 @@ steps:
 
   - name: Top-level schema (gpus, models, errors, totals)
     command: |
-      curl -s http://localhost:11434/api/metrics | jq -e '
+      curl -s $OLLAMA_HOST/api/metrics | jq -e '
         (.gpus   | type) == "array"
         and (.models | type) == "array"
         and (.errors | type) == "object"
@@ -35,7 +35,7 @@ steps:
 
   - name: GPU shape (K80 runner exposes >=1 GPU with id, name, vram_total)
     command: |
-      curl -s http://localhost:11434/api/metrics | jq -e '
+      curl -s $OLLAMA_HOST/api/metrics | jq -e '
         (.gpus | length) >= 1
         and (.gpus[0].id         | type) == "string"
         and (.gpus[0].name       | type) == "string"
@@ -49,7 +49,7 @@ steps:
 
   - name: Error counters present (load_failures, load_require_full, load_other, evictions_total)
     command: |
-      curl -s http://localhost:11434/api/metrics | jq -e '
+      curl -s $OLLAMA_HOST/api/metrics | jq -e '
         (.errors.load_failures     | type) == "number"
         and (.errors.load_require_full | type) == "number"
         and (.errors.load_other        | type) == "number"
@@ -62,7 +62,7 @@ steps:
 
   - name: Totals shape (gpu_count >=1, loaded_models >=0)
     command: |
-      curl -s http://localhost:11434/api/metrics | jq -e '
+      curl -s $OLLAMA_HOST/api/metrics | jq -e '
         (.totals.gpu_count     | type) == "number"
         and  .totals.gpu_count    >= 1
         and (.totals.loaded_models | type) == "number"
@@ -75,7 +75,7 @@ steps:
 
   - name: gpus[] length matches totals.gpu_count (internal consistency)
     command: |
-      curl -s http://localhost:11434/api/metrics \
+      curl -s $OLLAMA_HOST/api/metrics \
         | jq -e '(.gpus | length) == .totals.gpu_count' >/dev/null \
         && echo "gpus length consistent OK" || echo "gpus length consistent FAIL"
     expectPatterns:
@@ -85,8 +85,8 @@ steps:
 
   - name: gpu_count matches nvidia-smi count (catches dropped GPUs)
     command: |
-      EXPECTED=$(docker exec ollama37 nvidia-smi -L | wc -l)
-      ACTUAL=$(curl -s http://localhost:11434/api/metrics | jq '.totals.gpu_count')
+      EXPECTED=$(docker exec $OLLAMA37_CONTAINER nvidia-smi -L | wc -l)
+      ACTUAL=$(curl -s $OLLAMA_HOST/api/metrics | jq '.totals.gpu_count')
       echo "expected=$EXPECTED actual=$ACTUAL"
       [ "$EXPECTED" = "$ACTUAL" ] && echo "gpu_count match OK" || echo "gpu_count match FAIL"
     expectPatterns:
@@ -100,7 +100,7 @@ steps:
       # The `// ""` coerces missing/null names into empty strings so an
       # empty `^$` alternation can fail the assertion alongside the
       # enum-style names.
-      BAD=$(curl -s http://localhost:11434/api/metrics \
+      BAD=$(curl -s $OLLAMA_HOST/api/metrics \
         | jq -r '.gpus[] | (.name // "")' \
         | grep -E '^$|^(CUDA|HIP|Vulkan)[0-9]+$' \
         | wc -l)
@@ -112,7 +112,7 @@ steps:
       - "gpu name FAIL"
 
   - name: Dump full response for inspection
-    command: curl -s http://localhost:11434/api/metrics | jq '.'
+    command: curl -s $OLLAMA_HOST/api/metrics | jq '.'
 
 criteria: |
   Verify GET /api/metrics returns HTTP 200 with well-formed JSON conforming to

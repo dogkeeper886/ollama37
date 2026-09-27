@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="330" viewBox="0 0 880 330" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+  <rect width="880" height="330" fill="#ffffff"/>
+  <text x="440" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">The host decides the server under test</text>
+  <text x="440" y="56" text-anchor="middle" font-size="13" fill="#444">each self-hosted runner's .env; unset = the default</text>
+  <g font-size="13">
+    <rect x="20" y="72" width="840" height="34" fill="#f1f3f4"/>
+    <text x="30" y="94" font-weight="bold">knob</text>
+    <text x="330" y="94" font-weight="bold">default (host A, sm37)</text>
+    <text x="600" y="94" font-weight="bold">host B, one card (sm86)</text>
+    <g font-family="DejaVu Sans Mono, monospace" font-size="12">
+      <text x="30" y="134">OLLAMA37_CONTAINER</text><text x="330" y="134">ollama37</text><text x="600" y="134">ollama37-3060</text>
+      <text x="30" y="170">OLLAMA_HOST</text><text x="330" y="170">http://localhost:11434</text><text x="600" y="170">(default)</text>
+      <text x="30" y="206">OLLAMA37_TEST_IDS</text><text x="330" y="206">(every test)</text><text x="600" y="206">TC-MODELS-003,…</text>
+      <text x="30" y="242">OLLAMA37_SERVICE</text><text x="330" y="242">(no switching)</text><text x="600" y="242">ollama37-3060</text>
+      <text x="30" y="278">OLLAMA37_YIELD_SERVICE</text><text x="330" y="278">(none)</text><text x="600" y="278">ollama</text>
+    </g>
+    <line x1="20" y1="150" x2="860" y2="150" stroke="#e0e0e0"/>
+    <line x1="20" y1="186" x2="860" y2="186" stroke="#e0e0e0"/>
+    <line x1="20" y1="222" x2="860" y2="222" stroke="#e0e0e0"/>
+    <line x1="20" y1="258" x2="860" y2="258" stroke="#e0e0e0"/>
+  </g>
+  <text x="440" y="315" text-anchor="middle" font-size="12" fill="#555">defaults: cicd/tests/src/config.ts · service switch: .github/workflows/test-models.yml</text>
+</svg>

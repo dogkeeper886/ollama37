@@ -16,6 +16,11 @@ export function pickEnv(names: string): Record<string, string> {
   return out;
 }
 
+// The server under test. Steps, the log collector and the perf commands read these from
+// the environment; a self-hosted runner's .env sets them per host.
+process.env.OLLAMA37_CONTAINER ||= 'ollama37';
+process.env.OLLAMA_HOST ||= 'http://localhost:11434';
+
 export const CONFIG = {
   projectName: 'ollama37',
 

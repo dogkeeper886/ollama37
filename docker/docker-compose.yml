@@ -1,7 +1,8 @@
 services:
   ollama:
     image: dogkeeper886/ollama37:latest
-    container_name: ollama37
+    # any container name; default ollama37
+    container_name: ${OLLAMA37_CONTAINER:-ollama37}
     runtime: nvidia
     deploy:
       resources:

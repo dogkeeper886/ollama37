@@ -11,7 +11,7 @@ intent:
 steps:
   - name: Test inference
     command: |
-      out=$(curl -s http://localhost:11434/api/generate \
+      out=$(curl -s $OLLAMA_HOST/api/generate \
         -d '{"model":"llama3.1:8b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}')
       echo "$out" | jq -r '"response: " + (.response // "" | .[0:400])'
       echo "$out" | jq -c '{error, done, done_reason, eval_count}'
@@ -33,7 +33,7 @@ steps:
       - "CUDA error"
 
   - name: Check GPU memory
-    command: docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
+    command: docker exec $OLLAMA37_CONTAINER nvidia-smi --query-compute-apps=pid,used_memory --format=csv
     expectPatterns:
       - "[0-9]+ MiB"
 
@@ -43,7 +43,7 @@ steps:
       # small allocation onto one die more than it needs. Reload once before calling
       # it a regression; overshooting twice is one.
       die_check() {
-        output=$(docker exec ollama37 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
+        output=$(docker exec $OLLAMA37_CONTAINER nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader)
         echo "$output"
         active=$(echo "$output" | grep -c 'MiB')
         total=$(echo "$output" | grep -oP '[0-9]+(?= MiB)' | paste -sd+ | bc)
@@ -54,8 +54,8 @@ steps:
         echo "GPU_COUNT_OK"
       else
         echo "RELOAD: ${total} MiB fits in $((active - 1)) GPUs but using $active; reloading once"
-        curl -s http://localhost:11434/api/generate -d '{"model":"llama3.1:8b","keep_alive":0}' >/dev/null
-        curl -s http://localhost:11434/api/generate \
+        curl -s $OLLAMA_HOST/api/generate -d '{"model":"llama3.1:8b","keep_alive":0}' >/dev/null
+        curl -s $OLLAMA_HOST/api/generate \
           -d '{"model":"llama3.1:8b","prompt":"What is 2+2? Answer in one short sentence.","stream":false,"options":{"num_predict":400,"temperature":0,"seed":0}}' >/dev/null
         if die_check; then
           echo "GPU_COUNT_OK (after one reload)"
@@ -70,7 +70,7 @@ steps:
 
   - name: Unload model
     command: |
-      curl -s http://localhost:11434/api/generate \
+      curl -s $OLLAMA_HOST/api/generate \
         -d '{"model":"llama3.1:8b","keep_alive":0}'
       echo "Model unloaded"
     expectPatterns:

@@ -64,11 +64,11 @@ jobs:
         # the production container, instead of finding out a week later.
         # gemma3:4b is small (~3 GB), no thinking mode, ~250 ms response.
         run: |
-          if ! curl -sf http://localhost:11434/api/tags >/dev/null; then
+          if ! curl -sf ${OLLAMA_HOST:-http://localhost:11434}/api/tags >/dev/null; then
             echo "::error::production ollama37 /api/tags unreachable — pre-existing failure, not caused by this PR"
             exit 1
           fi
-          RESP=$(curl -s http://localhost:11434/api/generate -d '{
+          RESP=$(curl -s ${OLLAMA_HOST:-http://localhost:11434}/api/generate -d '{
             "model": "gemma3:4b",
             "prompt": "Say hello in one word.",
             "stream": false,
@@ -85,7 +85,7 @@ jobs:
 
       - name: Stop production ollama37
         run: |
-          docker stop ollama37 || true
+          docker stop ${OLLAMA37_CONTAINER:-ollama37} || true
           # Defensive: clear any stale smoke-test containers from prior failed runs.
           docker rm -f ollama37-mlx-smoke 2>/dev/null || true
 
@@ -268,8 +268,8 @@ jobs:
         run: |
           docker rm -f ollama37-mlx-smoke 2>/dev/null || true
 
-          if docker ps -a --filter "name=^ollama37$" --format '{{.Names}}' | grep -q ollama37; then
-            docker start ollama37 || true
+          if docker ps -a --filter "name=^${OLLAMA37_CONTAINER:-ollama37}$" --format '{{.Names}}' | grep -q .; then
+            docker start ${OLLAMA37_CONTAINER:-ollama37} || true
           else
             cd docker && docker compose up -d || true
           fi
@@ -278,14 +278,14 @@ jobs:
         if: always()
         run: |
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+            if curl -sf ${OLLAMA_HOST:-http://localhost:11434}/api/tags >/dev/null 2>&1; then
               echo "production ollama37 healthy after ${i}s"
               exit 0
             fi
             sleep 1
           done
           echo "::error::production ollama37 did not recover within 60s"
-          docker logs ollama37 2>&1 | tail -50 || true
+          docker logs ${OLLAMA37_CONTAINER:-ollama37} 2>&1 | tail -50 || true
           exit 1
 
       - name: Upload mlx smoke results

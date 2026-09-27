@@ -23,7 +23,7 @@ steps:
     command: |
       echo "Waiting for container to become healthy..."
       for i in {1..30}; do
-        STATUS=$(docker inspect ollama37 --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
+        STATUS=$(docker inspect $OLLAMA37_CONTAINER --format='{{.State.Health.Status}}' 2>/dev/null || echo "not_found")
         echo "Attempt $i: Status = $STATUS"
         if [ "$STATUS" = "healthy" ]; then
           echo "Container is healthy!"
@@ -40,7 +40,6 @@ steps:
   - name: Check container status
     command: docker compose -f ${OLLAMA37_ROOT}/docker/docker-compose.yml ps
     expectPatterns:
-      - "ollama37"
       - "Up"
 
 criteria: |

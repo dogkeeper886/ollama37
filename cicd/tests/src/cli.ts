@@ -10,17 +10,92 @@
 import 'dotenv/config'; // load cicd/tests/.env into process.env before config.ts reads it
 import { Command } from 'commander';
 import path from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import { TestLoader } from './loader.js';
 import { TestExecutor } from './executor.js';
 import { SimpleJudge, AgentJudge } from './judge/index.js';
 import { JsonReporter, ConsoleReporter } from './reporter/index.js';
-import { RunConfig } from './types.js';
+import { RunConfig, TestResult, TestSummary } from './types.js';
 import { CONFIG, pickEnv } from './config.js';
 import { runThroughput } from './perf/throughput.js';
 import { runContext } from './perf/context.js';
 import { runMcpTest } from './mcp/test-mcp.js';
 import { modelBounds } from './perf/model-bounds.js';
+
+/**
+ * Judge executed results and write the reports. `run` calls it straight after the
+ * tests; `judge` calls it later on results a `run` saved, once the judge's server is up.
+ */
+async function judgeAndReport(
+  results: TestResult[],
+  judgeMode: RunConfig['judgeMode'],
+  outputDir: string,
+  outputFormat: RunConfig['outputFormat'],
+  startTime: Date,
+  suiteName: string
+): Promise<TestSummary> {
+  // Run judges
+  process.stderr.write('\n[JUDGE] Running simple judge...\n');
+  const simpleJudge = new SimpleJudge();
+  const simpleJudgments = simpleJudge.judgeAll(results);
+
+  let agentJudgments = simpleJudgments.map((j) => ({
+    ...j,
+    reason: judgeMode === 'dual' ? j.reason : 'Agent judge disabled (simple mode)',
+  }));
+
+  if (judgeMode === 'dual') {
+    // A test the simple judge already failed is failed whatever the agent says (both
+    // must pass), so don't ask it. That also keeps flagged replies — REPLY_REPEAT above
+    // all — away from the agent, which loops when it quotes repeated text back.
+    const simpleFailed = new Map(simpleJudgments.filter((j) => !j.pass).map((j) => [j.testId, j]));
+    const toJudge = results.filter((r) => !simpleFailed.has(r.testCase.id));
+    const skipped = [...simpleFailed.values()].map((j) => ({
+      testId: j.testId,
+      pass: false,
+      reason: `Skipped — simple judge already failed: ${j.reason}`,
+    }));
+    agentJudgments = skipped;
+
+    if (toJudge.length === 0) {
+      process.stderr.write('[JUDGE] Agent judge skipped: every test already failed the simple judge\n');
+    } else {
+      process.stderr.write(`[JUDGE] Running agent judge on ${toJudge.length} test(s), ${skipped.length} skipped...\n`);
+      const agentJudge = new AgentJudge();
+
+      const available = await agentJudge.isAvailable();
+      if (available) {
+        agentJudgments = [...skipped, ...(await agentJudge.judgeResults(toJudge))];
+      } else {
+        process.stderr.write('[WARN] Agent judge not available, using simple judge results\n');
+        agentJudgments = simpleJudgments;
+      }
+    }
+  }
+
+  // Generate and output reports
+  const jsonReporter = new JsonReporter(outputDir);
+  const { summary, reports } = jsonReporter.generateReports(
+    results,
+    simpleJudgments,
+    agentJudgments,
+    startTime,
+    suiteName
+  );
+
+  // Write JSON files regardless of format
+  jsonReporter.writeReports(summary, reports);
+
+  // Console output
+  if (outputFormat === 'console') {
+    const consoleReporter = new ConsoleReporter();
+    consoleReporter.report(summary, reports);
+  } else if (outputFormat === 'json') {
+    jsonReporter.outputSummary(summary, reports);
+  }
+
+  return summary;
+}
 
 const program = new Command();
 
@@ -47,7 +122,6 @@ program
     const testsDir = path.dirname(new URL(import.meta.url).pathname);
     const projectRoot = path.resolve(testsDir, '..', '..', '..');
     const testcasesDir = path.join(testsDir, '..', 'testcases');
-    const dockerDir = path.join(projectRoot, 'docker');
 
     // Generate output directory with timestamp
     const timestamp = startTime.toISOString().replace(/[:.]/g, '-').substring(0, 19);
@@ -70,11 +144,10 @@ program
       outputDir,
       outputFormat: options.format as RunConfig['outputFormat'],
       workingDir: projectRoot,
-      dockerComposePath: dockerDir,
     };
 
     process.stderr.write(`\n[CONFIG] Project root: ${projectRoot}\n`);
-    process.stderr.write(`[CONFIG] Docker compose: ${dockerDir}\n`);
+    process.stderr.write(`[CONFIG] Server: ${process.env.OLLAMA37_CONTAINER} at ${process.env.OLLAMA_HOST}\n`);
     process.stderr.write(`[CONFIG] Testcases: ${testcasesDir}\n`);
     process.stderr.write(`[CONFIG] Output: ${outputDir}\n`);
     process.stderr.write(`[CONFIG] Agent Judge: ${config.judgeMode === 'dual' ? 'enabled (dual)' : 'disabled (simple only)'}\n`);
@@ -94,6 +167,12 @@ program
     // Filter by suite
     if (config.suite) {
       filteredTestCases = filteredTestCases.filter((tc) => tc.suite === config.suite);
+    }
+
+    // Filter by the host's subset, from the runner's .env
+    if (process.env.OLLAMA37_TEST_IDS) {
+      const ids = process.env.OLLAMA37_TEST_IDS.split(',').map((s) => s.trim());
+      filteredTestCases = filteredTestCases.filter((tc) => ids.includes(tc.id));
     }
 
     // Filter by ID
@@ -137,67 +216,44 @@ program
     const executor = new TestExecutor(config);
     const results = await executor.executeAll(testCases);
 
-    // Run judges
-    process.stderr.write('\n[JUDGE] Running simple judge...\n');
-    const simpleJudge = new SimpleJudge();
-    const simpleJudgments = simpleJudge.judgeAll(results);
+    // Save the raw results, so `judge` can judge them in a later step
+    writeFileSync(path.join(outputDir, 'results.json'), JSON.stringify(results));
 
-    let agentJudgments = simpleJudgments.map((j) => ({
-      ...j,
-      reason: config.judgeMode === 'dual' ? j.reason : 'Agent judge disabled (simple mode)',
-    }));
-
-    if (config.judgeMode === 'dual') {
-      // A test the simple judge already failed is failed whatever the agent says (both
-      // must pass), so don't ask it. That also keeps flagged replies — REPLY_REPEAT above
-      // all — away from the agent, which loops when it quotes repeated text back.
-      const simpleFailed = new Map(simpleJudgments.filter((j) => !j.pass).map((j) => [j.testId, j]));
-      const toJudge = results.filter((r) => !simpleFailed.has(r.testCase.id));
-      const skipped = [...simpleFailed.values()].map((j) => ({
-        testId: j.testId,
-        pass: false,
-        reason: `Skipped — simple judge already failed: ${j.reason}`,
-      }));
-      agentJudgments = skipped;
-
-      if (toJudge.length === 0) {
-        process.stderr.write('[JUDGE] Agent judge skipped: every test already failed the simple judge\n');
-      } else {
-        process.stderr.write(`[JUDGE] Running agent judge on ${toJudge.length} test(s), ${skipped.length} skipped...\n`);
-        const agentJudge = new AgentJudge();
-
-        const available = await agentJudge.isAvailable();
-        if (available) {
-          agentJudgments = [...skipped, ...(await agentJudge.judgeResults(toJudge))];
-        } else {
-          process.stderr.write('[WARN] Agent judge not available, using simple judge results\n');
-          agentJudgments = simpleJudgments;
-        }
-      }
-    }
-
-    // Generate and output reports
-    const jsonReporter = new JsonReporter(outputDir);
-    const { summary, reports } = jsonReporter.generateReports(
+    const summary = await judgeAndReport(
       results,
-      simpleJudgments,
-      agentJudgments,
+      config.judgeMode,
+      outputDir,
+      config.outputFormat,
       startTime,
       suiteName
     );
 
-    // Write JSON files regardless of format
-    jsonReporter.writeReports(summary, reports);
-
-    // Console output
-    if (config.outputFormat === 'console') {
-      const consoleReporter = new ConsoleReporter();
-      consoleReporter.report(summary, reports);
-    } else if (config.outputFormat === 'json') {
-      jsonReporter.outputSummary(summary, reports);
-    }
-
     // Exit with appropriate code
+    process.exit(summary.failed > 0 ? 1 : 0);
+  });
+
+/**
+ * Judge command - judge the results a `run` saved
+ */
+program
+  .command('judge <resultsDir>')
+  .description('Judge the results a run saved in <resultsDir>, and rewrite its reports')
+  .option('-f, --format <format>', 'Output format (console, json)', 'console')
+  .action(async (resultsDir, options) => {
+    const results: TestResult[] = JSON.parse(
+      readFileSync(path.join(resultsDir, 'results.json'), 'utf-8')
+    );
+    const judgeMode: RunConfig['judgeMode'] = CONFIG.judge.mode === 'dual' ? 'dual' : 'simple';
+    const suiteName = [...new Set(results.map((r) => r.testCase.suite))].join('+') || 'all';
+    process.stderr.write(`[CONFIG] Judging ${results.length} result(s) from ${resultsDir}\n`);
+    const summary = await judgeAndReport(
+      results,
+      judgeMode,
+      resultsDir,
+      options.format as RunConfig['outputFormat'],
+      new Date(),
+      suiteName
+    );
     process.exit(summary.failed > 0 ? 1 : 0);
   });
 
@@ -255,7 +311,7 @@ program
   .option('-c, --context <n>', 'Context window size', '2048')
   .option('-b, --num-batch <n>', 'Micro-batch size (num_batch); empty = model default (512)')
   .option('--judge', 'Also run the agent judge on each response (dual mode)', false)
-  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST)
   .option('-o, --output <file>', 'Write the JSON report to this file')
   .action(async (models: string[], options) => {
     const code = await runThroughput({
@@ -288,7 +344,7 @@ program
   .option('-n, --num-predict <n>', 'Max tokens to generate (room for a thinking model to reason + answer)', '1024')
   .option('-c, --context <n>', 'Target primed-prompt length in tokens', '4096')
   .option('--judge', 'Also run the agent judge on each response (dual mode)', false)
-  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST)
   .option('-o, --output <file>', 'Write the JSON report to this file')
   .action(async (models: string[], options) => {
     const code = await runContext({
@@ -319,7 +375,7 @@ program
   .option('-c, --num-ctx <n>', 'Context window size (8192 fits a merged multi-server tool menu; one server fits in 4096)', '8192')
   .option('-b, --num-batch <n>', 'Micro-batch size (num_batch); empty = model default (512)')
   .option('--judge', 'Also run the agent judge on the final answer (dual mode)', false)
-  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST)
   .option('--mcp-command <cmd>', 'Command to launch the stdio MCP server', CONFIG.mcp.command)
   .option('--mcp-args <args>', 'Args for the MCP server (space-separated; no spaces within a single arg)', CONFIG.mcp.args.join(' '))
   .option('--mcp-env <names>', 'Comma-separated env var names to forward to the server as creds (overrides MCP_ENV)', '')
@@ -377,7 +433,7 @@ program
   .command('model-bounds')
   .description("Resolve a model's native context length + tool support from /api/show")
   .argument('<model>', 'Model name to inspect')
-  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST || 'http://localhost:11434')
+  .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST)
   .action(async (model: string, options) => {
     try {
       const b = await modelBounds(options.host, model);

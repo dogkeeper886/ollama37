@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+  <rect width="880" height="400" fill="#ffffff"/>
+  <text x="440" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">Folder → command</text>
+  <g font-size="13">
+    <text x="30" y="68" font-weight="bold" fill="#222">cicd/</text>
+    <text x="470" y="68" font-weight="bold" fill="#222">run from cicd/tests/</text>
+    <line x1="30" y1="78" x2="850" y2="78" stroke="#ccc"/>
+    <g font-family="DejaVu Sans Mono, monospace" fill="#222">
+      <text x="30" y="108">tests/testcases/&lt;suite&gt;/TC-*.yml</text>
+      <text x="470" y="108">npx tsx src/cli.ts run --suite &lt;suite&gt;</text>
+      <text x="30" y="148">tests/src/</text>
+      <text x="470" y="148">npx tsc --noEmit</text>
+      <text x="30" y="188">tests/.env.example</text>
+      <text x="470" y="188">cp .env.example .env</text>
+      <text x="30" y="228">tests/scripts/</text>
+      <text x="470" y="228">npx tsx scripts/validate-agent-judge.ts</text>
+      <text x="30" y="268">scripts/</text>
+      <text x="470" y="268">python3 ../scripts/scrub-session-log.py scan</text>
+      <text x="30" y="308">results/</text>
+      <text x="470" y="308">(output of run; gitignored)</text>
+      <text x="30" y="348">specs/ · infrastructure/</text>
+      <text x="470" y="348">(notes; read, no command)</text>
+    </g>
+    <g fill="#666" font-size="12">
+      <text x="30" y="125">the tests: one YAML per case, steps are bash</text>
+      <text x="30" y="165">the runner: CLI, executor, log collector, judges</text>
+      <text x="30" y="205">local config for a run outside CI</text>
+      <text x="30" y="245">runner helpers</text>
+      <text x="30" y="285">tools the workflows call</text>
+      <text x="30" y="325">&lt;timestamp&gt;_&lt;suite&gt;/ or --output-dir</text>
+    </g>
+  </g>
+</svg>
