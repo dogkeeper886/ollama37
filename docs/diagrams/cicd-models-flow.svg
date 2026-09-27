@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="360" viewBox="0 0 880 360" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+  <rect width="880" height="360" fill="#ffffff"/>
+  <defs><marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+  <text x="440" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">A models run on a shared host (test-models.yml)</text>
+  <g font-size="13" fill="#222">
+    <rect x="20" y="60" width="190" height="120" rx="10" fill="#fce8e6" stroke="#b5463c"/>
+    <text x="115" y="86" text-anchor="middle" font-weight="bold">Yield GPU</text>
+    <text x="115" y="110" text-anchor="middle" font-size="12">stop ollama37-*</text>
+    <text x="115" y="130" text-anchor="middle" font-size="12">stop YIELD_SERVICE</text>
+    <text x="115" y="150" text-anchor="middle" font-size="12">start SERVICE, wait</text>
+
+    <rect x="235" y="60" width="190" height="120" rx="10" fill="#e6f4ea" stroke="#3c8a55"/>
+    <text x="330" y="86" text-anchor="middle" font-weight="bold">Run models tests</text>
+    <text x="330" y="110" text-anchor="middle" font-size="12" font-family="DejaVu Sans Mono, monospace">cli.ts run</text>
+    <text x="330" y="130" text-anchor="middle" font-size="12">JUDGE_MODE=simple</text>
+    <text x="330" y="150" text-anchor="middle" font-size="12">→ results.json</text>
+
+    <rect x="450" y="60" width="190" height="120" rx="10" fill="#fce8e6" stroke="#b5463c"/>
+    <text x="545" y="86" text-anchor="middle" font-weight="bold">Unload · Restore GPU</text>
+    <text x="545" y="106" text-anchor="middle" font-size="12">unload test models</text>
+    <text x="545" y="124" text-anchor="middle" font-size="12">stop SERVICE</text>
+    <text x="545" y="142" text-anchor="middle" font-size="12">YIELD_SERVICE enabled?</text>
+    <text x="545" y="160" text-anchor="middle" font-size="12">start it, wait</text>
+
+    <rect x="665" y="60" width="195" height="120" rx="10" fill="#e8f0fe" stroke="#4a6fb5"/>
+    <text x="762" y="86" text-anchor="middle" font-weight="bold">Agent judge</text>
+    <text x="762" y="110" text-anchor="middle" font-size="12" font-family="DejaVu Sans Mono, monospace">cli.ts judge</text>
+    <text x="762" y="130" text-anchor="middle" font-size="12">on the saved results,</text>
+    <text x="762" y="150" text-anchor="middle" font-size="12">judge server back up</text>
+  </g>
+  <line x1="210" y1="120" x2="232" y2="120" stroke="#555" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="425" y1="120" x2="447" y2="120" stroke="#555" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="640" y1="120" x2="662" y2="120" stroke="#555" stroke-width="2" marker-end="url(#a)"/>
+  <g font-size="13" fill="#444">
+    <text x="115" y="210" text-anchor="middle">skipped when</text>
+    <text x="115" y="228" text-anchor="middle">SERVICE is unset</text>
+    <text x="545" y="210" text-anchor="middle">if: always()</text>
+    <text x="762" y="210" text-anchor="middle">dual judge_mode only</text>
+  </g>
+  <text x="440" y="280" text-anchor="middle" font-size="14" fill="#222">Host B's GPUs serve the agent judge (JUDGE_BASE_URL); a test job borrows one card and gives it back.</text>
+  <text x="440" y="305" text-anchor="middle" font-size="13" fill="#444">Host A sets no SERVICE: the switch steps skip, the run and judge are the same as before.</text>
+  <text x="440" y="330" text-anchor="middle" font-size="13" fill="#444">One job at a time on host B: its runners share port 11434.</text>
+</svg>

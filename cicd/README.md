@@ -1,136 +1,95 @@
-# CI/CD Infrastructure
+# cicd
 
-This folder contains CI/CD infrastructure and the test framework for validating ollama37 builds on Tesla K80 GPUs.
+YAML testcases check every ollama37 build on real GPUs, run by one TypeScript runner locally or in GitHub Actions. A second host now joins the K80 box: it shares its cards with the agent judge's server and runs just the tests that fit one card. A pipeline that hard-codes one container, one address and one test list breaks that host when it runs there. Each self-hosted runner's `.env` names its own server under test, and the models workflow borrows a card and returns it.
 
-## Quick Start
+## 1. One runner, three layers
+
+![Workflow picks a host by label, calls cli.ts, which runs the YAML testcases](../docs/diagrams/png/cicd-layers.png)
+
+A workflow in `.github/workflows/test-*.yml` picks a self-hosted runner by `runner_label`. It calls `cicd/tests/src/cli.ts`, which runs the testcases in `cicd/tests/testcases/<suite>/TC-*.yml`. A testcase's steps are bash commands. A local run and a CI run call the same `cli.ts`.
+
+| Workflow | Command |
+|---|---|
+| `test-build.yml` · `test-runtime.yml` · `test-inference.yml` · `test-models.yml` | `cli.ts run --suite <suite>` |
+| `test-models.yml` | `cli.ts judge <results dir>` |
+| `test-throughput.yml` | `cli.ts bench-throughput` |
+| `test-context.yml` | `cli.ts bench-context` |
+| `test-mcp.yml` | `cli.ts test-mcp` |
+| `test-report-sweep.yml` | `cli.ts bench-throughput` · `test-mcp` · `model-bounds` |
+| `test-pipeline.yml` | build → runtime → inference → models |
+
+## 2. Folder → command
+
+![Each cicd folder and the command that uses it](../docs/diagrams/png/cicd-folders.png)
+
+Run these from `cicd/tests/`:
+
+| Folder | Holds | Command |
+|---|---|---|
+| `tests/testcases/<suite>/` | one YAML per testcase | `npx tsx src/cli.ts run --suite <suite> [--id <TC-ID>] [--dry-run]` |
+| `tests/src/` | CLI, executor, log collector, judges | `npx tsc --noEmit` |
+| `tests/.env.example` | config for a run outside CI | `cp .env.example .env` |
+| `tests/scripts/` | runner helpers | `npx tsx scripts/validate-agent-judge.ts` |
+| `scripts/` | tools the workflows call | `python3 ../scripts/scrub-session-log.py scan <log.jsonl>` |
+| `results/` | run output, gitignored | written by `run`; `--output-dir <dir>` overrides |
+| `specs/` · `infrastructure/` | notes | — |
+
+Pass `--format json` to `run` or `judge` to print the summary as JSON.
+
+## 3. The host decides the server under test
+
+![Runner .env knobs, their defaults, and host B's values](../docs/diagrams/png/cicd-host-env.png)
+
+A self-hosted runner reads its own `.env` (in the runner's folder), so each host names its server there and the workflows stay the same. An unset knob takes the default from `cicd/tests/src/config.ts` or the workflow step.
+
+| Knob | Default | Read by |
+|---|---|---|
+| `OLLAMA37_CONTAINER` | `ollama37` | testcase steps, log collector |
+| `OLLAMA_HOST` | `http://localhost:11434` | testcase steps, perf commands, workflow steps |
+| `OLLAMA37_TEST_IDS` | unset: every test | `cli.ts run` |
+| `OLLAMA37_SERVICE` | unset: no service switch | `test-models.yml` |
+| `OLLAMA37_YIELD_SERVICE` | unset | `test-models.yml` |
+
+For a local run, set them in `cicd/tests/.env` or on the command line:
 
 ```bash
-# Navigate to test framework
+OLLAMA37_CONTAINER=ollama37-3060 npx tsx src/cli.ts run --suite models --id TC-MODELS-003
+```
+
+## 4. A models run on a shared host
+
+![Yield GPU, run tests, restore GPU, then the agent judge](../docs/diagrams/png/cicd-models-flow.png)
+
+`test-models.yml` stops `OLLAMA37_YIELD_SERVICE` and starts `OLLAMA37_SERVICE` as user systemd units, on a host whose runner sets `OLLAMA37_SERVICE`. It then runs the tests with the simple judge and saves `results.json`. It unloads the test models, restores the yielded service if that service is enabled, and only then runs the agent judge on the saved results. The switch steps skip on a host that leaves `OLLAMA37_SERVICE` unset.
+
+The same split by hand:
+
+```bash
+JUDGE_MODE=simple npx tsx src/cli.ts run --suite models --output-dir ../results/models
+JUDGE_MODE=dual   npx tsx src/cli.ts judge ../results/models
+```
+
+**Run one job at a time on a host with several runners: its test services share port 11434.**
+
+## Quick start
+
+```bash
 cd cicd/tests
-
-# Install dependencies
-npm install
-
-# Run all tests
-npm run test
-
-# Run specific suite
-npm run test -- --suite build
-npm run test -- --suite runtime
-npm run test -- --suite inference
-
-# Also run the agent judge (default is simple judge only)
-JUDGE_MODE=dual npm run test
-
-# List available tests
-npm run list
+npm ci
+npx tsx src/cli.ts list                                   # every testcase
+npx tsx src/cli.ts run --suite models --id TC-MODELS-003  # one test, simple judge
 ```
 
-## Components
+In CI:
 
-### Test Framework (`tests/`)
-
-TypeScript-based test framework with dual-judge architecture.
-
-**Features:**
-- YAML-based test case definitions
-- Docker log collection with precise boundaries
-- Dual judge system (simple + keyless agent judge)
-- JSON and console output formats
-- Pattern matching for test validation
-
-**Test Suites:**
-| Suite | Tests | Purpose |
-|-------|-------|---------|
-| Build | 3 | Verify Docker images, toolchain, image sizes |
-| Runtime | 4 | Container startup, GPU detection, health check, /api/metrics schema |
-| Inference | 2 | Model pull + API inference smoke |
-| Models | 16 | Per-model regression — gpt-oss, ministral-3, functiongemma, gemma3 (4b/27b), gemma4 (12b/e4b/26b), qwen3.5 (9b/27b), qwen3-vl (8b/30b), deepseek-r1 (14b/32b) |
-
-Each test case lives in `cicd/tests/testcases/<suite>/TC-<SUITE>-NNN.yml`. The `intent:` block in every YAML — `user_story`, optional `acceptance`, optional `notes` — is the single design authority for that test.
-
-### Agent Judge
-
-The semantic judge is the **keyless ACP agent judge** — it spawns a Claude agent over the
-Agent Client Protocol; no container and no `ANTHROPIC_API_KEY`. Auth is the runner's
-`~/.claude` (local) or the `CLAUDE_CODE_OAUTH_TOKEN` secret (CI). Enable it with
-`JUDGE_MODE=dual`; a test passes only if both the simple judge and the agent judge pass.
-See [`infrastructure/README.md`](infrastructure/README.md).
-
-## GitHub Actions Workflows
-
-Located in `.github/workflows/`. Two families:
-
-### TC-framework workflows (correctness validation)
-
-These workflows execute the YAML test suites via the TypeScript runner with the dual-judge architecture described above.
-
-| Workflow | Description |
-|----------|-------------|
-| `test-pipeline.yml` | Full pipeline: build → runtime → inference → models |
-| `test-build.yml` | Build suite (image verification) |
-| `test-runtime.yml` | Runtime suite (container, GPU, health, metrics) |
-| `test-inference.yml` | Inference suite (pull + smoke); supports `JUDGE_MODE=dual` opt-in agent judge |
-| `test-models.yml` | Models suite (all 13 per-model regressions); supports `JUDGE_MODE=dual` opt-in agent judge |
-
-### Perf / experiment workflows (the unified test-workflow pattern)
-
-These run via the TypeScript runner's perf subcommands (`cli.ts bench-throughput`, `cli.ts test-mcp`), which capture metrics or a capability verdict and judge output through the same agent judge, emitting a JSON report plus a markdown summary. Full bullet list in [`docs/CICD.md`](docs/CICD.md) → "Perf / experiment workflows".
-
-| Workflow | Script | Description |
-|----------|--------|-------------|
-| `test-throughput.yml` | `cli.ts bench-throughput` | Per-model tok/s benchmark with simple + optional agent-judge output check |
-| `test-mcp.yml` | `cli.ts test-mcp` | Probe whether a model can drive a real MCP server's tools — server-agnostic (default `testlink-mcp`, override via `--mcp-command`/`--mcp-args`); structural check + optional agent judge; per-model verdict (PASS / FAIL / NO TOOL SUPPORT) |
-
-### Release workflow
-
-| Workflow | Description |
-|----------|-------------|
-| `release-docker.yml` | Builds and publishes Docker image on release publication |
-
-**Usage:**
-- Trigger manually via GitHub Actions "Run workflow" or `gh workflow run`
-- The TC pipeline runs all suites in sequence
-- Individual TC workflows assume the production container is already running
-- Perf workflows manage their own container lifecycle (stop production → boot test container → restart production)
-
-## Folder Structure
-
-```
-cicd/
-├── docs/
-│   ├── CICD.md              # Design philosophy
-│   └── PLAN.md              # Infrastructure planning
-├── infrastructure/
-│   └── README.md            # Agent judge auth notes (no container)
-├── scripts/                 # Perf / experiment helper scripts
-│   ├── format-results.sh
-│   └── test-mlx-smoke.sh
-├── specs/
-│   ├── build.md             # Build test specifications
-│   ├── runtime.md           # Runtime test specifications
-│   ├── inference.md         # Inference test specifications
-│   └── models.md            # Models test specifications
-├── tests/
-│   ├── src/                 # Framework source code
-│   ├── testcases/           # YAML test definitions (intent + steps)
-│   ├── package.json
-│   └── tsconfig.json
-├── results/                 # Test output (gitignored)
-└── README.md                # This file
+```bash
+gh workflow run test-models.yml -f runner_label=sm86 -f test_id=TC-MODELS-003
 ```
 
-## Related Components
+## Diagrams
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| Test subject | `docker/docker-compose.yml` | Ollama build being tested |
-| Builder image | `docker/builder/Dockerfile` | Build toolchain container |
-| Runtime image | `docker/runtime/Dockerfile` | Compiled binary container |
-| Test framework | `cicd/tests/` | Test execution and judging |
-| Test specs | `cicd/specs/` | Test case specifications |
+`docs/diagrams/render.sh` renders the PNGs from `docs/diagrams/*.svg`:
 
-## Documentation
-
-- [CICD.md](docs/CICD.md) - Design philosophy and architecture
-- [PLAN.md](docs/PLAN.md) - Infrastructure planning and checklist
+```bash
+docs/diagrams/render.sh
+```
