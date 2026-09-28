@@ -242,13 +242,12 @@ export class AgentJudge {
     });
 
     const promptData = {
-      role: `You are a test result evaluator for ${CONFIG.projectName}. Analyze the test execution data and determine if the test passed or failed.`,
+      role: `You judge ${CONFIG.projectName} test output. Read the run and judge it.`,
       rules: [
         'Check step stdout for error responses (e.g. {"error":"..."} means FAIL)',
         'Errors with exit code 0 are still FAIL',
         'For AI-generated text, accept reasonable variations',
         'Long durations within timeout are acceptable',
-        'Focus on semantic correctness, not formatting differences',
       ],
       test: {
         id: r.testCase.id,
@@ -262,12 +261,12 @@ export class AgentJudge {
       steps,
       container_logs: this.truncate(r.logs, CONFIG.judge.logsLimit),
       respond: {
-        format: 'Respond with a single JSON object and nothing else',
+        format: 'Respond with one JSON object',
         fields: {
           testId: r.testCase.id,
-          pass: 'true if test meets all criteria, false otherwise',
-          reason: 'Brief explanation of your verdict',
-          evidence: 'Required if pass is false — the exact stdout content or log line that caused failure',
+          pass: 'the output meets every criterion',
+          reason: 'why',
+          evidence: 'the failing line; required when pass is false',
         },
       },
     };
