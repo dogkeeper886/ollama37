@@ -230,7 +230,7 @@ export class AgentJudge {
 
     const steps = r.steps.map((step, j) => {
       const stepDef = r.testCase.steps[j];
-      return {
+      const base = {
         name: step.name,
         command: step.command.trim(),
         exit_code: step.exitCode,
@@ -238,6 +238,24 @@ export class AgentJudge {
         timeout_ms: stepDef?.timeout || r.testCase.timeout,
         stdout: this.truncate(step.stdout, CONFIG.judge.stdoutLimit),
         stderr: this.truncate(step.stderr, CONFIG.judge.stderrLimit),
+      };
+      // A step that ran a model sends its reply as fields. `response` and
+      // `thinking` mean different things — a thinking model can fill one and
+      // leave the other empty — and `done_reason: length` means the token
+      // budget ended the reply rather than the model losing the thread. Glued
+      // into one blob, as they were before, none of that is legible.
+      if (!step.reply) return base;
+      const { response, thinking, toolCalls, error, doneReason, evalCount } = step.reply;
+      return {
+        ...base,
+        reply: {
+          response: this.truncate(response ?? '', CONFIG.judge.stdoutLimit),
+          thinking: this.truncate(thinking ?? '', CONFIG.judge.stdoutLimit),
+          ...(toolCalls ? { tool_calls: toolCalls } : {}),
+          ...(error ? { error } : {}),
+          done_reason: doneReason ?? '',
+          eval_count: evalCount ?? 0,
+        },
       };
     });
 
@@ -248,6 +266,10 @@ export class AgentJudge {
         'Errors with exit code 0 are still FAIL',
         'For AI-generated text, accept reasonable variations',
         'Long durations within timeout are acceptable',
+        // Describes the fields; it does not say which to grade. That is the
+        // caller's criteria, because a thinking model can leave `response`
+        // empty and still have produced good output.
+        "A step's `reply` holds the model's own fields: `response` is the answer, `thinking` is its reasoning, and `done_reason: length` means the token budget ended the reply",
       ],
       test: {
         id: r.testCase.id,

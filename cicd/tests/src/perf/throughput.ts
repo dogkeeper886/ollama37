@@ -135,9 +135,13 @@ async function ensureModel(host: string, model: string): Promise<void> {
   });
 }
 
-/** Build a synthetic TestResult so the AgentJudge can grade the captured output. */
-function toTestResult(model: string, response: string, thinking: string): TestResult {
-  const output = [thinking, response].filter((s) => s.trim()).join('\n\n');
+/** Build a synthetic TestResult so the AgentJudge can grade the captured output.
+ *  The reply travels as fields, not as one joined string: 15 of 22 models in run
+ *  36428282153 returned an empty `response` with every token in `thinking`, and a
+ *  judge handed the two glued together grades reasoning text as if it were the
+ *  answer. `done_reason` goes with them so the judge can see the budget ended it. */
+function toTestResult(r: ModelResult): TestResult {
+  const model = r.model;
   return {
     testCase: {
       id: model,
@@ -152,7 +156,22 @@ function toTestResult(model: string, response: string, thinking: string): TestRe
       steps: [{ name: 'generate', command: '(captured /api/generate response)' }],
       criteria: JUDGE_CRITERIA,
     },
-    steps: [{ name: 'generate', command: '(captured /api/generate response)', stdout: output, stderr: '', exitCode: 0, duration: 0 }],
+    steps: [
+      {
+        name: 'generate',
+        command: '(captured /api/generate response)',
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+        duration: 0,
+        reply: {
+          response: r.response,
+          thinking: r.thinking,
+          doneReason: r.done_reason,
+          evalCount: r.out_tokens,
+        },
+      },
+    ],
     totalDuration: 0,
     logs: '',
     logFile: '',
@@ -186,7 +205,7 @@ export async function judgeThroughputResults(results: ModelResult[]): Promise<bo
 
   const byModel = new Map(results.map((r) => [r.model, r]));
   const verdicts = await agentJudge.judgeResults(
-    eligible.map((r) => toTestResult(r.model, r.response, r.thinking))
+    eligible.map((r) => toTestResult(r))
   );
   for (const v of verdicts) {
     const r = byModel.get(v.testId);

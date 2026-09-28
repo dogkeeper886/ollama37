@@ -101,6 +101,34 @@ export interface StepResult {
     expected: PatternMatch[];
     rejected: PatternMatch[];
   };
+  /** The model's reply, when this step produced one. Absent for a step that
+   *  ran no model, which is why every consumer must keep its stdout path. */
+  reply?: ModelReply;
+}
+
+/**
+ * An Ollama reply, as fields rather than as text.
+ *
+ * `response` and `thinking` mean different things and a thinking model can fill
+ * one while leaving the other empty, so flattening them loses which field an
+ * assertion or a judge actually read. `doneReason` is here because `length`
+ * means the reply stopped on its token budget rather than mid-thought, and a
+ * judge told only "this is the output" reads that truncation as incoherence.
+ *
+ * Every field is optional: a caller fills what its endpoint returns.
+ * `/api/generate` has no `tool_calls`, and `perf/capture.ts` throws on `error`
+ * rather than returning it, so those two arrive only from other callers.
+ */
+export interface ModelReply {
+  /** The answer field. Empty when a thinking model spent its budget reasoning. */
+  response?: string;
+  /** Reasoning, when the model emits it separately. */
+  thinking?: string;
+  toolCalls?: unknown[];
+  error?: string;
+  /** `stop`, `length`, … — `length` means the token budget ended it. */
+  doneReason?: string;
+  evalCount?: number;
 }
 
 /**
