@@ -22,10 +22,15 @@ import { TestResult, Judgment } from '../types.js';
 const execFileAsync = promisify(execFile);
 
 const PROMPT = 'Explain how a computer works to a curious 10-year-old. Be fun and use analogies.';
+// Only what a script cannot decide. simpleContentCheck already rejects empty output,
+// output with no letters or digits, and one short unit repeated to fill the reply, and
+// the agent judge only ever sees results that passed it. Asking the judge for those
+// again buys nothing and gives it extra grounds to fail on.
 const JUDGE_CRITERIA =
-  'The response must be a coherent, on-topic answer to the prompt in the right language. ' +
-  'Reject empty, garbled, repetitive nonsense, off-topic, or error-message output. ' +
-  'A wrong answer is still a pass — this measures speed, not correctness.';
+  'The reply reads as language a person can read, on the asked topic, in the asked language. ' +
+  'Garbled or off-topic output fails. ' +
+  'Generation stops at a token budget, so a reply cut off mid-sentence passes. ' +
+  'A wrong answer passes. This measures speed.';
 
 /** Prefill target for request B. Long enough that the ~0.4 s fixed per-request cost
  *  stops dominating, short enough to fit the smallest context the sweep uses (2048). */
@@ -141,7 +146,9 @@ function toTestResult(model: string, response: string, thinking: string): TestRe
       priority: 1,
       timeout: 60000,
       dependencies: [],
-      goal: 'Produce a coherent answer to the prompt',
+      // Not "produce an answer": num_predict truncates every reply, so a goal
+      // demanding a produced answer fails them all on the goal alone.
+      goal: 'Judge whether the reply is meaningful language',
       steps: [{ name: 'generate', command: '(captured /api/generate response)' }],
       criteria: JUDGE_CRITERIA,
     },
