@@ -15,7 +15,7 @@
       <text x="30" y="228">tests/scripts/</text>
       <text x="470" y="228">npx tsx scripts/validate-agent-judge.ts</text>
       <text x="30" y="268">scripts/</text>
-      <text x="470" y="268">python3 ../scripts/scrub-session-log.py scan</text>
+      <text x="470" y="268">bash ../scripts/gpu-temp-guard.sh -- &lt;command&gt;</text>
       <text x="30" y="308">results/</text>
       <text x="470" y="308">(output of run; gitignored)</text>
       <text x="30" y="348">specs/ · infrastructure/</text>

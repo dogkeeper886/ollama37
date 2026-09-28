@@ -30,7 +30,7 @@ Run these from `cicd/tests/`:
 | `tests/src/` | CLI, executor, log collector, judges | `npx tsc --noEmit` |
 | `tests/.env.example` | config for a run outside CI | `cp .env.example .env` |
 | `tests/scripts/` | runner helpers | `npx tsx scripts/validate-agent-judge.ts` |
-| `scripts/` | tools the workflows call | `python3 ../scripts/scrub-session-log.py scan <log.jsonl>` |
+| `scripts/` | tools the workflows call | `bash ../scripts/gpu-temp-guard.sh -- <command>` |
 | `results/` | run output, gitignored | written by `run`; `--output-dir <dir>` overrides |
 | `specs/` · `infrastructure/` | notes | — |
 

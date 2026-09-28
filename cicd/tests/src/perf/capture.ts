@@ -39,29 +39,41 @@ async function generate(host: string, body: Record<string, unknown>): Promise<an
   return res.json();
 }
 
+/** Release a model's VRAM. Safe when nothing is loaded; failures are ignored. */
+export async function unloadModel(host: string, model: string): Promise<void> {
+  await generate(host, { model, keep_alive: 0 }).catch(() => {});
+}
+
 export async function captureResponse(
   host: string,
   model: string,
   prompt: string,
   numPredict = 128,
-  numCtx = 2048,
-  numBatch?: number
+  numCtx?: number,
+  numBatch?: number,
+  /** Leave the model resident on return, for a caller about to make a second
+   *  request against the same weights. That caller owns the unload. Default
+   *  false, so every existing caller keeps today's load-run-unload behaviour. */
+  keepLoaded = false
 ): Promise<CaptureResult> {
   // num_batch must be set on the warmup too — Ollama reserves the compute graph
   // (the Q·Kᵀ score buffer) at load time, so the batch that decides VRAM is the
   // one on the request that first loads the model. Omit entirely when unset so
   // default behavior is unchanged.
   const batchOpt = numBatch ? { num_batch: numBatch } : {};
+  // Same for num_ctx: omitted unless asked for, so the model keeps the window it
+  // chose rather than one this harness asserted for it.
+  const ctxOpt = numCtx ? { num_ctx: numCtx } : {};
 
   // Warmup: load the model + prime caches (ignore failures).
-  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, num_ctx: numCtx, ...batchOpt } }).catch(() => {});
+  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, ...ctxOpt, ...batchOpt } }).catch(() => {});
 
   // Benchmark call (deterministic).
   const raw = await generate(host, {
     model,
     prompt,
     stream: false,
-    options: { temperature: 0, seed: 42, num_predict: numPredict, num_ctx: numCtx, ...batchOpt },
+    options: { temperature: 0, seed: 42, num_predict: numPredict, ...ctxOpt, ...batchOpt },
   });
 
   // fetch does not throw on HTTP 4xx; ollama returns {error: "..."} for an
@@ -85,7 +97,7 @@ export async function captureResponse(
   };
 
   // Unload so the next caller starts clean (ignore failures).
-  await generate(host, { model, keep_alive: 0 }).catch(() => {});
+  if (!keepLoaded) await unloadModel(host, model);
 
   return result;
 }

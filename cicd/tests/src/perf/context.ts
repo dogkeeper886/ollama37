@@ -39,10 +39,15 @@ const JUDGE_CRITERIA =
   'message. Do NOT grade technical accuracy or completeness — a vague, partial, or imperfect ' +
   'explanation still PASSES. (The launch-code line is checked separately and is not your concern.)';
 
-const FILLER_WORDS =
+// The parentheses matter: `.split(' ')` binds to the last literal alone, so without
+// them this is string + string + array, which coerces back to a string. Indexing it
+// then yields single characters, and the "filler" reads "The f l a s h determines a
+// performance." — the prompt was character soup from the first run until 2026-09-28.
+const FILLER_WORDS = (
   'flash attention kernel tensor core memory bandwidth throughput latency prefill decode softmax matmul ' +
   'cublas turing ampere kepler compute capability toolchain codegen register warp shuffle transpose ' +
-  'quantization inference context window batch sequence token cache'.split(' ');
+  'quantization inference context window batch sequence token cache'
+).split(' ');
 
 /** Deterministic long prompt: fixed filler + a needle at ~30% depth + the task. Same target ⇒ same bytes. */
 function buildPrompt(targetTokens: number): string {

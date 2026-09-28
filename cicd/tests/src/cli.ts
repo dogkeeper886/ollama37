@@ -17,7 +17,13 @@ import { SimpleJudge, AgentJudge } from './judge/index.js';
 import { JsonReporter, ConsoleReporter } from './reporter/index.js';
 import { RunConfig, TestResult, TestSummary } from './types.js';
 import { CONFIG, pickEnv } from './config.js';
-import { runThroughput } from './perf/throughput.js';
+import {
+  runThroughput,
+  judgeThroughputResults,
+  judgeModeLabel,
+  printSummary,
+  type ThroughputReport,
+} from './perf/throughput.js';
 import { runContext } from './perf/context.js';
 import { runMcpTest } from './mcp/test-mcp.js';
 import { modelBounds } from './perf/model-bounds.js';
@@ -308,7 +314,7 @@ program
   .description('Benchmark model throughput (tok/s) + validate output')
   .argument('<models...>', 'One or more model names to benchmark')
   .option('-n, --num-predict <n>', 'Max tokens to generate', '128')
-  .option('-c, --context <n>', 'Context window size', '2048')
+  .option('-c, --context <n>', 'Context window size; empty = the model\'s own window')
   .option('-b, --num-batch <n>', 'Micro-batch size (num_batch); empty = model default (512)')
   .option('--judge', 'Also run the agent judge on each response (dual mode)', false)
   .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST)
@@ -317,7 +323,7 @@ program
     const code = await runThroughput({
       models,
       numPredict: Number(options.numPredict),
-      numCtx: Number(options.context),
+      numCtx: options.context ? Number(options.context) : undefined,
       numBatch: options.numBatch ? Number(options.numBatch) : undefined,
       judge: options.judge,
       host: options.host,
@@ -327,6 +333,38 @@ program
     // in CI, and process.exit() can truncate buffered pipe output.
     await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
     process.exit(code);
+  });
+
+/**
+ * judge-throughput — judge what a bench-throughput run already captured.
+ *
+ * The benchmark holds the GPU; the judge must not. Running it here, from the saved
+ * report, lets CI give the card back before any judging starts (test-models.yml's
+ * Yield → run → Restore → judge order). Reads the full captured text, which is why
+ * the report persists it rather than only a preview.
+ */
+program
+  .command('judge-throughput <json>')
+  .description('Judge the responses a bench-throughput run saved in <json>, and rewrite it')
+  .action(async (jsonPath: string) => {
+    const report: ThroughputReport = JSON.parse(readFileSync(jsonPath, 'utf-8'));
+    process.stderr.write(`[CONFIG] Judging ${report.results.length} result(s) from ${jsonPath}\n`);
+
+    const fellBack = await judgeThroughputResults(report.results);
+    writeFileSync(jsonPath, JSON.stringify(report, null, 2));
+
+    printSummary(
+      report.git_sha,
+      report.gpu.before,
+      report.config.num_ctx,
+      judgeModeLabel(true, fellBack),
+      report.results
+    );
+    const failed = report.results.filter((r) => !r.check.overall_pass).length;
+    // Flush stdout before forcing exit — the markdown summary is piped to tee
+    // in CI, and process.exit() can truncate buffered pipe output.
+    await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+    process.exit(failed > 0 ? 1 : 0);
   });
 
 /**

@@ -4,20 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "Models to benchmark (space-separated)"
-        required: true
-        default: "gemma3:4b"
+        description: "Models to benchmark, space-separated. Any tag the server under test can load. Empty = the host's OLLAMA37_THROUGHPUT_MODELS."
+        required: false
+        default: ""
         type: string
       num_predict:
-        description: "Max tokens to generate"
+        description: "Max tokens to generate. Positive integer."
         required: false
         default: "128"
         type: string
-      context_size:
-        description: "Context window size"
-        required: false
-        default: "2048"
-        type: string
+      # context: not an input. Unset = the model's own window. To pin one, pass
+      # `cli.ts bench-throughput --context <positive integer>` directly, as
+      # test-report-sweep.yml does.
       judge_mode:
         description: "Output validation mode (simple = response non-empty; dual = also run the keyless agent judge for meaningfulness)"
         required: false
@@ -35,19 +33,11 @@ on:
           - "sm37"
           - "sm61"
           - "sm86"
-      flash_attention:
-        description: "OLLAMA_FLASH_ATTENTION for this run: 0 = off (cuBLAS, the stable baseline), 1 = on (FA)."
-        required: false
-        default: "0"
-        type: choice
-        options:
-          - "0"
-          - "1"
-      kv_cache_type:
-        description: "OLLAMA_KV_CACHE_TYPE (e.g. f16, q8_0). Empty = compose default (f16)."
-        required: false
-        default: ""
-        type: string
+      # flash_attention (0 | 1) and kv_cache_type (f16 | q8_0 | q4_0): not inputs.
+      # ml/device.go:436 takes CUDA flash attention only at compute capability 7.0, and
+      # no runner_label above is 7.0; quantized kv_cache_type needs it (fs/ggml/ggml.go:871).
+      # On a 7.0 card, set them on OLLAMA37_SERVICE via `systemctl --user set-environment`
+      # in Yield GPU and unset them in Restore GPU.
       num_batch:
         description: "num_batch (micro-batch) per request. Empty = model default (512). Lower shrinks the Q·Kᵀ compute-graph reservation at long context."
         required: false
@@ -69,15 +59,28 @@ jobs:
 
       - name: Validate inputs
         env:
-          MODELS: ${{ inputs.models }}
+          MODELS_INPUT: ${{ inputs.models }}
           NUM_BATCH: ${{ inputs.num_batch }}
         run: |
-          # Only allow model name characters: alphanumeric, colon, dot, dash, underscore, slash, space
+          # An empty input takes the host's list. The models suite subsets per host through
+          # the runner's OLLAMA37_TEST_IDS; this is throughput's equivalent, and it lives in
+          # the runner's own .env because actions/checkout@v4 cleans untracked files from the
+          # checkout every run, so a repo-local .env cannot serve CI.
+          # Resolved once here, then exported, so the benchmark and the unload step below
+          # cannot act on different lists.
+          MODELS="${MODELS_INPUT}"
+          [ -n "$MODELS" ] || MODELS="${OLLAMA37_THROUGHPUT_MODELS:-}"
+          if [ -z "$MODELS" ]; then
+            echo "::error::No models: the models input is empty and this host sets no OLLAMA37_THROUGHPUT_MODELS"
+            exit 1
+          fi
           if ! echo "$MODELS" | grep -qE '^[a-zA-Z0-9:._/ -]+$'; then
             echo "ERROR: Invalid characters in model names: $MODELS" >&2
             exit 1
           fi
-          # num_batch, if given, must be a bare positive integer (it is spliced into a shell command).
+          echo "Models: $MODELS"
+          echo "MODELS=$MODELS" >> "$GITHUB_ENV"
+          # Bare positive integer only: it is spliced into a shell command.
           if [ -n "$NUM_BATCH" ] && ! echo "$NUM_BATCH" | grep -qE '^[1-9][0-9]*$'; then
             echo "ERROR: num_batch must be a positive integer, got: $NUM_BATCH" >&2
             exit 1
@@ -91,73 +94,96 @@ jobs:
       - name: Install test runner dependencies
         run: cd cicd/tests && npm ci
 
-      # Self-contained: apply the experiment env by recreating the container from the
-      # current ollama37:latest. The always() revert step below restores the stable
-      # baseline (FA off) even if the benchmark crashes — the testbed is never left in
-      # an experimental state. Models live in the external ollama-data volume, so they
-      # survive the recreate.
-      - name: Apply experiment environment
-        env:
-          FA: ${{ inputs.flash_attention || '0' }}
-          KV: ${{ inputs.kv_cache_type }}
+      - name: Yield GPU
         run: |
-          cd docker
-          echo "Applying experiment env: OLLAMA_FLASH_ATTENTION=${FA} OLLAMA_KV_CACHE_TYPE='${KV}'"
-          OLLAMA_FLASH_ATTENTION="${FA}" OLLAMA_KV_CACHE_TYPE="${KV}" docker compose up -d --force-recreate
-          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
-          curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1 || { echo "server did not come up"; docker compose logs 2>&1 | tail -30; exit 1; }
-          docker compose logs 2>&1 | grep -i "flash_attn" | tail -2 || true
+          if [ -n "${OLLAMA37_SERVICE:-}" ]; then
+            systemctl --user stop 'ollama37-*'
+            if [ -n "${OLLAMA37_YIELD_SERVICE:-}" ]; then systemctl --user stop "$OLLAMA37_YIELD_SERVICE"; fi
+            systemctl --user start "$OLLAMA37_SERVICE"
+          else
+            cd docker && docker compose up -d --force-recreate
+          fi
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
+          echo "::error::the server under test did not come up"; exit 1
 
       - name: Run throughput benchmark
         env:
-          MODELS: ${{ inputs.models }}
+          # MODELS comes from the Validate inputs step via GITHUB_ENV — the input, or
+          # this host's OLLAMA37_THROUGHPUT_MODELS when the input was empty.
           NUM_BATCH: ${{ inputs.num_batch }}
-          # Keyless agent judge auth (dual mode). Falls back to the runner's
-          # ambient ~/.claude if the secret is unset.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          # pipefail so the runner's exit code survives the `| tee` below (else a FAIL is masked green).
-          set -o pipefail
           cd cicd/tests
-          JUDGE_FLAG=""
-          if [ "${{ inputs.judge_mode || 'simple' }}" = "dual" ]; then
-            JUDGE_FLAG="--judge"
-          fi
-          echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
           BATCH_FLAG=""
           if [ -n "$NUM_BATCH" ]; then
             BATCH_FLAG="--num-batch $NUM_BATCH"
           fi
           echo "num_batch: ${NUM_BATCH:-default(512)}"
 
-          # The subcommand prints a markdown summary to stdout (→ step summary)
-          # and writes the JSON report to --output. Exit code gates the job.
+          # No --judge here: the benchmark holds the GPU, and the agent judge runs
+          # after Restore GPU hands it back. The subcommand prints a markdown summary
+          # to stdout (→ step summary) and writes the JSON report to --output.
+          # A non-zero exit stays tolerated — the JSON is the gate, in Check results.
+          # No gpu-temp-guard: its 80°C abort killed sustained multi-model runs
+          # (35549667518, peak 81°C at case 9 of 19) while the K80 itself only slows at
+          # 88°C and shuts down at 93°C. The card's own thresholds are the protection
+          # here, as they are in test-models.yml.
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
-          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts bench-throughput $MODELS \
+          npx tsx src/cli.ts bench-throughput $MODELS \
             --num-predict "${{ inputs.num_predict || '128' }}" \
-            --context "${{ inputs.context_size || '2048' }}" \
             --output /tmp/throughput-results.json \
-            $BATCH_FLAG $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"
+            $BATCH_FLAG | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Unload models
         if: always()
-        env:
-          MODELS: ${{ inputs.models }}
         run: |
+          # MODELS from GITHUB_ENV, so this unloads what actually ran rather than what
+          # was typed into the dispatch box.
           for MODEL in $MODELS; do
             curl -s "${OLLAMA_HOST:-http://localhost:11434}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
           done
 
-      # Guaranteed revert: restore the stable baseline (FA off) whatever happened above —
-      # a benchmark crash/panic still leaves the testbed in a known-good state.
-      - name: Revert to stable baseline (FA off)
+      - name: Restore GPU
         if: always()
         run: |
-          cd docker
-          echo "Reverting testbed to stable baseline: OLLAMA_FLASH_ATTENTION=0"
-          OLLAMA_FLASH_ATTENTION=0 docker compose up -d --force-recreate
-          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null 2>&1 && break; sleep 2; done
-          echo "Baseline restored (FA off)."
+          [ -n "${OLLAMA37_SERVICE:-}" ] || exit 0
+          systemctl --user stop "$OLLAMA37_SERVICE"
+          [ -n "${OLLAMA37_YIELD_SERVICE:-}" ] || exit 0
+          systemctl --user is-enabled --quiet "$OLLAMA37_YIELD_SERVICE" || exit 0
+          systemctl --user start "$OLLAMA37_YIELD_SERVICE"
+          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
+          echo "::error::$OLLAMA37_YIELD_SERVICE did not come back"; exit 1
+
+      - name: Agent judge
+        if: ${{ !cancelled() && (inputs.judge_mode || 'simple') == 'dual' }}
+        env:
+          # simple | dual
+          JUDGE_MODE: dual
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # JUDGE_BASE_URL (cicd-1 variable) points the judge at an ollama server
+          # instead of Anthropic — a judge off the box under test. Unset it and
+          # the judge falls back to Claude on the OAuth token above; the auth
+          # token has to follow the base URL or it would break that fallback.
+          ANTHROPIC_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ vars.JUDGE_BASE_URL && 'ollama' || '' }}
+          ANTHROPIC_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+          # Claude Code's side-call model; ollama has no haiku tag to serve it.
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+        run: |
+          cd cicd/tests
+          # Rewrites the report in place with each agent verdict and appends a second
+          # table to the step summary; that one supersedes the pre-judge table above.
+          npx tsx src/cli.ts judge-throughput /tmp/throughput-results.json \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Check results
+        if: ${{ !cancelled() }}
+        run: |
+          FAILED=$(jq '[.results[] | select(.check.overall_pass == false)] | length' /tmp/throughput-results.json)
+          echo "Failed output checks: $FAILED"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED model(s) failed the output check"
+            exit 1
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@v4
