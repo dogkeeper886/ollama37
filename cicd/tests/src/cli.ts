@@ -314,7 +314,7 @@ program
   .description('Benchmark model throughput (tok/s) + validate output')
   .argument('<models...>', 'One or more model names to benchmark')
   .option('-n, --num-predict <n>', 'Max tokens to generate', '128')
-  .option('-c, --context <n>', 'Context window size', '2048')
+  .option('-c, --context <n>', 'Context window size; empty = the model\'s own window')
   .option('-b, --num-batch <n>', 'Micro-batch size (num_batch); empty = model default (512)')
   .option('--judge', 'Also run the agent judge on each response (dual mode)', false)
   .option('-H, --host <url>', 'Ollama host', process.env.OLLAMA_HOST)
@@ -323,7 +323,7 @@ program
     const code = await runThroughput({
       models,
       numPredict: Number(options.numPredict),
-      numCtx: Number(options.context),
+      numCtx: options.context ? Number(options.context) : undefined,
       numBatch: options.numBatch ? Number(options.numBatch) : undefined,
       judge: options.judge,
       host: options.host,

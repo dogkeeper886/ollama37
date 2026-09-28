@@ -24,12 +24,50 @@ const execFileAsync = promisify(execFile);
 const PROMPT = 'Explain how a computer works to a curious 10-year-old. Be fun and use analogies.';
 const JUDGE_CRITERIA =
   'The response must be a coherent, on-topic answer to the prompt in the right language. ' +
-  'Reject empty, garbled, repetitive nonsense, off-topic, or error-message output.';
+  'Reject empty, garbled, repetitive nonsense, off-topic, or error-message output. ' +
+  'A wrong answer is still a pass — this measures speed, not correctness.';
+
+/** Prefill target for request B. Long enough that the ~0.4 s fixed per-request cost
+ *  stops dominating, short enough to fit the smallest context the sweep uses (2048). */
+const PREFILL_TARGET_TOKENS = 1000;
+const PREFILL_NUM_PREDICT = 8;
+
+/** Not shared with context.ts's list: that one concatenates three string literals and
+ *  calls .split(' ') on the last, so it is a string, not an array — indexing it yields
+ *  single characters. Kept local and correct here rather than inheriting that. */
+const FILLER_WORDS = (
+  'flash attention kernel tensor core memory bandwidth throughput latency prefill decode softmax matmul ' +
+  'cublas turing ampere kepler compute capability toolchain codegen register warp shuffle transpose ' +
+  'quantization inference context window batch sequence token cache'
+).split(' ');
+
+/** Deterministic filler, same shape as context.ts's long prompt minus the needle:
+ *  same target ⇒ same bytes, so prefill is comparable across models and runs. */
+function buildPrefillPrompt(targetTokens: number): string {
+  const targetWords = Math.max(64, Math.floor(targetTokens * 0.8)); // ~0.8 words/token for English filler
+  const parts: string[] = [];
+  let i = 0;
+  let words = 0;
+  while (words < targetWords) {
+    const chunk: string[] = [];
+    for (let k = 0; k < 9; k++) {
+      chunk.push(FILLER_WORDS[(i + 7 * k) % FILLER_WORDS.length]);
+      i += 63;
+    }
+    parts.push('The ' + chunk.join(' ') + ' determines ' + FILLER_WORDS[i % FILLER_WORDS.length] + ' performance.');
+    i += 1;
+    words += 11;
+  }
+  return parts.join(' ');
+}
+
+const PREFILL_PROMPT = buildPrefillPrompt(PREFILL_TARGET_TOKENS);
 
 export interface ThroughputOptions {
   models: string[];
   numPredict: number;
-  numCtx: number;
+  /** Undefined = let the model keep its own context window. */
+  numCtx?: number;
   /** Micro-batch size (num_batch). Undefined = model/server default (512). */
   numBatch?: number;
   judge: boolean;
@@ -46,6 +84,11 @@ export interface ModelResult {
   gpu_offload_pct: number;
   vram_used_mib: number[];
   done_reason: string;
+  /** Two requests per model, because one prompt cannot measure both halves:
+   *  at 31 tokens the fixed ~0.4 s per-request cost swamps prefill, and decode
+   *  degrades with context depth. `prompt_eval_tps`/`in_tokens` come from the
+   *  ~1k-token filler request; `eval_tps`/`out_tokens`, the response and the
+   *  verdict all come from the short PROMPT request. */
   response_preview: string;
   /** Full captured text. `judge-throughput` runs in a later step, in a new process,
    *  and has no other source for it — judging the preview would grade 120 characters
@@ -59,7 +102,7 @@ export interface ModelResult {
 export interface ThroughputReport {
   git_sha: string;
   timestamp: string;
-  config: { num_predict: number; num_ctx: number; num_batch: number | null };
+  config: { num_predict: number; num_ctx: number | null; num_batch: number | null };
   gpu: { before: GpuRow[]; after: GpuRow[] };
   results: ModelResult[];
 }
@@ -177,11 +220,26 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     const loaded = await gpuInfo();
     const simple = simpleContentCheck(cap.response, cap.thinking);
 
+    // Request B: prefill only. Measured on host A, gemma3:4b reads 128.9 tok/s at 107
+    // input tokens but 236.2 at 1,579 — the ~0.4 s fixed per-request cost swamps the
+    // compute term at the short prompt, so prefill gets its own long, deterministic
+    // request. num_predict is 8 because only prompt_eval is read from it. A failure
+    // here costs the prefill figure, not the model's verdict.
+    let prefillTps = 0;
+    let prefillTokens = 0;
+    try {
+      const pre = await captureResponse(host, model, PREFILL_PROMPT, PREFILL_NUM_PREDICT, numCtx, numBatch);
+      prefillTps = pre.promptEvalTps;
+      prefillTokens = pre.inTokens;
+    } catch (e) {
+      process.stderr.write(`  WARN: prefill request failed: ${e instanceof Error ? e.message : e}\n`);
+    }
+
     results.push({
       model,
-      in_tokens: cap.inTokens,
+      in_tokens: prefillTokens,
       out_tokens: cap.outTokens,
-      prompt_eval_tps: cap.promptEvalTps,
+      prompt_eval_tps: prefillTps,
       eval_tps: cap.evalTps,
       gpu_offload_pct: offload,
       vram_used_mib: loaded.map((g) => g.usedMib),
@@ -191,7 +249,9 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
       thinking: cap.thinking,
       check: { overall_pass: simple.pass, simple, agent: null },
     });
-    process.stderr.write(`  ${cap.outTokens} tok @ ${cap.evalTps} tok/s · offload ${offload}% · simple=${simple.pass}\n`);
+    process.stderr.write(
+      `  prefill ${prefillTps} tok/s @ ${prefillTokens} tok · decode ${cap.evalTps} tok/s @ ${cap.outTokens} tok · offload ${offload}% · simple=${simple.pass}\n`
+    );
   }
 
   const judgeFellBack = judge ? await judgeThroughputResults(results) : false;
@@ -204,7 +264,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     const report: ThroughputReport = {
       git_sha: sha,
       timestamp: new Date().toISOString(),
-      config: { num_predict: numPredict, num_ctx: numCtx, num_batch: numBatch ?? null },
+      config: { num_predict: numPredict, num_ctx: numCtx ?? null, num_batch: numBatch ?? null },
       gpu: { before: gpuBefore, after: gpuAfter },
       results,
     };
@@ -224,19 +284,21 @@ export function judgeModeLabel(judge: boolean, fellBack: boolean): string {
   return fellBack ? 'dual → simple (judge unavailable)' : 'dual';
 }
 
-export function printSummary(sha: string, gpu: GpuRow[], numCtx: number, mode: string, results: ModelResult[]): void {
+export function printSummary(sha: string, gpu: GpuRow[], numCtx: number | null | undefined, mode: string, results: ModelResult[]): void {
   const gpuName = gpu[0]?.name ?? 'unknown';
   const gpuTotal = gpu[0]?.totalMib ?? '?';
   const out: string[] = [];
   out.push('## Throughput Benchmark');
   out.push('');
-  out.push(`**Commit:** \`${sha}\` | **GPU:** ${gpu.length}x ${gpuName} | **VRAM:** ${gpuTotal} MiB each | **Context:** ${numCtx} | **Judge:** ${mode}`);
+  out.push(`**Commit:** \`${sha}\` | **GPU:** ${gpu.length}x ${gpuName} | **VRAM:** ${gpuTotal} MiB each | **Context:** ${numCtx ?? 'model default'} | **Judge:** ${mode}`);
   out.push('');
-  out.push('| Model | Check | IN tok | OUT tok | Prompt tok/s | Gen tok/s | GPU% | VRAM used (MiB) |');
+  // Prefill and decode come from different requests (see ModelResult), so each
+  // number sits beside the token count it was measured over.
+  out.push('| Model | Check | Prefill tok/s | in tok | Decode tok/s | out tok | GPU% | VRAM used (MiB) |');
   out.push('|---|---|---|---|---|---|---|---|');
   for (const r of results) {
     const check = r.check.overall_pass ? 'PASS' : 'FAIL';
-    out.push(`| ${r.model} | ${check} | ${r.in_tokens} | ${r.out_tokens} | ${r.prompt_eval_tps} | ${r.eval_tps} | ${r.gpu_offload_pct}% | ${r.vram_used_mib.join(' / ') || 'n/a'} |`);
+    out.push(`| ${r.model} | ${check} | ${r.prompt_eval_tps} | ${r.in_tokens} | ${r.eval_tps} | ${r.out_tokens} | ${r.gpu_offload_pct}% | ${r.vram_used_mib.join(' / ') || 'n/a'} |`);
   }
   const failures = results.filter((r) => !r.check.overall_pass);
   if (failures.length > 0) {

@@ -4,20 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       models:
-        description: "Models to benchmark, space-separated. Any tag the server under test can load."
-        required: true
-        default: "gemma3:4b"
+        description: "Models to benchmark, space-separated. Any tag the server under test can load. Empty = the host's OLLAMA37_THROUGHPUT_MODELS."
+        required: false
+        default: ""
         type: string
       num_predict:
         description: "Max tokens to generate. Positive integer."
         required: false
         default: "128"
         type: string
-      context_size:
-        description: "Context window size in tokens. Positive integer, up to the model's trained window."
-        required: false
-        default: "2048"
-        type: string
+      # No context_size input: pinning one asserted a window the model may not want.
+      # Context depth costs speed through occupancy, not allocation, so leaving it to
+      # the model changes VRAM, not the decode signal. `cli.ts bench-throughput
+      # --context <n>` still overrides it by hand (test-report-sweep.yml relies on that).
       judge_mode:
         description: "Output validation mode (simple = response non-empty; dual = also run the keyless agent judge for meaningfulness)"
         required: false
@@ -64,14 +63,28 @@ jobs:
 
       - name: Validate inputs
         env:
-          MODELS: ${{ inputs.models }}
+          MODELS_INPUT: ${{ inputs.models }}
           NUM_BATCH: ${{ inputs.num_batch }}
         run: |
+          # An empty input takes the host's list. The models suite subsets per host through
+          # the runner's OLLAMA37_TEST_IDS; this is throughput's equivalent, and it lives in
+          # the runner's own .env because actions/checkout@v4 cleans untracked files from the
+          # checkout every run, so a repo-local .env cannot serve CI.
+          # Resolved once here, then exported, so the benchmark and the unload step below
+          # cannot act on different lists.
+          MODELS="${MODELS_INPUT}"
+          [ -n "$MODELS" ] || MODELS="${OLLAMA37_THROUGHPUT_MODELS:-}"
+          if [ -z "$MODELS" ]; then
+            echo "::error::No models: the models input is empty and this host sets no OLLAMA37_THROUGHPUT_MODELS"
+            exit 1
+          fi
           # Only allow model name characters: alphanumeric, colon, dot, dash, underscore, slash, space
           if ! echo "$MODELS" | grep -qE '^[a-zA-Z0-9:._/ -]+$'; then
             echo "ERROR: Invalid characters in model names: $MODELS" >&2
             exit 1
           fi
+          echo "Models: $MODELS"
+          echo "MODELS=$MODELS" >> "$GITHUB_ENV"
           # num_batch, if given, must be a bare positive integer (it is spliced into a shell command).
           if [ -n "$NUM_BATCH" ] && ! echo "$NUM_BATCH" | grep -qE '^[1-9][0-9]*$'; then
             echo "ERROR: num_batch must be a positive integer, got: $NUM_BATCH" >&2
@@ -101,7 +114,8 @@ jobs:
 
       - name: Run throughput benchmark
         env:
-          MODELS: ${{ inputs.models }}
+          # MODELS comes from the Validate inputs step via GITHUB_ENV — the input, or
+          # this host's OLLAMA37_THROUGHPUT_MODELS when the input was empty.
           NUM_BATCH: ${{ inputs.num_batch }}
         run: |
           cd cicd/tests
@@ -122,15 +136,14 @@ jobs:
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
           npx tsx src/cli.ts bench-throughput $MODELS \
             --num-predict "${{ inputs.num_predict || '128' }}" \
-            --context "${{ inputs.context_size || '2048' }}" \
             --output /tmp/throughput-results.json \
             $BATCH_FLAG | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Unload models
         if: always()
-        env:
-          MODELS: ${{ inputs.models }}
         run: |
+          # MODELS from GITHUB_ENV, so this unloads what actually ran rather than what
+          # was typed into the dispatch box.
           for MODEL in $MODELS; do
             curl -s "${OLLAMA_HOST:-http://localhost:11434}/api/generate" -d "{\"model\":\"${MODEL}\",\"keep_alive\":0}" || true
           done

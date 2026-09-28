@@ -44,7 +44,7 @@ export async function captureResponse(
   model: string,
   prompt: string,
   numPredict = 128,
-  numCtx = 2048,
+  numCtx?: number,
   numBatch?: number
 ): Promise<CaptureResult> {
   // num_batch must be set on the warmup too — Ollama reserves the compute graph
@@ -52,16 +52,19 @@ export async function captureResponse(
   // one on the request that first loads the model. Omit entirely when unset so
   // default behavior is unchanged.
   const batchOpt = numBatch ? { num_batch: numBatch } : {};
+  // Same for num_ctx: omitted unless asked for, so the model keeps the window it
+  // chose rather than one this harness asserted for it.
+  const ctxOpt = numCtx ? { num_ctx: numCtx } : {};
 
   // Warmup: load the model + prime caches (ignore failures).
-  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, num_ctx: numCtx, ...batchOpt } }).catch(() => {});
+  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, ...ctxOpt, ...batchOpt } }).catch(() => {});
 
   // Benchmark call (deterministic).
   const raw = await generate(host, {
     model,
     prompt,
     stream: false,
-    options: { temperature: 0, seed: 42, num_predict: numPredict, num_ctx: numCtx, ...batchOpt },
+    options: { temperature: 0, seed: 42, num_predict: numPredict, ...ctxOpt, ...batchOpt },
   });
 
   // fetch does not throw on HTTP 4xx; ollama returns {error: "..."} for an
