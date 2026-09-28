@@ -48,7 +48,7 @@ export async function captureResponse(
   host: string,
   model: string,
   prompt: string,
-  numPredict = 128,
+  numPredict = 400,
   numCtx?: number,
   numBatch?: number,
   /** Leave the model resident on return, for a caller about to make a second
