@@ -13,10 +13,9 @@ on:
         required: false
         default: "128"
         type: string
-      # No context_size input: pinning one asserted a window the model may not want.
-      # Context depth costs speed through occupancy, not allocation, so leaving it to
-      # the model changes VRAM, not the decode signal. `cli.ts bench-throughput
-      # --context <n>` still overrides it by hand (test-report-sweep.yml relies on that).
+      # context: not an input. Unset = the model's own window. To pin one, pass
+      # `cli.ts bench-throughput --context <positive integer>` directly, as
+      # test-report-sweep.yml does.
       judge_mode:
         description: "Output validation mode (simple = response non-empty; dual = also run the keyless agent judge for meaningfulness)"
         required: false
@@ -34,14 +33,11 @@ on:
           - "sm37"
           - "sm61"
           - "sm86"
-      # flash_attention (0 | 1) and kv_cache_type (f16 | q8_0 | q4_0) are not inputs.
-      # ml/device.go:436 takes CUDA flash attention only at compute capability exactly
-      # 7.0, and no runner_label above is 7.0: sm37 is 3.7, sm61 is 6.1, sm86 is 8.6.
-      # A quantized kv_cache_type needs flash attention (fs/ggml/ggml.go:871), so it
-      # cannot load either. To take both again on a 7.0 card, add the inputs back and
-      # set them on OLLAMA37_SERVICE rather than on compose:
-      #   Yield GPU:   systemctl --user set-environment OLLAMA_FLASH_ATTENTION=<0|1>
-      #   Restore GPU: systemctl --user unset-environment OLLAMA_FLASH_ATTENTION
+      # flash_attention (0 | 1) and kv_cache_type (f16 | q8_0 | q4_0): not inputs.
+      # ml/device.go:436 takes CUDA flash attention only at compute capability 7.0, and
+      # no runner_label above is 7.0; quantized kv_cache_type needs it (fs/ggml/ggml.go:871).
+      # On a 7.0 card, set them on OLLAMA37_SERVICE via `systemctl --user set-environment`
+      # in Yield GPU and unset them in Restore GPU.
       num_batch:
         description: "num_batch (micro-batch) per request. Empty = model default (512). Lower shrinks the Q·Kᵀ compute-graph reservation at long context."
         required: false
@@ -78,14 +74,13 @@ jobs:
             echo "::error::No models: the models input is empty and this host sets no OLLAMA37_THROUGHPUT_MODELS"
             exit 1
           fi
-          # Only allow model name characters: alphanumeric, colon, dot, dash, underscore, slash, space
           if ! echo "$MODELS" | grep -qE '^[a-zA-Z0-9:._/ -]+$'; then
             echo "ERROR: Invalid characters in model names: $MODELS" >&2
             exit 1
           fi
           echo "Models: $MODELS"
           echo "MODELS=$MODELS" >> "$GITHUB_ENV"
-          # num_batch, if given, must be a bare positive integer (it is spliced into a shell command).
+          # Bare positive integer only: it is spliced into a shell command.
           if [ -n "$NUM_BATCH" ] && ! echo "$NUM_BATCH" | grep -qE '^[1-9][0-9]*$'; then
             echo "ERROR: num_batch must be a positive integer, got: $NUM_BATCH" >&2
             exit 1
@@ -108,7 +103,6 @@ jobs:
           else
             cd docker && docker compose up -d --force-recreate
           fi
-          # integer >= 1 tries, 2 s apart
           for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
           echo "::error::the server under test did not come up"; exit 1
 
@@ -156,7 +150,6 @@ jobs:
           [ -n "${OLLAMA37_YIELD_SERVICE:-}" ] || exit 0
           systemctl --user is-enabled --quiet "$OLLAMA37_YIELD_SERVICE" || exit 0
           systemctl --user start "$OLLAMA37_YIELD_SERVICE"
-          # integer >= 1 tries, 2 s apart
           for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
           echo "::error::$OLLAMA37_YIELD_SERVICE did not come back"; exit 1
 
@@ -179,7 +172,6 @@ jobs:
           cd cicd/tests
           # Rewrites the report in place with each agent verdict and appends a second
           # table to the step summary; that one supersedes the pre-judge table above.
-          # the Run throughput benchmark step's --output
           npx tsx src/cli.ts judge-throughput /tmp/throughput-results.json \
             | tee -a "$GITHUB_STEP_SUMMARY" || true
 
