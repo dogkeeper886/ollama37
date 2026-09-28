@@ -13,7 +13,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { writeFileSync } from 'node:fs';
-import { captureResponse } from './capture.js';
+import { captureResponse, unloadModel } from './capture.js';
 import { gpuInfo, gpuOffload, type GpuRow } from './gpu.js';
 import { simpleContentCheck } from './content-check.js';
 import { AgentJudge } from '../judge/index.js';
@@ -202,11 +202,16 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     process.stderr.write(`--- ${model} ---\n`);
     await ensureModel(host, model);
 
+    // One load serves both requests: prefill and decode want the same resident
+    // weights, and a second load costs minutes on a 20 GB model served over NFS.
+    // A keeps the model up, B unloads it; both failure paths release it too, so a
+    // model is loaded once and unloaded once however this loop exits.
     let cap;
     try {
-      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch);
+      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true);
     } catch (e) {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
+      await unloadModel(host, model);
       results.push({
         model, in_tokens: 0, out_tokens: 0, prompt_eval_tps: 0, eval_tps: 0,
         gpu_offload_pct: 0, vram_used_mib: [], done_reason: 'error', response_preview: '',
@@ -223,8 +228,10 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     // Request B: prefill only. Measured on host A, gemma3:4b reads 128.9 tok/s at 107
     // input tokens but 236.2 at 1,579 — the ~0.4 s fixed per-request cost swamps the
     // compute term at the short prompt, so prefill gets its own long, deterministic
-    // request. num_predict is 8 because only prompt_eval is read from it. A failure
-    // here costs the prefill figure, not the model's verdict.
+    // request. num_predict is 8 because only prompt_eval is read from it. Its warmup
+    // is a no-op against the model A left resident. A failure here costs the prefill
+    // figure, not the model's verdict — but it throws before its own unload, so
+    // release the weights explicitly.
     let prefillTps = 0;
     let prefillTokens = 0;
     try {
@@ -233,6 +240,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
       prefillTokens = pre.inTokens;
     } catch (e) {
       process.stderr.write(`  WARN: prefill request failed: ${e instanceof Error ? e.message : e}\n`);
+      await unloadModel(host, model);
     }
 
     results.push({

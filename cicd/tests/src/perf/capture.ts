@@ -39,13 +39,22 @@ async function generate(host: string, body: Record<string, unknown>): Promise<an
   return res.json();
 }
 
+/** Release a model's VRAM. Safe when nothing is loaded; failures are ignored. */
+export async function unloadModel(host: string, model: string): Promise<void> {
+  await generate(host, { model, keep_alive: 0 }).catch(() => {});
+}
+
 export async function captureResponse(
   host: string,
   model: string,
   prompt: string,
   numPredict = 128,
   numCtx?: number,
-  numBatch?: number
+  numBatch?: number,
+  /** Leave the model resident on return, for a caller about to make a second
+   *  request against the same weights. That caller owns the unload. Default
+   *  false, so every existing caller keeps today's load-run-unload behaviour. */
+  keepLoaded = false
 ): Promise<CaptureResult> {
   // num_batch must be set on the warmup too — Ollama reserves the compute graph
   // (the Q·Kᵀ score buffer) at load time, so the batch that decides VRAM is the
@@ -88,7 +97,7 @@ export async function captureResponse(
   };
 
   // Unload so the next caller starts clean (ignore failures).
-  await generate(host, { model, keep_alive: 0 }).catch(() => {});
+  if (!keepLoaded) await unloadModel(host, model);
 
   return result;
 }
