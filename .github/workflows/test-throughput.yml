@@ -103,32 +103,28 @@ jobs:
         env:
           MODELS: ${{ inputs.models }}
           NUM_BATCH: ${{ inputs.num_batch }}
-          # Keyless agent judge auth (dual mode). Falls back to the runner's
-          # ambient ~/.claude if the secret is unset.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          # pipefail so the runner's exit code survives the `| tee` below (else a FAIL is masked green).
-          set -o pipefail
           cd cicd/tests
-          JUDGE_FLAG=""
-          if [ "${{ inputs.judge_mode || 'simple' }}" = "dual" ]; then
-            JUDGE_FLAG="--judge"
-          fi
-          echo "Judge mode: ${{ inputs.judge_mode || 'simple' }}"
           BATCH_FLAG=""
           if [ -n "$NUM_BATCH" ]; then
             BATCH_FLAG="--num-batch $NUM_BATCH"
           fi
           echo "num_batch: ${NUM_BATCH:-default(512)}"
 
-          # The subcommand prints a markdown summary to stdout (→ step summary)
-          # and writes the JSON report to --output. Exit code gates the job.
+          # No --judge here: the benchmark holds the GPU, and the agent judge runs
+          # after Restore GPU hands it back. The subcommand prints a markdown summary
+          # to stdout (→ step summary) and writes the JSON report to --output.
+          # A non-zero exit stays tolerated — the JSON is the gate, in Check results.
+          # No gpu-temp-guard: its 80°C abort killed sustained multi-model runs
+          # (35549667518, peak 81°C at case 9 of 19) while the K80 itself only slows at
+          # 88°C and shuts down at 93°C. The card's own thresholds are the protection
+          # here, as they are in test-models.yml.
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
-          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts bench-throughput $MODELS \
+          npx tsx src/cli.ts bench-throughput $MODELS \
             --num-predict "${{ inputs.num_predict || '128' }}" \
             --context "${{ inputs.context_size || '2048' }}" \
             --output /tmp/throughput-results.json \
-            $BATCH_FLAG $JUDGE_FLAG | tee -a "$GITHUB_STEP_SUMMARY"
+            $BATCH_FLAG | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Unload models
         if: always()
@@ -150,6 +146,39 @@ jobs:
           # integer >= 1 tries, 2 s apart
           for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
           echo "::error::$OLLAMA37_YIELD_SERVICE did not come back"; exit 1
+
+      - name: Agent judge
+        if: ${{ !cancelled() && (inputs.judge_mode || 'simple') == 'dual' }}
+        env:
+          # simple | dual
+          JUDGE_MODE: dual
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # JUDGE_BASE_URL (cicd-1 variable) points the judge at an ollama server
+          # instead of Anthropic — a judge off the box under test. Unset it and
+          # the judge falls back to Claude on the OAuth token above; the auth
+          # token has to follow the base URL or it would break that fallback.
+          ANTHROPIC_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ vars.JUDGE_BASE_URL && 'ollama' || '' }}
+          ANTHROPIC_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+          # Claude Code's side-call model; ollama has no haiku tag to serve it.
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+        run: |
+          cd cicd/tests
+          # Rewrites the report in place with each agent verdict and appends a second
+          # table to the step summary; that one supersedes the pre-judge table above.
+          # the Run throughput benchmark step's --output
+          npx tsx src/cli.ts judge-throughput /tmp/throughput-results.json \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Check results
+        if: ${{ !cancelled() }}
+        run: |
+          FAILED=$(jq '[.results[] | select(.check.overall_pass == false)] | length' /tmp/throughput-results.json)
+          echo "Failed output checks: $FAILED"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED model(s) failed the output check"
+            exit 1
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@v4
