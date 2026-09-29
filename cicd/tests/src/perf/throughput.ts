@@ -13,6 +13,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { captureResponse, unloadModel } from './capture.js';
 import { gpuInfo, gpuOffload, type GpuRow } from './gpu.js';
 import { simpleContentCheck } from './content-check.js';
@@ -21,52 +22,55 @@ import { TestResult, Judgment } from '../types.js';
 
 const execFileAsync = promisify(execFile);
 
-const PROMPT = 'Explain how a computer works to a curious 10-year-old. Be fun and use analogies.';
+/**
+ * One request measures both numbers: the speech is the prefill (~900 tokens of real
+ * prose), the edit is the decode. An open-ended question was the wrong task — asked to
+ * explain something to a 10-year-old, a thinking model plans tone and analogies and
+ * spends the whole budget reasoning, which left 12 of 22 models with an empty
+ * `response` in run 36445237157. Editing a text given in the prompt leaves nothing to
+ * plan.
+ *
+ * Lincoln's Second Inaugural, 1865: public domain, and about 700 words. Churchill's
+ * "we shall fight on the beaches" was the first choice, but his estate holds literary
+ * copyright until 2035 and this repository is public.
+ *
+ * Transcribed here rather than fetched, so the prompt is deterministic and the sweep
+ * needs no network. Worth checking against an authoritative text once.
+ */
+const SPEECH = `Fellow countrymen: At this second appearing to take the oath of the presidential office, there is less occasion for an extended address than there was at the first. Then a statement, somewhat in detail, of a course to be pursued, seemed fitting and proper. Now, at the expiration of four years, during which public declarations have been constantly called forth on every point and phase of the great contest which still absorbs the attention and engrosses the energies of the nation, little that is new could be presented.
+
+The progress of our arms, upon which all else chiefly depends, is as well known to the public as to myself; and it is, I trust, reasonably satisfactory and encouraging to all. With high hope for the future, no prediction in regard to it is ventured.
+
+On the occasion corresponding to this four years ago, all thoughts were anxiously directed to an impending civil war. All dreaded it, all sought to avert it. While the inaugural address was being delivered from this place, devoted altogether to saving the Union without war, insurgent agents were in the city seeking to destroy it without war, seeking to dissolve the Union and divide effects by negotiation. Both parties deprecated war, but one of them would make war rather than let the nation survive, and the other would accept war rather than let it perish, and the war came.
+
+One eighth of the whole population were colored slaves, not distributed generally over the Union, but localized in the southern part of it. These slaves constituted a peculiar and powerful interest. All knew that this interest was somehow the cause of the war. To strengthen, perpetuate, and extend this interest was the object for which the insurgents would rend the Union even by war, while the government claimed no right to do more than to restrict the territorial enlargement of it.
+
+Neither party expected for the war the magnitude or the duration which it has already attained. Neither anticipated that the cause of the conflict might cease with, or even before, the conflict itself should cease. Each looked for an easier triumph, and a result less fundamental and astounding. Both read the same Bible and pray to the same God, and each invokes His aid against the other. It may seem strange that any men should dare to ask a just God's assistance in wringing their bread from the sweat of other men's faces, but let us judge not, that we be not judged. The prayers of both could not be answered. That of neither has been answered fully. The Almighty has His own purposes. "Woe unto the world because of offences; for it must needs be that offences come, but woe to that man by whom the offence cometh." If we shall suppose that American slavery is one of those offences which, in the providence of God, must needs come, but which, having continued through His appointed time, He now wills to remove, and that He gives to both North and South this terrible war as the woe due to those by whom the offence came, shall we discern therein any departure from those divine attributes which the believers in a living God always ascribe to Him?
+
+Fondly do we hope, fervently do we pray, that this mighty scourge of war may speedily pass away. Yet, if God wills that it continue until all the wealth piled by the bondsman's two hundred and fifty years of unrequited toil shall be sunk, and until every drop of blood drawn with the lash shall be paid by another drawn with the sword, as was said three thousand years ago, so still it must be said "the judgments of the Lord are true and righteous altogether."
+
+With malice toward none, with charity for all, with firmness in the right as God gives us to see the right, let us strive on to finish the work we are in, to bind up the nation's wounds, to care for him who shall have borne the battle and for his widow and his orphan, to do all which may achieve and cherish a just and lasting peace among ourselves and with all nations.`;
+
+/**
+ * The task. Drawn from the reviewing-phrasing discipline: cut verbal tics and filler,
+ * put each sentence's main character first, make negative sentences affirmative, and
+ * replace a phrase with the one word that means it.
+ */
+const PROMPT = `${SPEECH}
+
+Rewrite the speech above in plainer English. Cut every verbal tic and filler word. Put each sentence's main character first. Turn each negative sentence affirmative. Replace any phrase that one exact word can replace. Output only the rewritten speech.`;
 // Only what a script cannot decide. simpleContentCheck already rejects empty output,
 // output with no letters or digits, and one short unit repeated to fill the reply, and
 // the agent judge only ever sees results that passed it. Asking the judge for those
 // again buys nothing and gives it extra grounds to fail on.
 const JUDGE_CRITERIA =
-  'The reply reads as language a person can read, on the asked topic, in the asked language. ' +
-  'Garbled or off-topic output fails. ' +
-  'Generation stops at a token budget, so a reply cut off mid-sentence passes. ' +
-  'A wrong answer passes. This measures speed.';
+  'Text no person could read as language fails: word salad, or a fragment that is ' +
+  'not a reply. Judge the text itself -- the prompt is not in this payload. ' +
+  'Judge `response`. When `response` is empty, judge `thinking` instead: a model that ' +
+  'spent the budget reasoning still produced language. ' +
+  'Generation stops at a token budget, so a truncated reply passes. ' +
+  'A wrong answer passes. The benchmark measures speed.';
 
-/** Prefill target for request B. Long enough that the ~0.4 s fixed per-request cost
- *  stops dominating, short enough to fit the smallest context the sweep uses (2048). */
-const PREFILL_TARGET_TOKENS = 1000;
-const PREFILL_NUM_PREDICT = 8;
-
-/** Not shared with context.ts's list: that one concatenates three string literals and
- *  calls .split(' ') on the last, so it is a string, not an array — indexing it yields
- *  single characters. Kept local and correct here rather than inheriting that. */
-const FILLER_WORDS = (
-  'flash attention kernel tensor core memory bandwidth throughput latency prefill decode softmax matmul ' +
-  'cublas turing ampere kepler compute capability toolchain codegen register warp shuffle transpose ' +
-  'quantization inference context window batch sequence token cache'
-).split(' ');
-
-/** Deterministic filler, same shape as context.ts's long prompt minus the needle:
- *  same target ⇒ same bytes, so prefill is comparable across models and runs. */
-function buildPrefillPrompt(targetTokens: number): string {
-  const targetWords = Math.max(64, Math.floor(targetTokens * 0.8)); // ~0.8 words/token for English filler
-  const parts: string[] = [];
-  let i = 0;
-  let words = 0;
-  while (words < targetWords) {
-    const chunk: string[] = [];
-    for (let k = 0; k < 9; k++) {
-      chunk.push(FILLER_WORDS[(i + 7 * k) % FILLER_WORDS.length]);
-      i += 63;
-    }
-    parts.push('The ' + chunk.join(' ') + ' determines ' + FILLER_WORDS[i % FILLER_WORDS.length] + ' performance.');
-    i += 1;
-    words += 11;
-  }
-  return parts.join(' ');
-}
-
-const PREFILL_PROMPT = buildPrefillPrompt(PREFILL_TARGET_TOKENS);
 
 export interface ThroughputOptions {
   models: string[];
@@ -89,17 +93,20 @@ export interface ModelResult {
   gpu_offload_pct: number;
   vram_used_mib: number[];
   done_reason: string;
-  /** Two requests per model, because one prompt cannot measure both halves:
-   *  at 31 tokens the fixed ~0.4 s per-request cost swamps prefill, and decode
-   *  degrades with context depth. `prompt_eval_tps`/`in_tokens` come from the
-   *  ~1k-token filler request; `eval_tps`/`out_tokens`, the response and the
-   *  verdict all come from the short PROMPT request. */
+  /** One request per model. The prompt is a ~950-token speech, long enough that
+   *  prefill escapes the fixed per-request cost, so `prompt_eval_tps`/`in_tokens`
+   *  and `eval_tps`/`out_tokens` all come from the same call -- as do the response
+   *  and the verdict. Decode is therefore measured at that depth, not at a shallow
+   *  context. */
   response_preview: string;
   /** Full captured text. `judge-throughput` runs in a later step, in a new process,
    *  and has no other source for it — judging the preview would grade 120 characters
    *  as if they were the whole answer. */
   response: string;
   thinking: string;
+  /** The prompt filled --context, so prefill was timed over a prompt the caller did
+   *  not send. Fails the row, as it does in context.ts. */
+  truncated: boolean;
   check: { overall_pass: boolean; simple: ReturnType<typeof simpleContentCheck>; agent: Judgment | null };
 }
 
@@ -107,7 +114,17 @@ export interface ModelResult {
 export interface ThroughputReport {
   git_sha: string;
   timestamp: string;
-  config: { num_predict: number; num_ctx: number | null; num_batch: number | null };
+  /** `prompt` identifies the workload, not just its size. Decode moved from a
+   *  31-token question to a ~870-token speech and num_predict from 400 to 100 in
+   *  one commit; without this, two reports measuring different work are
+   *  indistinguishable in their own metadata, and docs/reports/README.md tells the
+   *  reader to diff snapshots to see what a build changed. */
+  config: {
+    num_predict: number;
+    num_ctx: number | null;
+    num_batch: number | null;
+    prompt: { chars: number; sha256: string };
+  };
   gpu: { before: GpuRow[]; after: GpuRow[] };
   results: ModelResult[];
 }
@@ -135,6 +152,17 @@ async function ensureModel(host: string, model: string): Promise<void> {
   });
 }
 
+/**
+ * Strip control markers models leak into their own text. Seen in run 36445237157:
+ * gemma4:31b opened `thinking` with `<|channel>thought`, deepseek-r1:8b embedded
+ * `<think>`. A judge told to accept only language a person can read may fail those
+ * as garbled, which would trade one wrong verdict for another. Stripped here in the
+ * caller rather than in a parser: the fork's job is running models on the K80.
+ */
+function stripMarkers(s: string | undefined): string {
+  return (s ?? '').replace(/<\|[^|>]*\|?>|<\/?think>/g, '').trim();
+}
+
 /** Build a synthetic TestResult so the AgentJudge can grade the captured output.
  *  The reply travels as fields, not as one joined string: 15 of 22 models in run
  *  36428282153 returned an empty `response` with every token in `thinking`, and a
@@ -150,8 +178,11 @@ function toTestResult(r: ModelResult): TestResult {
       priority: 1,
       timeout: 60000,
       dependencies: [],
-      // Not "produce an answer": num_predict truncates every reply, so a goal
-      // demanding a produced answer fails them all on the goal alone.
+      // The goal states the judgement; the criteria state only the tolerances, so
+      // neither repeats the other. buildPrompt falls back to testCase.name when
+      // goal is unset, which would put "throughput:<model>" in the prompt.
+      // It must never demand a produced answer -- num_predict truncates every
+      // reply, so such a goal fails them all before the criteria are read.
       goal: 'Judge whether the reply is meaningful language',
       steps: [{ name: 'generate', command: '(captured /api/generate response)' }],
       criteria: JUDGE_CRITERIA,
@@ -165,8 +196,8 @@ function toTestResult(r: ModelResult): TestResult {
         exitCode: 0,
         duration: 0,
         reply: {
-          response: r.response,
-          thinking: r.thinking,
+          response: stripMarkers(r.response),
+          thinking: stripMarkers(r.thinking),
           doneReason: r.done_reason,
           evalCount: r.out_tokens,
         },
@@ -187,7 +218,7 @@ function toTestResult(r: ModelResult): TestResult {
  * then reports "simple", never "dual" (STORY-010).
  */
 export async function judgeThroughputResults(results: ModelResult[]): Promise<boolean> {
-  const eligible = results.filter((r) => r.check.simple.pass);
+  const eligible = results.filter((r) => !r.truncated && r.check.simple.pass);
   if (eligible.length === 0) return false;
 
   // A report written before the full text was persisted carries only the 120-char
@@ -211,7 +242,7 @@ export async function judgeThroughputResults(results: ModelResult[]): Promise<bo
     const r = byModel.get(v.testId);
     if (r) {
       r.check.agent = v;
-      r.check.overall_pass = r.check.simple.pass && v.pass;
+      r.check.overall_pass = !r.truncated && r.check.simple.pass && v.pass;
     }
   }
   return false;
@@ -228,12 +259,14 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     process.stderr.write(`--- ${model} ---\n`);
     await ensureModel(host, model);
 
-    // One load serves both requests: prefill and decode want the same resident
-    // weights, and a second load costs minutes on a 20 GB model served over NFS.
-    // A keeps the model up, B unloads it; both failure paths release it too, so a
-    // model is loaded once and unloaded once however this loop exits.
+    // One request, then one explicit unload after the GPU snapshot below -- the
+    // snapshot has to read the model while it is still resident. The capture's own
+    // failure path releases the weights; a throw from gpuOffload or gpuInfo between
+    // the two would leave them resident into the next iteration, which no caller
+    // has hit and nothing currently guards.
     let cap;
     try {
+      // keepLoaded: the GPU snapshot below must read the model while it is resident.
       cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true);
     } catch (e) {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
@@ -242,38 +275,31 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
         model, in_tokens: 0, out_tokens: 0, prompt_eval_tps: 0, eval_tps: 0,
         gpu_offload_pct: 0, vram_used_mib: [], done_reason: 'error', response_preview: '',
         response: '', thinking: '',
+        truncated: false,
         check: { overall_pass: false, simple: { pass: false, reason: 'capture failed', source: 'none' }, agent: null },
       });
       continue;
     }
 
+    // context.ts:288 guards the same case. The old prefill prompt was sized "short
+    // enough to fit the smallest context the sweep uses"; the speech is ~870 tokens
+    // and test-report-sweep.yml passes --context from a ladder, so a small value
+    // truncates the prompt and prefill is then timed over a prompt nobody sent.
+    const truncated = Boolean(numCtx && cap.inTokens >= numCtx);
+
     const offload = await gpuOffload(host, model);
     const loaded = await gpuInfo();
-    const simple = simpleContentCheck(cap.response, cap.thinking);
-
-    // Request B: prefill only. Measured on host A, gemma3:4b reads 128.9 tok/s at 107
-    // input tokens but 236.2 at 1,579 — the ~0.4 s fixed per-request cost swamps the
-    // compute term at the short prompt, so prefill gets its own long, deterministic
-    // request. num_predict is 8 because only prompt_eval is read from it. Its warmup
-    // is a no-op against the model A left resident. A failure here costs the prefill
-    // figure, not the model's verdict — but it throws before its own unload, so
-    // release the weights explicitly.
-    let prefillTps = 0;
-    let prefillTokens = 0;
-    try {
-      const pre = await captureResponse(host, model, PREFILL_PROMPT, PREFILL_NUM_PREDICT, numCtx, numBatch);
-      prefillTps = pre.promptEvalTps;
-      prefillTokens = pre.inTokens;
-    } catch (e) {
-      process.stderr.write(`  WARN: prefill request failed: ${e instanceof Error ? e.message : e}\n`);
-      await unloadModel(host, model);
-    }
+    await unloadModel(host, model);
+    // Stripped, because the judge reads stripped text (toTestResult): a reply of
+    // only control markers has letters, so the raw text would pass this check and
+    // then reach the judge as an empty payload. The report keeps the raw reply.
+    const simple = simpleContentCheck(stripMarkers(cap.response), stripMarkers(cap.thinking));
 
     results.push({
       model,
-      in_tokens: prefillTokens,
+      in_tokens: cap.inTokens,
       out_tokens: cap.outTokens,
-      prompt_eval_tps: prefillTps,
+      prompt_eval_tps: cap.promptEvalTps,
       eval_tps: cap.evalTps,
       gpu_offload_pct: offload,
       vram_used_mib: loaded.map((g) => g.usedMib),
@@ -281,10 +307,11 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
       response_preview: cap.response.slice(0, 120),
       response: cap.response,
       thinking: cap.thinking,
-      check: { overall_pass: simple.pass, simple, agent: null },
+      truncated,
+      check: { overall_pass: !truncated && simple.pass, simple, agent: null },
     });
     process.stderr.write(
-      `  prefill ${prefillTps} tok/s @ ${prefillTokens} tok · decode ${cap.evalTps} tok/s @ ${cap.outTokens} tok · offload ${offload}% · simple=${simple.pass}\n`
+      `  prefill ${cap.promptEvalTps} tok/s @ ${cap.inTokens} tok · decode ${cap.evalTps} tok/s @ ${cap.outTokens} tok · offload ${offload}% · ${truncated ? 'TRUNCATED ' : ''}simple=${simple.pass}\n`
     );
   }
 
@@ -298,7 +325,12 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     const report: ThroughputReport = {
       git_sha: sha,
       timestamp: new Date().toISOString(),
-      config: { num_predict: numPredict, num_ctx: numCtx ?? null, num_batch: numBatch ?? null },
+      config: {
+        num_predict: numPredict,
+        num_ctx: numCtx ?? null,
+        num_batch: numBatch ?? null,
+        prompt: { chars: PROMPT.length, sha256: createHash('sha256').update(PROMPT).digest('hex').slice(0, 12) },
+      },
       gpu: { before: gpuBefore, after: gpuAfter },
       results,
     };
@@ -326,8 +358,8 @@ export function printSummary(sha: string, gpu: GpuRow[], numCtx: number | null |
   out.push('');
   out.push(`**Commit:** \`${sha}\` | **GPU:** ${gpu.length}x ${gpuName} | **VRAM:** ${gpuTotal} MiB each | **Context:** ${numCtx ?? 'model default'} | **Judge:** ${mode}`);
   out.push('');
-  // Prefill and decode come from different requests (see ModelResult), so each
-  // number sits beside the token count it was measured over.
+  // Both numbers come from one request (see ModelResult), so each sits beside the
+  // token count it was measured over: prefill over the prompt, decode over the reply.
   out.push('| Model | Check | Prefill tok/s | in tok | Decode tok/s | out tok | GPU% | VRAM used (MiB) |');
   out.push('|---|---|---|---|---|---|---|---|');
   for (const r of results) {
@@ -340,7 +372,9 @@ export function printSummary(sha: string, gpu: GpuRow[], numCtx: number | null |
     out.push('### Failed output checks');
     out.push('');
     for (const r of failures) {
-      const reason = r.check.agent?.reason ?? r.check.simple.reason;
+      const reason = r.truncated
+        ? `TRUNCATED — prompt (${r.in_tokens} tok) filled the context window; result invalid`
+        : r.check.agent?.reason ?? r.check.simple.reason;
       out.push(`- **${r.model}**: ${reason}`);
     }
   }

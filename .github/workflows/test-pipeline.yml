@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       judge_mode:
-        description: "Test judge mode for inference + models (simple = SimpleJudge only; dual = also run the keyless agent judge)"
+        description: "Test judge mode for inference + models (dual = SimpleJudge plus the keyless agent judge; simple = SimpleJudge only)"
         required: false
-        default: "simple"
+        default: "dual"
         type: choice
         options:
-          - "simple"
           - "dual"
+          - "simple"
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
         required: false

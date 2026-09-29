@@ -94,13 +94,8 @@ jobs:
             fi
           done
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install test runner dependencies
-        run: cd cicd/tests && npm ci
+      - name: Setup test runner
+        uses: ./.github/actions/setup-test-runner
 
       - name: Reset sweep output dir
         # The self-hosted runner's /tmp/sweep-out persists across runs; without this,

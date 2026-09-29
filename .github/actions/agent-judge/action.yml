@@ -1,0 +1,68 @@
+name: Agent judge
+description: >
+  Run the keyless agent judge over results a suite already saved. Call it after the
+  GPU goes back, never before: on a shared host the judge's own server is the one the
+  test borrowed the card from.
+
+  A composite action reads neither `secrets` nor `vars`, so the caller passes them in.
+  What lives here is the derivation between them, which is the part with a trap in it.
+
+inputs:
+  args:
+    description: "cli.ts invocation, e.g. `judge ../results/models` or `judge-throughput /tmp/throughput-results.json`"
+    required: true
+  output-file:
+    description: "Redirect stdout here and cat it afterwards. Leave unset to tee stdout into the step summary instead."
+    required: false
+    default: ""
+  judge-base-url:
+    description: "vars.JUDGE_BASE_URL — points the judge at an ollama server instead of Anthropic, so it runs off the box under test. Unset falls back to Claude on the OAuth token."
+    required: false
+    default: ""
+  judge-model:
+    description: "vars.JUDGE_MODEL — the tag that server serves"
+    required: false
+    default: ""
+  oauth-token:
+    description: "secrets.CLAUDE_CODE_OAUTH_TOKEN — authenticates the bundled Claude agent when no base URL is set"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        JUDGE_MODE: dual
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.oauth-token }}
+        ANTHROPIC_BASE_URL: ${{ inputs.judge-base-url }}
+        # The auth token has to follow the base URL. Set one without the other and the
+        # fallback to Claude breaks instead of degrading.
+        ANTHROPIC_AUTH_TOKEN: ${{ inputs.judge-base-url && 'ollama' || '' }}
+        ANTHROPIC_MODEL: ${{ inputs.judge-base-url && inputs.judge-model || '' }}
+        # Claude Code's side-call model; ollama has no haiku tag to serve it.
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ inputs.judge-base-url && inputs.judge-model || '' }}
+        ARGS: ${{ inputs.args }}
+        OUT: ${{ inputs.output-file }}
+      run: |
+        cd cicd/tests
+        # A non-zero exit stays tolerated: the saved report is the gate, checked by the
+        # caller's own step.
+        # shellcheck disable=SC2086 -- intentional word splitting on the subcommand + path
+        if [ -n "$OUT" ]; then
+          # Never redirect straight into $OUT. It is the file the run step already wrote,
+          # and `>` truncates it before the judge has produced anything -- so a judge that
+          # cannot reach its server would leave an empty file, destroying the per-test
+          # verdicts and leaving `jq .summary.failed` to abort on an empty string.
+          tmp=$(mktemp)
+          npx tsx src/cli.ts $ARGS --format json > "$tmp" || true
+          if jq -e . "$tmp" >/dev/null 2>&1; then
+            mv "$tmp" "$OUT"
+          else
+            echo "::warning::agent judge produced no usable JSON; keeping the run's own results"
+            rm -f "$tmp"
+          fi
+          cat "$OUT"
+        else
+          npx tsx src/cli.ts $ARGS | tee -a "$GITHUB_STEP_SUMMARY" || true
+        fi

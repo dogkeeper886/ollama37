@@ -106,13 +106,8 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install test runner dependencies
-        run: cd cicd/tests && npm ci
+      - name: Setup test runner
+        uses: ./.github/actions/setup-test-runner
 
       - name: Run MCP tool-call test
         env:

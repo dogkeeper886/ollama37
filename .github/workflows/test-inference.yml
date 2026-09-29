@@ -13,13 +13,13 @@ on:
         default: "gemma3:4b"
         type: string
       judge_mode:
-        description: "Test judge mode (simple = SimpleJudge only; dual = also run the keyless agent judge)"
+        description: "Test judge mode (dual = SimpleJudge plus the keyless agent judge; simple = SimpleJudge only)"
         required: false
-        default: "simple"
+        default: "dual"
         type: choice
         options:
-          - "simple"
           - "dual"
+          - "simple"
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
         required: false
@@ -44,7 +44,7 @@ on:
       judge_mode:
         description: "Test judge mode (simple, dual)"
         required: false
-        default: "simple"
+        default: "dual"
         type: string
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
@@ -79,29 +79,17 @@ jobs:
       - name: Identify host
         uses: ./.github/actions/identify-host
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: Setup test runner
+        uses: ./.github/actions/setup-test-runner
 
-      - name: Install test runner dependencies
-        run: cd cicd/tests && npm ci
+      - name: Yield GPU
+        uses: ./.github/actions/yield-gpu
 
       - name: Run inference tests
         id: inference-tests
         env:
-          # dual mode runs the keyless agent judge; the runner reads JUDGE_MODE.
-          JUDGE_MODE: ${{ inputs.judge_mode || 'simple' }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # JUDGE_BASE_URL (cicd-1 variable) points the judge at an ollama server
-          # instead of Anthropic — a judge off the box under test. Unset it and
-          # the judge falls back to Claude on the OAuth token above; the auth
-          # token has to follow the base URL or it would break that fallback.
-          ANTHROPIC_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ vars.JUDGE_BASE_URL && 'ollama' || '' }}
-          ANTHROPIC_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
-          # Claude Code's side-call model; ollama has no haiku tag to serve it.
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
+          # Execute only. The agent judge runs after Restore GPU hands the card back.
+          JUDGE_MODE: simple
           # inference testcases read TEST_MODEL (they default to gemma3:4b in-shell).
           TEST_MODEL: ${{ inputs.model || 'gemma3:4b' }}
         run: |
@@ -116,20 +104,12 @@ jobs:
           fi
 
           rc=0
-          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts run --suite inference $ID_FLAG --format json > /tmp/inference-results.json || rc=$?
+          # --output-dir: any path, same in the Agent judge step
+          bash ../scripts/gpu-temp-guard.sh -- npx tsx src/cli.ts run --suite inference $ID_FLAG --output-dir ../results/inference --format json > /tmp/inference-results.json || rc=$?
           [ "$rc" -eq 75 ] && exit 1   # overheat → fail the job; any other non-zero stays tolerated (gated by the JSON below)
 
           echo "--- JSON Results ---"
           cat /tmp/inference-results.json
-
-      - name: Check test results
-        run: |
-          FAILED=$(jq '.summary.failed' /tmp/inference-results.json)
-          echo "Failed tests: $FAILED"
-          if [ "$FAILED" -gt 0 ]; then
-            echo "::error::$FAILED inference test(s) failed"
-            exit 1
-          fi
 
       - name: Unload test models from VRAM
         if: always()
@@ -139,6 +119,29 @@ jobs:
           echo "Unloading test models from VRAM..."
           curl -s ${OLLAMA_HOST:-http://localhost:11434}/api/generate -d "{\"model\":\"${TEST_MODEL}\",\"keep_alive\":0}" || true
           echo "Models unloaded"
+
+      - name: Restore GPU
+        if: always()
+        uses: ./.github/actions/restore-gpu
+
+      - name: Agent judge
+        if: ${{ !cancelled() && (inputs.judge_mode || 'dual') == 'dual' }}
+        uses: ./.github/actions/agent-judge
+        with:
+          args: judge ../results/inference
+          output-file: /tmp/inference-results.json
+          judge-base-url: ${{ vars.JUDGE_BASE_URL }}
+          judge-model: ${{ vars.JUDGE_MODEL }}
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Check test results
+        run: |
+          FAILED=$(jq '.summary.failed' /tmp/inference-results.json)
+          echo "Failed tests: $FAILED"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED inference test(s) failed"
+            exit 1
+          fi
 
       - name: Upload inference results
         uses: actions/upload-artifact@v4

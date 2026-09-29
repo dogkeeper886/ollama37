@@ -1,0 +1,33 @@
+name: Yield GPU
+description: >
+  Hand the GPU to the server under test and wait for it to answer. A host that names
+  that server in OLLAMA37_SERVICE gets it started and whatever held the card stopped;
+  a host that names none is left alone, unless the caller asks for the compose
+  fallback.
+
+inputs:
+  compose-fallback:
+    description: >
+      On a host with no OLLAMA37_SERVICE, bring the container up with docker compose
+      rather than doing nothing. Only for a workflow that owned the container before
+      the service existed; a host that runs neither must not have one invented for it.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        if [ -n "${OLLAMA37_SERVICE:-}" ]; then
+          systemctl --user stop 'ollama37-*'
+          if [ -n "${OLLAMA37_YIELD_SERVICE:-}" ]; then systemctl --user stop "$OLLAMA37_YIELD_SERVICE"; fi
+          systemctl --user start "$OLLAMA37_SERVICE"
+        elif [ "${{ inputs.compose-fallback }}" = "true" ]; then
+          cd docker && docker compose up -d --force-recreate
+        else
+          echo "No OLLAMA37_SERVICE on this host"; exit 0
+        fi
+        # integer >= 1 tries, 2 s apart
+        for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
+        echo "::error::the server under test did not come up"; exit 1
