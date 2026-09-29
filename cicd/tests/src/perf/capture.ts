@@ -54,29 +54,32 @@ export async function captureResponse(
   /** Leave the model resident on return, for a caller about to make a second
    *  request against the same weights. That caller owns the unload. Default
    *  false, so every existing caller keeps today's load-run-unload behaviour. */
-  keepLoaded = false
+  keepLoaded = false,
+  /** Disable a thinking model's reasoning, so the whole budget goes to the answer.
+   *  Default undefined: `think` is omitted and every existing caller is unchanged.
+   *  bench-context deliberately keeps reasoning on -- its needle check and its decode
+   *  figures were all measured with it. */
+  think?: boolean
 ): Promise<CaptureResult> {
   // num_batch must be set on the warmup too — Ollama reserves the compute graph
   // (the Q·Kᵀ score buffer) at load time, so the batch that decides VRAM is the
   // one on the request that first loads the model. Omit entirely when unset so
   // default behavior is unchanged.
   const batchOpt = numBatch ? { num_batch: numBatch } : {};
+  const thinkOpt = think === undefined ? {} : { think };
   // Same for num_ctx: omitted unless asked for, so the model keeps the window it
   // chose rather than one this harness asserted for it.
   const ctxOpt = numCtx ? { num_ctx: numCtx } : {};
 
   // Warmup: load the model + prime caches (ignore failures).
-  await generate(host, { model, prompt: 'Hi', stream: false, think: false, options: { num_predict: 1, ...ctxOpt, ...batchOpt } }).catch(() => {});
+  await generate(host, { model, prompt: 'Hi', stream: false, ...thinkOpt, options: { num_predict: 1, ...ctxOpt, ...batchOpt } }).catch(() => {});
 
   // Benchmark call (deterministic).
   const raw = await generate(host, {
     model,
     prompt,
     stream: false,
-    // A thinking model otherwise spends the whole budget reasoning and returns an
-    // empty `response` -- 12 of 22 did in run 36445237157. Models that ignore the
-    // flag are caught by the judge's thinking fallback.
-    think: false,
+    ...thinkOpt,
     options: { temperature: 0, seed: 42, num_predict: numPredict, ...ctxOpt, ...batchOpt },
   });
 

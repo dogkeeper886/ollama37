@@ -50,7 +50,18 @@ runs:
         # caller's own step.
         # shellcheck disable=SC2086 -- intentional word splitting on the subcommand + path
         if [ -n "$OUT" ]; then
-          npx tsx src/cli.ts $ARGS --format json > "$OUT" || true
+          # Never redirect straight into $OUT. It is the file the run step already wrote,
+          # and `>` truncates it before the judge has produced anything -- so a judge that
+          # cannot reach its server would leave an empty file, destroying the per-test
+          # verdicts and leaving `jq .summary.failed` to abort on an empty string.
+          tmp=$(mktemp)
+          npx tsx src/cli.ts $ARGS --format json > "$tmp" || true
+          if jq -e . "$tmp" >/dev/null 2>&1; then
+            mv "$tmp" "$OUT"
+          else
+            echo "::warning::agent judge produced no usable JSON; keeping the run's own results"
+            rm -f "$tmp"
+          fi
           cat "$OUT"
         else
           npx tsx src/cli.ts $ARGS | tee -a "$GITHUB_STEP_SUMMARY" || true

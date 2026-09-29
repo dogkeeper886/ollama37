@@ -63,6 +63,8 @@ Rewrite the speech above in plainer English. Cut every verbal tic and filler wor
 // the agent judge only ever sees results that passed it. Asking the judge for those
 // again buys nothing and gives it extra grounds to fail on.
 const JUDGE_CRITERIA =
+  'Text no person could read as language fails: word salad, or a fragment that is ' +
+  'not a reply. Judge the text itself -- the prompt is not in this payload. ' +
   'Judge `response`. When `response` is empty, judge `thinking` instead: a model that ' +
   'spent the budget reasoning still produced language. ' +
   'Generation stops at a token budget, so a truncated reply passes. ' +
@@ -90,11 +92,11 @@ export interface ModelResult {
   gpu_offload_pct: number;
   vram_used_mib: number[];
   done_reason: string;
-  /** Two requests per model, because one prompt cannot measure both halves:
-   *  at 31 tokens the fixed ~0.4 s per-request cost swamps prefill, and decode
-   *  degrades with context depth. `prompt_eval_tps`/`in_tokens` come from the
-   *  ~1k-token filler request; `eval_tps`/`out_tokens`, the response and the
-   *  verdict all come from the short PROMPT request. */
+  /** One request per model. The prompt is a ~950-token speech, long enough that
+   *  prefill escapes the fixed per-request cost, so `prompt_eval_tps`/`in_tokens`
+   *  and `eval_tps`/`out_tokens` all come from the same call -- as do the response
+   *  and the verdict. Decode is therefore measured at that depth, not at a shallow
+   *  context. */
   response_preview: string;
   /** Full captured text. `judge-throughput` runs in a later step, in a new process,
    *  and has no other source for it — judging the preview would grade 120 characters
@@ -148,8 +150,8 @@ async function ensureModel(host: string, model: string): Promise<void> {
  * as garbled, which would trade one wrong verdict for another. Stripped here in the
  * caller rather than in a parser: the fork's job is running models on the K80.
  */
-function stripMarkers(s: string): string {
-  return s.replace(/<\|[^|>]*\|?>|<\/?think>/g, '').trim();
+function stripMarkers(s: string | undefined): string {
+  return (s ?? '').replace(/<\|[^|>]*\|?>|<\/?think>/g, '').trim();
 }
 
 function toTestResult(r: ModelResult): TestResult {
@@ -243,14 +245,19 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     process.stderr.write(`--- ${model} ---\n`);
     await ensureModel(host, model);
 
-    // One load serves both requests: prefill and decode want the same resident
-    // weights, and a second load costs minutes on a 20 GB model served over NFS.
-    // A keeps the model up, B unloads it; both failure paths release it too, so a
-    // model is loaded once and unloaded once however this loop exits.
+    // One request, then one explicit unload after the GPU snapshot below -- the
+    // snapshot has to read the model while it is still resident. The capture's own
+    // failure path releases the weights; a throw from gpuOffload or gpuInfo between
+    // the two would leave them resident into the next iteration, which no caller
+    // has hit and nothing currently guards.
     let cap;
     try {
       // keepLoaded: the GPU snapshot below must read the model while it is resident.
-      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true);
+      // think: false -- a thinking model otherwise spends the whole budget reasoning
+      // and returns an empty `response`; 12 of 22 did in run 36445237157. Models that
+      // ignore the flag are caught by the judge's thinking fallback. Passed here rather
+      // than set in captureResponse, so bench-context keeps reasoning on.
+      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true, false);
     } catch (e) {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
       await unloadModel(host, model);
