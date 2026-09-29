@@ -254,10 +254,7 @@ export class AgentJudge {
    * and it is one question: fluent words in an order that means nothing, which no
    * pattern catches and which is not random at the character level.
    */
-  private buildPrompt(result: TestResult): string {
-    const step = result.steps.find((s) => s.reply) ?? result.steps[0];
-    const reply = step?.reply;
-    const paragraph = (reply?.response?.trim() || reply?.thinking?.trim() || step?.stdout?.trim() || '');
+  private buildPrompt(paragraph: string): string {
     return `Is this paragraph readable language? yes or no\n\n"${this.truncate(paragraph, CONFIG.judge.stdoutLimit)}"`;
   }
 
@@ -329,10 +326,29 @@ export class AgentJudge {
    * Judge a single test result.
    */
   private async judgeOne(result: TestResult): Promise<Judgment> {
-    const prompt = this.buildPrompt(result);
     const testId = result.testCase.id;
 
-    const responseText = await this.promptAgent(prompt);
+    // The response, or the thinking when the response is empty -- the same two
+    // fields in the same order as simpleContentCheck, which already rejected the
+    // rows where both are empty. A response means the model finished, so the
+    // thinking behind it is working notes and a second paragraph would only drag
+    // the verdict; an empty response means the budget ran out mid-turn, and the
+    // thinking is then the only language the model produced.
+    //
+    // stdout stays out. It is the step's whole console output -- jq lines and
+    // sentinels around the prose -- and asking whether that is readable language
+    // earns a truthful "no" (TC-MODELS-003, run 36597608237).
+    const step = result.steps.find((s) => s.reply);
+    const paragraph = step?.reply?.response?.trim() || step?.reply?.thinking?.trim() || '';
+
+    // No step asked a model at all: build, models and inference drive the CLI and
+    // check sentinels. This judge has no paragraph, so it abstains and the simple
+    // judge, which reads exit codes and patterns, decides alone.
+    if (!paragraph) {
+      return { testId, pass: true, reason: 'judge: no model reply to read' };
+    }
+
+    const responseText = await this.promptAgent(this.buildPrompt(paragraph));
 
     // Handle empty response
     if (!responseText) {
