@@ -1,0 +1,107 @@
+name: Models Tests (v2)
+
+# The models suite on the rewritten harness (#535): Vitest + the Ollama client,
+# replacing testcases/models/TC-MODELS-*.yml. Runs beside the old workflow until
+# the remaining suites are ported, then takes its name.
+#
+# No judge input. These tests check that a model loads, answers in language and
+# gives its dies back — every one of those is a deterministic assertion, and the
+# reply's content rules live in simpleContentCheck rather than in jq. Prose worth
+# a reader is throughput's business.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Space- or comma-separated models to run. Empty = the runner's OLLAMA37_MODELS, else the suite's built-in list."
+        required: false
+        type: string
+      debug:
+        description: "Enable OLLAMA_DEBUG=1 in container"
+        required: false
+        default: false
+        type: boolean
+      runner_label:
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti, sm86 = RTX 3060."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm61"
+          - "sm86"
+  workflow_call:
+    inputs:
+      models:
+        description: "Space- or comma-separated models to run"
+        required: false
+        type: string
+      debug:
+        description: "Enable OLLAMA_DEBUG=1 in container"
+        required: false
+        default: false
+        type: boolean
+      runner_label:
+        description: "Which GPU testbed to run on"
+        required: false
+        default: "sm37"
+        type: string
+    outputs:
+      result:
+        description: "Models test result"
+        value: ${{ jobs.models.outputs.result }}
+
+jobs:
+  models:
+    name: Models Tests (v2)
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
+    environment: cicd-1
+    env:
+      OLLAMA37_ROOT: ${{ github.workspace }}
+      OLLAMA_DEBUG: ${{ inputs.debug && '1' || '' }}
+    outputs:
+      result: ${{ steps.models-tests.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Identify host
+        uses: ./.github/actions/identify-host
+
+      - name: Setup test runner
+        uses: ./.github/actions/setup-test-runner
+
+      - name: Yield GPU
+        uses: ./.github/actions/yield-gpu
+
+      - name: Run models tests
+        id: models-tests
+        run: |
+          cd cicd/tests
+          # The dispatch input wins; left empty, the runner's own OLLAMA37_MODELS
+          # stands, which is how sm61 and sm86 name the models that fit one card.
+          # Exporting an empty value here would shadow it.
+          if [ -n "${{ inputs.models }}" ]; then
+            export OLLAMA37_MODELS="${{ inputs.models }}"
+          fi
+          echo "Models: ${OLLAMA37_MODELS:-(suite default)}"
+          # No gpu-temp-guard: its 80°C abort killed full-suite runs (35549667518,
+          # peak 81°C at case 9 of 19) while the K80 itself only slows at 88°C and
+          # shuts down at 93°C. The card's own thresholds are the protection here.
+          #
+          # Vitest's exit code is the gate — there is no JSON to parse and no
+          # `|| true` to undo. Each model unloads in its own afterAll.
+          npx vitest run suites/models.test.ts
+
+      - name: Restore GPU
+        if: always()
+        uses: ./.github/actions/restore-gpu
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: models-v2-results
+          path: cicd/tests/results/junit.xml
+          if-no-files-found: warn
