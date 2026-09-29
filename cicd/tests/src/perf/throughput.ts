@@ -253,11 +253,7 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     let cap;
     try {
       // keepLoaded: the GPU snapshot below must read the model while it is resident.
-      // think: false -- a thinking model otherwise spends the whole budget reasoning
-      // and returns an empty `response`; 12 of 22 did in run 36445237157. Models that
-      // ignore the flag are caught by the judge's thinking fallback. Passed here rather
-      // than set in captureResponse, so bench-context keeps reasoning on.
-      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true, false);
+      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true);
     } catch (e) {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
       await unloadModel(host, model);
