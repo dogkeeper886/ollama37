@@ -13,6 +13,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { captureResponse, unloadModel } from './capture.js';
 import { gpuInfo, gpuOffload, type GpuRow } from './gpu.js';
 import { simpleContentCheck } from './content-check.js';
@@ -103,6 +104,9 @@ export interface ModelResult {
    *  as if they were the whole answer. */
   response: string;
   thinking: string;
+  /** The prompt filled --context, so prefill was timed over a prompt the caller did
+   *  not send. Fails the row, as it does in context.ts. */
+  truncated: boolean;
   check: { overall_pass: boolean; simple: ReturnType<typeof simpleContentCheck>; agent: Judgment | null };
 }
 
@@ -110,7 +114,17 @@ export interface ModelResult {
 export interface ThroughputReport {
   git_sha: string;
   timestamp: string;
-  config: { num_predict: number; num_ctx: number | null; num_batch: number | null };
+  /** `prompt` identifies the workload, not just its size. Decode moved from a
+   *  31-token question to a ~870-token speech and num_predict from 400 to 100 in
+   *  one commit; without this, two reports measuring different work are
+   *  indistinguishable in their own metadata, and docs/reports/README.md tells the
+   *  reader to diff snapshots to see what a build changed. */
+  config: {
+    num_predict: number;
+    num_ctx: number | null;
+    num_batch: number | null;
+    prompt: { chars: number; sha256: string };
+  };
   gpu: { before: GpuRow[]; after: GpuRow[] };
   results: ModelResult[];
 }
@@ -138,11 +152,6 @@ async function ensureModel(host: string, model: string): Promise<void> {
   });
 }
 
-/** Build a synthetic TestResult so the AgentJudge can grade the captured output.
- *  The reply travels as fields, not as one joined string: 15 of 22 models in run
- *  36428282153 returned an empty `response` with every token in `thinking`, and a
- *  judge handed the two glued together grades reasoning text as if it were the
- *  answer. `done_reason` goes with them so the judge can see the budget ended it. */
 /**
  * Strip control markers models leak into their own text. Seen in run 36445237157:
  * gemma4:31b opened `thinking` with `<|channel>thought`, deepseek-r1:8b embedded
@@ -154,6 +163,11 @@ function stripMarkers(s: string | undefined): string {
   return (s ?? '').replace(/<\|[^|>]*\|?>|<\/?think>/g, '').trim();
 }
 
+/** Build a synthetic TestResult so the AgentJudge can grade the captured output.
+ *  The reply travels as fields, not as one joined string: 15 of 22 models in run
+ *  36428282153 returned an empty `response` with every token in `thinking`, and a
+ *  judge handed the two glued together grades reasoning text as if it were the
+ *  answer. `done_reason` goes with them so the judge can see the budget ended it. */
 function toTestResult(r: ModelResult): TestResult {
   const model = r.model;
   return {
@@ -204,7 +218,7 @@ function toTestResult(r: ModelResult): TestResult {
  * then reports "simple", never "dual" (STORY-010).
  */
 export async function judgeThroughputResults(results: ModelResult[]): Promise<boolean> {
-  const eligible = results.filter((r) => r.check.simple.pass);
+  const eligible = results.filter((r) => !r.truncated && r.check.simple.pass);
   if (eligible.length === 0) return false;
 
   // A report written before the full text was persisted carries only the 120-char
@@ -228,7 +242,7 @@ export async function judgeThroughputResults(results: ModelResult[]): Promise<bo
     const r = byModel.get(v.testId);
     if (r) {
       r.check.agent = v;
-      r.check.overall_pass = r.check.simple.pass && v.pass;
+      r.check.overall_pass = !r.truncated && r.check.simple.pass && v.pass;
     }
   }
   return false;
@@ -261,15 +275,25 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
         model, in_tokens: 0, out_tokens: 0, prompt_eval_tps: 0, eval_tps: 0,
         gpu_offload_pct: 0, vram_used_mib: [], done_reason: 'error', response_preview: '',
         response: '', thinking: '',
+        truncated: false,
         check: { overall_pass: false, simple: { pass: false, reason: 'capture failed', source: 'none' }, agent: null },
       });
       continue;
     }
 
+    // context.ts:288 guards the same case. The old prefill prompt was sized "short
+    // enough to fit the smallest context the sweep uses"; the speech is ~870 tokens
+    // and test-report-sweep.yml passes --context from a ladder, so a small value
+    // truncates the prompt and prefill is then timed over a prompt nobody sent.
+    const truncated = Boolean(numCtx && cap.inTokens >= numCtx);
+
     const offload = await gpuOffload(host, model);
     const loaded = await gpuInfo();
     await unloadModel(host, model);
-    const simple = simpleContentCheck(cap.response, cap.thinking);
+    // Stripped, because the judge reads stripped text (toTestResult): a reply of
+    // only control markers has letters, so the raw text would pass this check and
+    // then reach the judge as an empty payload. The report keeps the raw reply.
+    const simple = simpleContentCheck(stripMarkers(cap.response), stripMarkers(cap.thinking));
 
     results.push({
       model,
@@ -283,10 +307,11 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
       response_preview: cap.response.slice(0, 120),
       response: cap.response,
       thinking: cap.thinking,
-      check: { overall_pass: simple.pass, simple, agent: null },
+      truncated,
+      check: { overall_pass: !truncated && simple.pass, simple, agent: null },
     });
     process.stderr.write(
-      `  prefill ${cap.promptEvalTps} tok/s @ ${cap.inTokens} tok · decode ${cap.evalTps} tok/s @ ${cap.outTokens} tok · offload ${offload}% · simple=${simple.pass}\n`
+      `  prefill ${cap.promptEvalTps} tok/s @ ${cap.inTokens} tok · decode ${cap.evalTps} tok/s @ ${cap.outTokens} tok · offload ${offload}% · ${truncated ? 'TRUNCATED ' : ''}simple=${simple.pass}\n`
     );
   }
 
@@ -300,7 +325,12 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     const report: ThroughputReport = {
       git_sha: sha,
       timestamp: new Date().toISOString(),
-      config: { num_predict: numPredict, num_ctx: numCtx ?? null, num_batch: numBatch ?? null },
+      config: {
+        num_predict: numPredict,
+        num_ctx: numCtx ?? null,
+        num_batch: numBatch ?? null,
+        prompt: { chars: PROMPT.length, sha256: createHash('sha256').update(PROMPT).digest('hex').slice(0, 12) },
+      },
       gpu: { before: gpuBefore, after: gpuAfter },
       results,
     };
@@ -328,8 +358,8 @@ export function printSummary(sha: string, gpu: GpuRow[], numCtx: number | null |
   out.push('');
   out.push(`**Commit:** \`${sha}\` | **GPU:** ${gpu.length}x ${gpuName} | **VRAM:** ${gpuTotal} MiB each | **Context:** ${numCtx ?? 'model default'} | **Judge:** ${mode}`);
   out.push('');
-  // Prefill and decode come from different requests (see ModelResult), so each
-  // number sits beside the token count it was measured over.
+  // Both numbers come from one request (see ModelResult), so each sits beside the
+  // token count it was measured over: prefill over the prompt, decode over the reply.
   out.push('| Model | Check | Prefill tok/s | in tok | Decode tok/s | out tok | GPU% | VRAM used (MiB) |');
   out.push('|---|---|---|---|---|---|---|---|');
   for (const r of results) {
@@ -342,7 +372,9 @@ export function printSummary(sha: string, gpu: GpuRow[], numCtx: number | null |
     out.push('### Failed output checks');
     out.push('');
     for (const r of failures) {
-      const reason = r.check.agent?.reason ?? r.check.simple.reason;
+      const reason = r.truncated
+        ? `TRUNCATED — prompt (${r.in_tokens} tok) filled the context window; result invalid`
+        : r.check.agent?.reason ?? r.check.simple.reason;
       out.push(`- **${r.model}**: ${reason}`);
     }
   }
