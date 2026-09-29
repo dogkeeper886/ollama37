@@ -79,13 +79,8 @@ jobs:
       - name: Identify host
         uses: ./.github/actions/identify-host
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install test runner dependencies
-        run: cd cicd/tests && npm ci
+      - name: Setup test runner
+        uses: ./.github/actions/setup-test-runner
 
       - name: Yield GPU
         uses: ./.github/actions/yield-gpu
@@ -131,23 +126,13 @@ jobs:
 
       - name: Agent judge
         if: ${{ !cancelled() && (inputs.judge_mode || 'dual') == 'dual' }}
-        env:
-          JUDGE_MODE: dual
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # JUDGE_BASE_URL (cicd-1 variable) points the judge at an ollama server
-          # instead of Anthropic — a judge off the box under test. Unset it and
-          # the judge falls back to Claude on the OAuth token above; the auth
-          # token has to follow the base URL or it would break that fallback.
-          ANTHROPIC_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
-          ANTHROPIC_AUTH_TOKEN: ${{ vars.JUDGE_BASE_URL && 'ollama' || '' }}
-          ANTHROPIC_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
-          # Claude Code's side-call model; ollama has no haiku tag to serve it.
-          ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ vars.JUDGE_BASE_URL && vars.JUDGE_MODEL || '' }}
-        run: |
-          cd cicd/tests
-          # the Run inference tests step's --output-dir
-          npx tsx src/cli.ts judge ../results/inference --format json > /tmp/inference-results.json || true
-          cat /tmp/inference-results.json
+        uses: ./.github/actions/agent-judge
+        with:
+          args: judge ../results/inference
+          output-file: /tmp/inference-results.json
+          judge-base-url: ${{ vars.JUDGE_BASE_URL }}
+          judge-model: ${{ vars.JUDGE_MODEL }}
+          oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
       - name: Check test results
         run: |

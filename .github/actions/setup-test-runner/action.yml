@@ -1,0 +1,21 @@
+name: Setup test runner
+description: >
+  Install Node and the TypeScript test runner's dependencies, so a job can call
+  `npx tsx src/cli.ts`. Every workflow that runs the harness needs both, always in
+  this order, so they travel together rather than as two steps each file repeats.
+
+inputs:
+  node-version:
+    description: "Node major version. The runner's own bundled node is 20, so a job that drifts from it is worth noticing."
+    required: false
+    default: "20"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - shell: bash
+      run: cd cicd/tests && npm ci

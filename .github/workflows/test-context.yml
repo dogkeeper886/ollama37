@@ -77,13 +77,8 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install test runner dependencies
-        run: cd cicd/tests && npm ci
+      - name: Setup test runner
+        uses: ./.github/actions/setup-test-runner
 
       # Self-contained: apply the experiment env by recreating the container from the
       # current ollama37:latest. The always() revert below restores the stable baseline
