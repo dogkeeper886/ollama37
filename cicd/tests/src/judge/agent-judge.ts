@@ -260,11 +260,11 @@ export class AgentJudge {
     });
 
     const promptData = {
-      role: `You judge ${CONFIG.projectName} test output. Read the run and judge it.`,
+      role: `You judge ${CONFIG.projectName} test output.`,
       rules: [
-        'Check step stdout for error responses (e.g. {"error":"..."} means FAIL)',
-        'Errors with exit code 0 are still FAIL',
-        'For AI-generated text, accept reasonable variations',
+        'An error in step stdout fails the test, e.g. {"error":"..."}',
+        'An error fails the test even at exit code 0',
+        'AI-generated text varies. Accept reasonable variation',
         'Long durations within timeout are acceptable',
         // Describes the fields; it does not say which to grade. That is the
         // caller's criteria, because a thinking model can leave `response`

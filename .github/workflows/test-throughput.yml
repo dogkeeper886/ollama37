@@ -11,7 +11,7 @@ on:
       num_predict:
         description: "Max tokens to generate. Positive integer."
         required: false
-        default: "400"
+        default: "100"
         type: string
       # context: not an input. Unset = the model's own window. To pin one, pass
       # `cli.ts bench-throughput --context <positive integer>` directly, as
@@ -129,7 +129,7 @@ jobs:
           # here, as they are in test-models.yml.
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
           npx tsx src/cli.ts bench-throughput $MODELS \
-            --num-predict "${{ inputs.num_predict || '400' }}" \
+            --num-predict "${{ inputs.num_predict || '100' }}" \
             --output /tmp/throughput-results.json \
             $BATCH_FLAG | tee -a "$GITHUB_STEP_SUMMARY" || true
 

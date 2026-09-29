@@ -313,7 +313,7 @@ program
   .command('bench-throughput')
   .description('Benchmark model throughput (tok/s) + validate output')
   .argument('<models...>', 'One or more model names to benchmark')
-  .option('-n, --num-predict <n>', 'Max tokens to generate; 400 matches the models suite', '400')
+  .option('-n, --num-predict <n>', 'Max tokens to generate; the prompt carries the prefill, so the reply only needs to be long enough to time', '100')
   .option('-c, --context <n>', 'Context window size; empty = the model\'s own window')
   .option('-b, --num-batch <n>', 'Micro-batch size (num_batch); empty = model default (512)')
   .option('--judge', 'Also run the agent judge on each response (dual mode)', false)

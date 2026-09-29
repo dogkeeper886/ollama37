@@ -66,13 +66,17 @@ export async function captureResponse(
   const ctxOpt = numCtx ? { num_ctx: numCtx } : {};
 
   // Warmup: load the model + prime caches (ignore failures).
-  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, ...ctxOpt, ...batchOpt } }).catch(() => {});
+  await generate(host, { model, prompt: 'Hi', stream: false, think: false, options: { num_predict: 1, ...ctxOpt, ...batchOpt } }).catch(() => {});
 
   // Benchmark call (deterministic).
   const raw = await generate(host, {
     model,
     prompt,
     stream: false,
+    // A thinking model otherwise spends the whole budget reasoning and returns an
+    // empty `response` -- 12 of 22 did in run 36445237157. Models that ignore the
+    // flag are caught by the judge's thinking fallback.
+    think: false,
     options: { temperature: 0, seed: 42, num_predict: numPredict, ...ctxOpt, ...batchOpt },
   });
 
