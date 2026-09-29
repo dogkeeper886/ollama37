@@ -110,6 +110,9 @@ describe('/api/metrics', () => {
   });
 
   test('describes at least one GPU', async ({ annotate }) => {
+    // beforeAll swallows a parse failure into {} so the status is reported rather
+    // than a syntax error — which leaves body.gpus undefined here.
+    expect(Array.isArray(body.gpus), raw.slice(0, 200)).toBe(true);
     const gpus = body.gpus as Array<{ id: unknown; name: unknown; vram_total: unknown }>;
     expect(gpus.length).toBeGreaterThanOrEqual(1);
     await annotate(`${gpus.length} GPU(s), first: ${String(gpus[0]?.name)}`);

@@ -116,6 +116,11 @@ jobs:
       - name: Setup test runner
         uses: ./.github/actions/setup-test-runner
 
+      # Vitest strips types without checking them, so a type error in suites/ would
+      # otherwise ship. Before the GPU is taken, so a broken branch fails fast.
+      - name: Type-check
+        run: cd cicd/tests && npm run typecheck
+
       - name: Yield GPU
         uses: ./.github/actions/yield-gpu
 
@@ -152,9 +157,14 @@ jobs:
           #
           # Vitest's exit code is the gate — there is no JSON to parse and no
           # `|| true` to undo. Each model unloads in its own afterAll.
-          # Unquoted on purpose: empty must expand to no argument, and the value is
-          # constrained to the choice list above.
-          npx vitest run $IN_SUITE
+          # workflow_dispatch constrains this to the choice list, but workflow_call
+          # takes a free-form string — so quote it, and keep the empty case (run
+          # every suite) as its own branch rather than relying on word splitting.
+          if [ -n "$IN_SUITE" ]; then
+            npx vitest run "$IN_SUITE"
+          else
+            npx vitest run
+          fi
 
       - name: Restore GPU
         if: always()

@@ -9,9 +9,9 @@
  * parses it, so the assertion is on the field (#535).
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import { execa } from 'execa';
 import { type GenerateResponse } from 'ollama';
 import { ollamaClient } from '../src/ollama-client.js';
+import { serverComputeApps } from './gpu.js';
 
 const HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
 const MODEL = process.env.TEST_MODEL ?? 'gemma3:4b';
@@ -19,17 +19,9 @@ const MODEL = process.env.TEST_MODEL ?? 'gemma3:4b';
 // the same unbounded socket as a slow generate.
 const ollama = ollamaClient(HOST);
 
-/** MiB held on any die by this server's processes. */
+/** MiB the server holds across every die. */
 async function ollamaVramMib(): Promise<number> {
-  const { stdout } = await execa('nvidia-smi', [
-    '--query-compute-apps=pid,used_memory,process_name',
-    '--format=csv,noheader,nounits',
-  ]);
-  return stdout
-    .split('\n')
-    .map((l) => l.split(',').map((c) => c.trim()))
-    .filter((c) => c.length === 3 && /ollama/.test(c[2]))
-    .reduce((sum, c) => sum + Number(c[1]), 0);
+  return (await serverComputeApps()).reduce((sum, a) => sum + a.usedMib, 0);
 }
 
 describe(`inference: ${MODEL}`, () => {

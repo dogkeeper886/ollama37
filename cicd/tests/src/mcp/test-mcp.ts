@@ -100,6 +100,9 @@ function toTestResult(t: McpTrajectory, prompt: string): TestResult {
     .map((c, i) => `- ${c.name}(${JSON.stringify(c.arguments)}) -> ${(t.toolResults[i]?.content ?? '').slice(0, 500)}`)
     .join('\n');
   const stdout = `PROMPT: ${prompt}\n\nFINAL ANSWER: ${t.finalAnswer}\n\nTOOL CALLS AND RESULTS:\n${toolLog}`;
+  // `reply` as well as stdout: the agent judge reads the model's fields and
+  // abstains on a step that has none, so without this every model here would be
+  // judged pass without being read (#535).
   return {
     testCase: {
       id: t.model,
@@ -112,7 +115,17 @@ function toTestResult(t: McpTrajectory, prompt: string): TestResult {
       steps: [{ name: 'tool-call', command: '(captured MCP trajectory)' }],
       criteria: JUDGE_CRITERIA,
     },
-    steps: [{ name: 'tool-call', command: '(captured MCP trajectory)', stdout, stderr: '', exitCode: 0, duration: 0 }],
+    steps: [
+      {
+        name: 'tool-call',
+        command: '(captured MCP trajectory)',
+        stdout,
+        stderr: '',
+        exitCode: 0,
+        duration: 0,
+        reply: { response: t.finalAnswer },
+      },
+    ],
     totalDuration: 0,
     logs: '',
     logFile: '',

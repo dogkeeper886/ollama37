@@ -9,13 +9,12 @@
  * (simpleContentCheck) instead of being written twice, once more in jq (#535).
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
-import { execa } from 'execa';
 import { type GenerateResponse } from 'ollama';
 import { simpleContentCheck } from '../src/perf/content-check.js';
 import { ollamaClient } from '../src/ollama-client.js';
+import { serverComputeApps } from './gpu.js';
 
 const HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
-const CONTAINER = process.env.OLLAMA37_CONTAINER;
 const ollama = ollamaClient(HOST);
 
 /** A K80 die holds 11441 MiB. A model may span dies; it may not waste one. */
@@ -54,20 +53,9 @@ interface DieUsage {
   totalMib: number;
 }
 
-/**
- * VRAM this server's processes hold, per die. Attributed by process, not by
- * whole-GPU usage: another tenant's allocation is not this model's footprint.
- */
+/** VRAM the server holds, per die. */
 async function dieUsage(): Promise<DieUsage> {
-  const { stdout } = await execa('nvidia-smi', [
-    '--query-compute-apps=gpu_uuid,pid,used_memory,process_name',
-    '--format=csv,noheader,nounits',
-  ]);
-  const rows = stdout
-    .split('\n')
-    .map((l) => l.split(',').map((c) => c.trim()))
-    .filter((c) => c.length === 4 && /ollama/.test(c[3]))
-    .map((c) => ({ uuid: c[0], usedMib: Number(c[2]) }));
+  const rows = await serverComputeApps();
   return {
     active: new Set(rows.map((r) => r.uuid)).size,
     totalMib: rows.reduce((s, r) => s + r.usedMib, 0),
@@ -89,7 +77,19 @@ describe.each(MODELS)('%s', (model) => {
   let reply: GenerateResponse;
 
   beforeAll(async () => {
-    reply = await generate(model);
+    // ~10GB across two K80 dies: under back-to-back-model GPU pressure the first
+    // cold load can crash ("llama runner terminated") and ollama auto-retries.
+    // TC-MODELS-016 absorbed that with a 5-attempt warm-up, and running nineteen
+    // models in one process is that same pressure.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        reply = await generate(model);
+        break;
+      } catch (err) {
+        if (attempt === 5) throw err;
+        await new Promise((r) => setTimeout(r, 8000));
+      }
+    }
   });
 
   afterAll(async () => {

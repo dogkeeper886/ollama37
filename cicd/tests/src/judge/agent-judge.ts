@@ -290,7 +290,11 @@ export class AgentJudge {
     }
     // The answer is the agent's last message. Earlier ones are supersedes -- a
     // partial answer it then restated -- not content to be concatenated.
-    return this.messages.length ? this.messages[this.messages.length - 1].text : '';
+    // Every message, joined. ACP says a new messageId starts a new message, and
+    // consecutive messages are sequential parts of one turn — so an agent that
+    // answers "Yes." and then adds a closing remark keeps its verdict here. The
+    // reader below takes the LAST yes/no, which also absorbs a doubled answer.
+    return this.messages.map((m) => m.text).join('\n');
   }
 
   /**
@@ -369,11 +373,15 @@ export class AgentJudge {
     // so a match anchored on both sides finds nothing. Allowing the repeat is
     // narrower than dropping the trailing \b, which would match "no" inside
     // "nonsense" and fail a readable paragraph.
-    const m = responseText.toLowerCase().match(/\b(yes|no)\1?\b/);
-    if (!m) {
+    // The LAST yes/no in the reply, not the first: an agent that reasons before
+    // answering ("There is no gibberish here — yes, it reads fine") would
+    // otherwise be read off its reasoning. \b on both sides keeps "no" out of
+    // "nonsense".
+    const found = [...responseText.toLowerCase().matchAll(/\b(yes|no)\b/g)];
+    if (found.length === 0) {
       return { testId, pass: false, reason: `No yes/no in agent response: ${responseText.substring(0, 200)}` };
     }
-    const readable = m[1] === 'yes';
+    const readable = found[found.length - 1][1] === 'yes';
     return {
       testId,
       pass: readable,

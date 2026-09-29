@@ -148,7 +148,20 @@ function toTestResult(model: string, response: string, thinking: string): TestRe
       steps: [{ name: 'generate', command: '(captured /api/generate response)' }],
       criteria: JUDGE_CRITERIA,
     },
-    steps: [{ name: 'generate', command: '(captured /api/generate response)', stdout: output, stderr: '', exitCode: 0, duration: 0 }],
+    // `reply` as well as stdout: the agent judge reads the model's fields and
+    // abstains on a step that has none, so without this every model here would
+    // be judged pass without being read (#535).
+    steps: [
+      {
+        name: 'generate',
+        command: '(captured /api/generate response)',
+        stdout: output,
+        stderr: '',
+        exitCode: 0,
+        duration: 0,
+        reply: { response, thinking },
+      },
+    ],
     totalDuration: 0,
     logs: '',
     logFile: '',
