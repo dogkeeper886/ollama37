@@ -5,10 +5,6 @@ priority: 4
 timeout: 900000
 dependencies: []
 issue: 30
-intent:
-  user_story: |
-    Verify qwen3.5:9b answers on the K80
-
 steps:
   - name: Test inference
     command: |

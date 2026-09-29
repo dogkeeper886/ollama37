@@ -4,10 +4,6 @@ suite: runtime
 priority: 1
 timeout: 120000
 dependencies: []
-intent:
-  user_story: |
-    Start ollama37 container with GPU passthrough and verify healthy status
-
 steps:
   - name: Clean up old container
     command: cd ${OLLAMA37_ROOT}/docker && docker compose down 2>/dev/null || true

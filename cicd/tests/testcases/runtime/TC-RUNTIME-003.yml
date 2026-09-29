@@ -5,10 +5,6 @@ priority: 3
 timeout: 60000
 dependencies:
   - TC-RUNTIME-001
-intent:
-  user_story: |
-    Verify Ollama server health check and API responsiveness
-
 steps:
   - name: Check container health status
     command: docker inspect $OLLAMA37_CONTAINER --format='{{.State.Health.Status}}'

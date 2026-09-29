@@ -5,10 +5,6 @@ priority: 2
 timeout: 3600000
 dependencies:
   - TC-BUILD-001
-intent:
-  user_story: |
-    Build the ollama37 runtime Docker image from local source successfully
-
 steps:
   - name: Navigate and build runtime image
     command: cd ${OLLAMA37_ROOT}/docker && OLLAMA_VERSION=${OLLAMA_VERSION:-0.0.0} make build-runtime-local-no-cache 2>&1

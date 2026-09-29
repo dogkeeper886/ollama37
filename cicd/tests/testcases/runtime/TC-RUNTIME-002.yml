@@ -5,14 +5,6 @@ priority: 2
 timeout: 120000
 dependencies:
   - TC-RUNTIME-001
-intent:
-  user_story: |
-    Verify the GPU is detected by nvidia-smi and the Ollama CUDA runtime.
-  notes: |
-    Host-agnostic: runs on any GPU testbed (sm37 = Tesla K80, sm61 = GTX 1080 Ti, sm86 = RTX 3060, …).
-    Asserts the property "a CUDA GPU is present and in use", not a specific card,
-    driver, or compute capability — the identify-host action records those per run.
-
 steps:
   - name: Check nvidia-smi inside container
     command: docker exec $OLLAMA37_CONTAINER nvidia-smi

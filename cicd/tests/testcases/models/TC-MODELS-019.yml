@@ -5,10 +5,6 @@ priority: 3
 timeout: 900000
 dependencies: []
 issue: ""
-intent:
-  user_story: |
-    Verify ornith:35b answers on the K80
-
 steps:
   - name: Test inference
     command: |

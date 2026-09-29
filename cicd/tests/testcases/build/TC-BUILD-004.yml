@@ -5,10 +5,6 @@ priority: 4
 timeout: 60000
 dependencies:
   - TC-BUILD-002
-intent:
-  user_story: |
-    Retag the freshly-built ollama37:latest as the image docker compose reads
-
 steps:
   - name: Retag ollama37:latest as the compose image
     command: |

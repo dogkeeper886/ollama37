@@ -5,11 +5,6 @@ priority: 2
 timeout: 300000
 dependencies:
   - TC-INFERENCE-001
-intent:
-  user_story: |
-    Test inference via Ollama REST API and verify GPU memory allocation. The model
-    is adjustable via TEST_MODEL (default gemma3:4b), matching TC-INFERENCE-001.
-
 steps:
   - name: Test generate endpoint
     command: |

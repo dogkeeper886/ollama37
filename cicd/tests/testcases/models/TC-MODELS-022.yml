@@ -4,10 +4,6 @@ suite: models
 priority: 22
 timeout: 900000
 dependencies: []
-intent:
-  user_story: |
-    Verify deepseek-r1:8b answers on the K80
-
 steps:
   - name: Test inference
     command: |
