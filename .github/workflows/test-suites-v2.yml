@@ -1,10 +1,11 @@
-name: Models Tests (v2)
+name: Suite Tests (v2)
 
-# The models suite on the rewritten harness (#535): Vitest + the Ollama client,
-# replacing testcases/models/TC-MODELS-*.yml. Runs beside the old workflow until
-# the remaining suites are ported, then takes its name.
+# The rewritten harness (#535): Vitest + the Ollama client, replacing the YAML
+# testcases and the executor that ran them. One workflow for every ported suite,
+# because `vitest run` already selects and orders them. Runs beside the old
+# per-suite workflows until the remaining suites are ported.
 #
-# No judge input. These tests check that a model loads, answers in language and
+# No judge input. These suites check that a model loads, answers in language and
 # gives its dies back — every one of those is a deterministic assertion, and the
 # reply's content rules live in simpleContentCheck rather than in jq. Prose worth
 # a reader is throughput's business.
@@ -12,8 +13,21 @@ name: Models Tests (v2)
 on:
   workflow_dispatch:
     inputs:
+      suite:
+        description: "Which suite file to run. Empty = every ported suite."
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - "suites/models.test.ts"
+          - "suites/inference.test.ts"
       models:
-        description: "Space- or comma-separated models to run. Empty = the runner's OLLAMA37_MODELS, else the suite's built-in list."
+        description: "Space- or comma-separated models for the models suite. Empty = the runner's OLLAMA37_MODELS, else the suite's built-in list."
+        required: false
+        type: string
+      test_model:
+        description: "Model for the inference suite (TEST_MODEL). Empty = the suite default."
         required: false
         type: string
       debug:
@@ -32,8 +46,16 @@ on:
           - "sm86"
   workflow_call:
     inputs:
+      suite:
+        description: "Which suite file to run. Empty = every ported suite"
+        required: false
+        type: string
       models:
-        description: "Space- or comma-separated models to run"
+        description: "Space- or comma-separated models for the models suite"
+        required: false
+        type: string
+      test_model:
+        description: "Model for the inference suite (TEST_MODEL)"
         required: false
         type: string
       debug:
@@ -48,19 +70,19 @@ on:
         type: string
     outputs:
       result:
-        description: "Models test result"
-        value: ${{ jobs.models.outputs.result }}
+        description: "Suite test result"
+        value: ${{ jobs.suites.outputs.result }}
 
 jobs:
-  models:
-    name: Models Tests (v2)
+  suites:
+    name: Suite Tests (v2)
     runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
     env:
       OLLAMA37_ROOT: ${{ github.workspace }}
       OLLAMA_DEBUG: ${{ inputs.debug && '1' || '' }}
     outputs:
-      result: ${{ steps.models-tests.outcome }}
+      result: ${{ steps.suite-tests.outcome }}
 
     steps:
       - name: Checkout
@@ -75,8 +97,8 @@ jobs:
       - name: Yield GPU
         uses: ./.github/actions/yield-gpu
 
-      - name: Run models tests
-        id: models-tests
+      - name: Run suite tests
+        id: suite-tests
         run: |
           cd cicd/tests
           # The dispatch input wins; left empty, the runner's own OLLAMA37_MODELS
@@ -85,14 +107,18 @@ jobs:
           if [ -n "${{ inputs.models }}" ]; then
             export OLLAMA37_MODELS="${{ inputs.models }}"
           fi
+          if [ -n "${{ inputs.test_model }}" ]; then
+            export TEST_MODEL="${{ inputs.test_model }}"
+          fi
           echo "Models: ${OLLAMA37_MODELS:-(suite default)}"
+          echo "Suite:  ${{ inputs.suite || '(every ported suite)' }}"
           # No gpu-temp-guard: its 80°C abort killed full-suite runs (35549667518,
           # peak 81°C at case 9 of 19) while the K80 itself only slows at 88°C and
           # shuts down at 93°C. The card's own thresholds are the protection here.
           #
           # Vitest's exit code is the gate — there is no JSON to parse and no
           # `|| true` to undo. Each model unloads in its own afterAll.
-          npx vitest run suites/models.test.ts
+          npx vitest run ${{ inputs.suite }}
 
       - name: Restore GPU
         if: always()
@@ -102,6 +128,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: models-v2-results
+          name: suites-v2-results
           path: cicd/tests/results/junit.xml
           if-no-files-found: warn
