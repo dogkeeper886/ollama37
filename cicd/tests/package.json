@@ -21,7 +21,8 @@
     "commander": "^12.1.0",
     "dotenv": "^16.4.0",
     "glob": "^10.3.10",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "ollama": "^0.6.4"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

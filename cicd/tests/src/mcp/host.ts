@@ -14,6 +14,7 @@
  */
 import http from 'node:http';
 import https from 'node:https';
+import { Ollama, type ChatResponse, type Fetch, type Message, type Tool } from 'ollama';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { gpuInfo, gpuOffload, type GpuRow } from '../perf/gpu.js';
@@ -95,52 +96,61 @@ export interface McpTrajectory {
 }
 
 /** MCP tool {name, description?, inputSchema} → Ollama tools[] entry (near 1:1). */
-export function mcpToOllamaTools(tools: Array<{ name: string; description?: string; inputSchema?: unknown }>): unknown[] {
+export function mcpToOllamaTools(tools: Array<{ name: string; description?: string; inputSchema?: unknown }>): Tool[] {
   return tools.map((t) => ({
     type: 'function',
     function: {
       name: t.name,
       description: t.description ?? '',
-      parameters: t.inputSchema ?? { type: 'object', properties: {} },
+      parameters: (t.inputSchema ?? { type: 'object', properties: {} }) as Tool['function']['parameters'],
     },
   }));
 }
 
-/** POST /api/chat over node:http so the per-call timeout is honored end-to-end.
- *  fetch() (undici) imposes its own ~300s headers/body timeout that AbortSignal
- *  can't lift — it silently kills slow K80 generations at 5 min. node:http has no
- *  such cap, so timeoutMs (via AbortSignal) is the only deadline. */
-async function chat(host: string, model: string, messages: unknown[], tools: unknown[], numCtx: number, numBatch: number | undefined, timeoutMs: number): Promise<any> {
-  const batchOpt = numBatch ? { num_batch: numBatch } : {};
-  const body = JSON.stringify({ model, messages, tools, stream: false, options: { temperature: 0, seed: 42, num_ctx: numCtx, ...batchOpt } });
-  const url = new URL(`${host}/api/chat`);
-  const transport = url.protocol === 'https:' ? https : http;
-  return new Promise((resolve, reject) => {
-    const req = transport.request(
-      url,
-      { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } },
-      (res) => {
+/** A `fetch` implemented over node:http, for the Ollama client to use instead of the
+ *  global one. undici's fetch imposes its own ~300s headers/body timeout that
+ *  AbortSignal can't lift — it silently kills slow K80 generations at 5 min. node:http
+ *  has no such cap, so timeoutMs is the only deadline. The client still builds every
+ *  request and reads every response; this replaces the socket underneath it. */
+function nodeFetch(timeoutMs: number): Fetch {
+  return (input, init) =>
+    new Promise<Response>((resolve, reject) => {
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      const transport = url.protocol === 'https:' ? https : http;
+      const body = init?.body as string | undefined;
+
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((v, k) => (headers[k] = v));
+      if (body !== undefined) headers['content-length'] = String(Buffer.byteLength(body));
+
+      const req = transport.request(url, { method: init?.method ?? 'GET', headers }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
         // The response is a separate emitter from req — a reset mid-body (a real risk on a
         // slow/OOMing K80 backend) errors here, not on req. Without this it's an uncaught throw.
         res.on('error', reject);
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-          } catch {
-            reject(new Error('ollama /api/chat: invalid JSON response'));
-          }
-        });
-      },
-    );
-    const signal = AbortSignal.timeout(timeoutMs);
-    const onAbort = () => req.destroy(new Error(`ollama /api/chat timed out after ${timeoutMs}ms`));
-    signal.addEventListener('abort', onAbort, { once: true });
-    req.on('close', () => signal.removeEventListener('abort', onAbort));
-    req.on('error', reject);
-    req.end(body);
-  });
+        res.on('end', () =>
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: res.statusCode ?? 502,
+              statusText: res.statusMessage ?? '',
+              // node lowercases header names and gives set-cookie as an array; the client
+              // reads content-type only, so keep the plain string ones.
+              headers: Object.fromEntries(
+                Object.entries(res.headers).filter((e): e is [string, string] => typeof e[1] === 'string'),
+              ),
+            }),
+          ),
+        );
+      });
+
+      const signal = AbortSignal.timeout(timeoutMs);
+      const onAbort = () => req.destroy(new Error(`ollama request timed out after ${timeoutMs}ms`));
+      signal.addEventListener('abort', onAbort, { once: true });
+      req.on('close', () => signal.removeEventListener('abort', onAbort));
+      req.on('error', reject);
+      req.end(body);
+    });
 }
 
 /** Evict a model from Ollama (keep_alive: 0). Best-effort: a benchmark loops over models
@@ -149,12 +159,7 @@ async function chat(host: string, model: string, messages: unknown[], tools: unk
  *  timings, risking OOM). A failed unload must never fail the test. */
 export async function unloadModel(host: string, model: string): Promise<void> {
   try {
-    await fetch(`${host}/api/generate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, keep_alive: 0 }),
-      signal: AbortSignal.timeout(30000),
-    });
+    await new Ollama({ host, fetch: nodeFetch(30000) }).generate({ model, prompt: '', keep_alive: 0 });
   } catch {
     /* best-effort */
   }
@@ -193,6 +198,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
   const timeoutMs = Number.isFinite(reqMs) && reqMs > 0 ? Math.min(reqMs, 3_600_000) : 600000;
   let totalDurNs = 0;
   let evalDurNs = 0;
+  const ollama = new Ollama({ host: opts.host, fetch: nodeFetch(timeoutMs) });
 
   // One client per server; their tools are merged into a single menu, and a tool
   // call routes back to the server that owns the name (toolToClient).
@@ -227,7 +233,7 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     saturated: false,
   };
 
-  const messages: any[] = [{ role: 'user', content: opts.prompt }];
+  const messages: Message[] = [{ role: 'user', content: opts.prompt }];
 
   try {
     // Connect every server, list its tools, and merge into one menu. A tool name
@@ -250,32 +256,30 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     traj.toolNames = merged.map((t) => t.name);
     const tools = mcpToOllamaTools(merged);
 
-    for (let i = 0; i < maxIters; i++) {
-      const raw = await chat(opts.host, opts.model, messages, tools, numCtx, opts.numBatch, timeoutMs);
+    const batchOpt = opts.numBatch ? { num_batch: opts.numBatch } : {};
 
-      if (!raw || typeof raw !== 'object') {
-        throw new Error('ollama /api/chat: no/invalid response');
-      }
-      // Ollama returns {error: "...does not support tools"} when the model's
-      // template can't do tool calling — a clean capability verdict, not a crash.
-      if (raw.error) {
-        if (/does not support tools/i.test(String(raw.error))) traj.supported = false;
-        traj.error = String(raw.error);
-        return traj;
-      }
+    for (let i = 0; i < maxIters; i++) {
+      const raw: ChatResponse = await ollama.chat({
+        model: opts.model,
+        messages,
+        tools,
+        stream: false,
+        options: { temperature: 0, seed: 42, num_ctx: numCtx, ...batchOpt },
+      });
+
       // Accumulate generation perf across the rounds (Ollama durations are ns).
-      traj.inTokens += raw.prompt_eval_count ?? 0;
-      traj.maxPromptTokens = Math.max(traj.maxPromptTokens, raw.prompt_eval_count ?? 0);
-      traj.outTokens += raw.eval_count ?? 0;
-      totalDurNs += raw.total_duration ?? 0;
-      evalDurNs += raw.eval_duration ?? 0;
+      traj.inTokens += raw.prompt_eval_count;
+      traj.maxPromptTokens = Math.max(traj.maxPromptTokens, raw.prompt_eval_count);
+      traj.outTokens += raw.eval_count;
+      totalDurNs += raw.total_duration;
+      evalDurNs += raw.eval_duration;
       traj.totalDurationS = round2(totalDurNs / 1e9);
       traj.evalTps = tps(traj.outTokens, evalDurNs);
 
       // Window saturation: this round's processed prompt + generated tokens reached
       // num_ctx → the KV cache filled and decode ran under eviction, so evalTps is not a
       // clean figure. Catches input truncation (eval=0) AND silent gen-time fill (#449).
-      if ((raw.prompt_eval_count ?? 0) + (raw.eval_count ?? 0) >= numCtx) traj.saturated = true;
+      if (raw.prompt_eval_count + raw.eval_count >= numCtx) traj.saturated = true;
 
       // Snapshot per-die VRAM + offload once, now that the first round has loaded
       // the model. Fit is reservation-driven (stable while resident), so one
@@ -298,18 +302,18 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
       }
 
       const msg = raw.message;
-      const toolCalls: any[] = msg?.tool_calls ?? [];
+      const toolCalls = msg.tool_calls ?? [];
 
       if (toolCalls.length === 0) {
-        traj.finalAnswer = msg?.content ?? '';
+        traj.finalAnswer = msg.content;
         return traj;
       }
 
       // Echo the assistant's tool-call turn (normalized), then run each call.
-      messages.push({ role: 'assistant', content: msg?.content ?? '', tool_calls: toolCalls });
+      messages.push({ role: 'assistant', content: msg.content, tool_calls: toolCalls });
       for (const tc of toolCalls) {
-        const name = tc.function?.name ?? '';
-        const args = asArgs(tc.function?.arguments);
+        const name = tc.function.name;
+        const args = asArgs(tc.function.arguments);
         traj.toolCalls.push({ name, arguments: args });
 
         // A bad tool name / args throws — but "the model picked wrong" is exactly
@@ -339,9 +343,12 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
     traj.error = `no final answer within ${maxIters} tool rounds`;
     return traj;
   } catch (e) {
-    // Connect/list/transport failure or an Ollama HTTP/JSON failure: return a
-    // trajectory carrying the error rather than throwing.
+    // Connect/list/transport failure or an Ollama HTTP failure: return a trajectory
+    // carrying the error rather than throwing. Ollama answers 400 "...does not support
+    // tools" when the model's template can't do tool calling, and the client raises that
+    // message — a clean capability verdict, not a crash.
     traj.error = e instanceof Error ? e.message : String(e);
+    if (/does not support tools/i.test(traj.error)) traj.supported = false;
     return traj;
   } finally {
     for (const { client } of clients) await client.close().catch(() => {});
