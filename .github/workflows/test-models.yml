@@ -78,14 +78,7 @@ jobs:
         run: cd cicd/tests && npm ci
 
       - name: Yield GPU
-        run: |
-          [ -n "${OLLAMA37_SERVICE:-}" ] || { echo "No OLLAMA37_SERVICE on this host"; exit 0; }
-          systemctl --user stop 'ollama37-*'
-          if [ -n "${OLLAMA37_YIELD_SERVICE:-}" ]; then systemctl --user stop "$OLLAMA37_YIELD_SERVICE"; fi
-          systemctl --user start "$OLLAMA37_SERVICE"
-          # integer >= 1 tries, 2 s apart
-          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
-          echo "::error::$OLLAMA37_SERVICE did not come up"; exit 1
+        uses: ./.github/actions/yield-gpu
 
       - name: Run models tests
         id: models-tests
@@ -125,15 +118,7 @@ jobs:
 
       - name: Restore GPU
         if: always()
-        run: |
-          [ -n "${OLLAMA37_SERVICE:-}" ] || exit 0
-          systemctl --user stop "$OLLAMA37_SERVICE"
-          [ -n "${OLLAMA37_YIELD_SERVICE:-}" ] || exit 0
-          systemctl --user is-enabled --quiet "$OLLAMA37_YIELD_SERVICE" || exit 0
-          systemctl --user start "$OLLAMA37_YIELD_SERVICE"
-          # integer >= 1 tries, 2 s apart
-          for i in $(seq 1 60); do curl -sf "${OLLAMA_HOST:-http://localhost:11434}/api/tags" >/dev/null && exit 0; sleep 2; done
-          echo "::error::$OLLAMA37_YIELD_SERVICE did not come back"; exit 1
+        uses: ./.github/actions/restore-gpu
 
       - name: Agent judge
         if: ${{ !cancelled() && (inputs.judge_mode || 'dual') == 'dual' }}
