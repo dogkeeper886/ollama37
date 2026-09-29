@@ -17,13 +17,13 @@ on:
       # `cli.ts bench-throughput --context <positive integer>` directly, as
       # test-report-sweep.yml does.
       judge_mode:
-        description: "Output validation mode (simple = response non-empty; dual = also run the keyless agent judge for meaningfulness)"
+        description: "Output validation mode (dual = the script checks plus the keyless agent judge; simple = the script checks only)"
         required: false
-        default: "simple"
+        default: "dual"
         type: choice
         options:
-          - "simple"
           - "dual"
+          - "simple"
       runner_label:
         description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti, sm86 = RTX 3060 (models must fit one card: 11 / 12 GiB)."
         required: false
@@ -154,7 +154,7 @@ jobs:
           echo "::error::$OLLAMA37_YIELD_SERVICE did not come back"; exit 1
 
       - name: Agent judge
-        if: ${{ !cancelled() && (inputs.judge_mode || 'simple') == 'dual' }}
+        if: ${{ !cancelled() && (inputs.judge_mode || 'dual') == 'dual' }}
         env:
           # simple | dual
           JUDGE_MODE: dual
