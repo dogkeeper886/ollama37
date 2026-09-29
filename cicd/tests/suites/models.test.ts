@@ -10,11 +10,13 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { execa } from 'execa';
-import { Ollama, type GenerateResponse } from 'ollama';
+import { type GenerateResponse } from 'ollama';
 import { simpleContentCheck } from '../src/perf/content-check.js';
+import { ollamaClient } from '../src/ollama-client.js';
 
 const HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
-const ollama = new Ollama({ host: HOST });
+const CONTAINER = process.env.OLLAMA37_CONTAINER;
+const ollama = ollamaClient(HOST);
 
 /** A K80 die holds 11441 MiB. A model may span dies; it may not waste one. */
 const DIE_MIB = 11441;

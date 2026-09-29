@@ -126,7 +126,9 @@ export class AgentJudge {
             && u.content.type === 'text') {
           this.streamed.push({ at: Date.now(), text: u.content.text });
           if (u.sessionUpdate === 'agent_message_chunk') {
-            const id = (u as { messageId?: string }).messageId;
+            // ACP types this MessageId | null, so an explicit null must not read as a
+          // different message from an absent field — that would split one reply in two.
+          const id = (u as { messageId?: string | null }).messageId ?? undefined;
             const last = this.messages[this.messages.length - 1];
             // Same message -> same chunk stream, so append. A different id is a new
             // message and must not be glued onto the previous one.
@@ -258,10 +260,6 @@ export class AgentJudge {
     return `Is this paragraph readable language? yes or no\n\n"${this.truncate(paragraph, CONFIG.judge.stdoutLimit)}"`;
   }
 
-  /**
-   * Extract the first JSON object from a model response, tolerating prose or
-   * markdown fences around it.
-   */
   /**
    * Run one prompt turn through the agent and return its raw reply text.
    * Bounded by CONFIG.judge.timeout. On timeout/failure the turn isn't actually

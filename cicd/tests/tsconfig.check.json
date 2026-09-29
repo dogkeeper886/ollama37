@@ -1,0 +1,8 @@
+// Type-checks the whole tree, tests included. The build config keeps rootDir at
+// src/ so dist/ stays flat, which leaves suites/ unchecked — and Vitest strips
+// types without checking them, so nothing else would catch an error there.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "noEmit": true, "types": ["node"] },
+  "include": ["src/**/*", "suites/**/*", "vitest.config.ts"]
+}

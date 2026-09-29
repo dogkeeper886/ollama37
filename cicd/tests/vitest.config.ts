@@ -10,11 +10,12 @@ export default defineConfig({
     // false pins maxWorkers to 1, so the files run one after another in one process.
     fileParallelism: false,
     sequence: { concurrent: false },
-    // A 27b model on a K80 loads for minutes before it emits a token. The 5s
-    // default fails every test here; 15 minutes matches the YAML testcases'
-    // own timeout.
-    testTimeout: 900_000,
-    hookTimeout: 900_000,
+    // A 27b model on a K80 loads for minutes before it emits a token, and the
+    // generate itself runs long: the YAML testcases allowed up to 20 minutes per
+    // step. The 5s default fails every test here, and 15 would have been stricter
+    // than what it replaces.
+    testTimeout: 1_200_000,
+    hookTimeout: 1_200_000,
     reporters: process.env.GITHUB_ACTIONS ? ['default', 'github-actions', 'junit'] : ['default'],
     outputFile: { junit: 'results/junit.xml' },
   },

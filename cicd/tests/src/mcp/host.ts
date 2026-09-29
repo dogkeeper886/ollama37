@@ -12,9 +12,8 @@
  * support is reported `supported:false` — a clean verdict, not a crash. The
  * server choice + its credentials are config, not code.
  */
-import http from 'node:http';
-import https from 'node:https';
-import { Ollama, type ChatResponse, type Fetch, type Message, type Tool } from 'ollama';
+import { Ollama, type ChatResponse, type Message, type Tool } from 'ollama';
+import { nodeFetch } from '../ollama-client.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { gpuInfo, gpuOffload, type GpuRow } from '../perf/gpu.js';
@@ -105,52 +104,6 @@ export function mcpToOllamaTools(tools: Array<{ name: string; description?: stri
       parameters: (t.inputSchema ?? { type: 'object', properties: {} }) as Tool['function']['parameters'],
     },
   }));
-}
-
-/** A `fetch` implemented over node:http, for the Ollama client to use instead of the
- *  global one. undici's fetch imposes its own ~300s headers/body timeout that
- *  AbortSignal can't lift — it silently kills slow K80 generations at 5 min. node:http
- *  has no such cap, so timeoutMs is the only deadline. The client still builds every
- *  request and reads every response; this replaces the socket underneath it. */
-function nodeFetch(timeoutMs: number): Fetch {
-  return (input, init) =>
-    new Promise<Response>((resolve, reject) => {
-      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-      const transport = url.protocol === 'https:' ? https : http;
-      const body = init?.body as string | undefined;
-
-      const headers: Record<string, string> = {};
-      new Headers(init?.headers).forEach((v, k) => (headers[k] = v));
-      if (body !== undefined) headers['content-length'] = String(Buffer.byteLength(body));
-
-      const req = transport.request(url, { method: init?.method ?? 'GET', headers }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        // The response is a separate emitter from req — a reset mid-body (a real risk on a
-        // slow/OOMing K80 backend) errors here, not on req. Without this it's an uncaught throw.
-        res.on('error', reject);
-        res.on('end', () =>
-          resolve(
-            new Response(Buffer.concat(chunks), {
-              status: res.statusCode ?? 502,
-              statusText: res.statusMessage ?? '',
-              // node lowercases header names and gives set-cookie as an array; the client
-              // reads content-type only, so keep the plain string ones.
-              headers: Object.fromEntries(
-                Object.entries(res.headers).filter((e): e is [string, string] => typeof e[1] === 'string'),
-              ),
-            }),
-          ),
-        );
-      });
-
-      const signal = AbortSignal.timeout(timeoutMs);
-      const onAbort = () => req.destroy(new Error(`ollama request timed out after ${timeoutMs}ms`));
-      signal.addEventListener('abort', onAbort, { once: true });
-      req.on('close', () => signal.removeEventListener('abort', onAbort));
-      req.on('error', reject);
-      req.end(body);
-    });
 }
 
 /** Evict a model from Ollama (keep_alive: 0). Best-effort: a benchmark loops over models
@@ -268,18 +221,24 @@ export async function runMcpHost(opts: McpHostOptions): Promise<McpTrajectory> {
       });
 
       // Accumulate generation perf across the rounds (Ollama durations are ns).
-      traj.inTokens += raw.prompt_eval_count;
-      traj.maxPromptTokens = Math.max(traj.maxPromptTokens, raw.prompt_eval_count);
-      traj.outTokens += raw.eval_count;
-      totalDurNs += raw.total_duration;
-      evalDurNs += raw.eval_duration;
+      // Every field of api.Metrics is `omitempty` (api/types.go:383), so a round
+      // that generated nothing omits eval_count entirely — and the client types it
+      // as a required number. Without these the sums go NaN and the saturation
+      // check below, which exists for exactly the eval=0 case, stops firing.
+      const promptEval = raw.prompt_eval_count ?? 0;
+      const evalCount = raw.eval_count ?? 0;
+      traj.inTokens += promptEval;
+      traj.maxPromptTokens = Math.max(traj.maxPromptTokens, promptEval);
+      traj.outTokens += evalCount;
+      totalDurNs += raw.total_duration ?? 0;
+      evalDurNs += raw.eval_duration ?? 0;
       traj.totalDurationS = round2(totalDurNs / 1e9);
       traj.evalTps = tps(traj.outTokens, evalDurNs);
 
       // Window saturation: this round's processed prompt + generated tokens reached
       // num_ctx → the KV cache filled and decode ran under eviction, so evalTps is not a
       // clean figure. Catches input truncation (eval=0) AND silent gen-time fill (#449).
-      if (raw.prompt_eval_count + raw.eval_count >= numCtx) traj.saturated = true;
+      if (promptEval + evalCount >= numCtx) traj.saturated = true;
 
       // Snapshot per-die VRAM + offload once, now that the first round has loaded
       // the model. Fit is reservation-driven (stable while resident), so one

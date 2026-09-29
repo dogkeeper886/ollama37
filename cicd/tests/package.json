@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc -p tsconfig.check.json",
     "test": "tsx src/cli.ts run",
     "test:build": "tsx src/cli.ts run --suite build",
     "test:runtime": "tsx src/cli.ts run --suite runtime",

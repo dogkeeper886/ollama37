@@ -43,8 +43,6 @@ export const CONFIG = {
     loopCheckMs: 5000,
     loopLimit: 100,
     stdoutLimit: 1000,
-    stderrLimit: 500,
-    logsLimit: 3000,
   },
 
   // MCP tool-call test (cli.ts test-mcp). Drives a REAL stdio MCP server so a

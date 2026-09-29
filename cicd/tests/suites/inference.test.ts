@@ -10,11 +10,14 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { execa } from 'execa';
-import { Ollama, type GenerateResponse } from 'ollama';
+import { type GenerateResponse } from 'ollama';
+import { ollamaClient } from '../src/ollama-client.js';
 
 const HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
 const MODEL = process.env.TEST_MODEL ?? 'gemma3:4b';
-const ollama = new Ollama({ host: HOST });
+// A cold registry pull buffers the whole download before answering, so it needs
+// the same unbounded socket as a slow generate.
+const ollama = ollamaClient(HOST);
 
 /** MiB held on any die by this server's processes. */
 async function ollamaVramMib(): Promise<number> {

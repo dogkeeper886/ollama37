@@ -10,9 +10,10 @@
  */
 import { describe, test, expect } from 'vitest';
 import { execa } from 'execa';
+import { flag } from './gates.js';
 
 const ROOT = process.env.OLLAMA37_ROOT ?? `${process.cwd()}/../..`;
-const BUILD_IMAGE = Boolean(process.env.OLLAMA37_BUILD_IMAGE);
+const BUILD_IMAGE = flag('OLLAMA37_BUILD_IMAGE');
 
 const docker = (args: string[]) => execa('docker', args);
 
@@ -49,13 +50,15 @@ describe('runtime image', () => {
   test.skipIf(!BUILD_IMAGE)(
     'builds from local source',
     async () => {
-      const { stdout } = await execa('make', ['build-runtime-local-no-cache'], {
+      // The YAML ran this as `2>&1`, so its reject patterns saw BuildKit's output,
+      // which docker writes to stderr. `all` is execa's merged stream.
+      const { all } = await execa('make', ['build-runtime-local-no-cache'], {
         cwd: `${ROOT}/docker`,
         env: { OLLAMA_VERSION: process.env.OLLAMA_VERSION ?? '0.0.0' },
         all: true,
       });
-      expect(stdout).toContain('Runtime image built successfully');
-      expect(stdout).not.toMatch(/[Ee]rror:/);
+      expect(all).toContain('Runtime image built successfully');
+      expect(all).not.toMatch(/[Ee]rror:/);
     },
     3_600_000,
   );
@@ -74,7 +77,10 @@ describe('runtime image', () => {
     expect(gb).toBeLessThanOrEqual(3);
   });
 
-  test('carries the tag compose reads', async ({ annotate }) => {
+  // Only behind a build. TC-BUILD-004 depended on TC-BUILD-002, so the retag
+  // never ran on its own; retagging a stale local ollama37:latest as the compose
+  // image makes the next `compose up` serve the old binary.
+  test.skipIf(!BUILD_IMAGE)('carries the tag compose reads', async ({ annotate }) => {
     await docker(['tag', 'ollama37:latest', 'dogkeeper886/ollama37:latest']);
     const { stdout } = await docker(['image', 'inspect', 'dogkeeper886/ollama37:latest', '--format', '{{.Id}}']);
     await annotate(stdout.trim());

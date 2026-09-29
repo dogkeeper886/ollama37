@@ -9,11 +9,12 @@
  */
 import { describe, test, expect, beforeAll } from 'vitest';
 import { execa } from 'execa';
+import { flag } from './gates.js';
 
 const ROOT = process.env.OLLAMA37_ROOT ?? `${process.cwd()}/../..`;
 const CONTAINER = process.env.OLLAMA37_CONTAINER ?? 'ollama37';
 const HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
-const RESTART = Boolean(process.env.OLLAMA37_RESTART_CONTAINER);
+const RESTART = flag('OLLAMA37_RESTART_CONTAINER');
 
 const compose = (args: string[]) => execa('docker', ['compose', ...args], { cwd: `${ROOT}/docker` });
 const inContainer = (args: string[]) => execa('docker', ['exec', CONTAINER, ...args]);
@@ -81,14 +82,24 @@ describe('/api/metrics', () => {
   let body: Record<string, unknown>;
   let status: number;
 
+  let raw: string;
+
   beforeAll(async () => {
     const res = await fetch(`${HOST}/api/metrics`);
     status = res.status;
-    body = (await res.json()) as Record<string, unknown>;
+    // Read as text and parse after the status assertion: an image without this
+    // endpoint answers HTML, and parsing first fails every test in this block
+    // with a syntax error instead of reporting the status.
+    raw = await res.text();
+    try {
+      body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      body = {};
+    }
   });
 
   test('answers 200', () => {
-    expect(status).toBe(200);
+    expect(status, raw.slice(0, 200)).toBe(200);
   });
 
   test('carries gpus, models, errors and totals', () => {

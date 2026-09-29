@@ -127,26 +127,34 @@ jobs:
           # should happen because someone ran "the tests".
           OLLAMA37_BUILD_IMAGE: ${{ inputs.build_image && '1' || '' }}
           OLLAMA37_RESTART_CONTAINER: ${{ inputs.restart_container && '1' || '' }}
+          # Through env, never interpolated into the script: workflow_call passes
+          # these as free-form strings, and ${{ }} substitutes before bash parses,
+          # so a value holding a quote or $(…) would run on the self-hosted runner.
+          IN_MODELS: ${{ inputs.models }}
+          IN_TEST_MODEL: ${{ inputs.test_model }}
+          IN_SUITE: ${{ inputs.suite }}
         run: |
           cd cicd/tests
           # The dispatch input wins; left empty, the runner's own OLLAMA37_MODELS
           # stands, which is how sm61 and sm86 name the models that fit one card.
           # Exporting an empty value here would shadow it.
-          if [ -n "${{ inputs.models }}" ]; then
-            export OLLAMA37_MODELS="${{ inputs.models }}"
+          if [ -n "$IN_MODELS" ]; then
+            export OLLAMA37_MODELS="$IN_MODELS"
           fi
-          if [ -n "${{ inputs.test_model }}" ]; then
-            export TEST_MODEL="${{ inputs.test_model }}"
+          if [ -n "$IN_TEST_MODEL" ]; then
+            export TEST_MODEL="$IN_TEST_MODEL"
           fi
           echo "Models: ${OLLAMA37_MODELS:-(suite default)}"
-          echo "Suite:  ${{ inputs.suite || '(every ported suite)' }}"
+          echo "Suite:  ${IN_SUITE:-(every ported suite)}"
           # No gpu-temp-guard: its 80°C abort killed full-suite runs (35549667518,
           # peak 81°C at case 9 of 19) while the K80 itself only slows at 88°C and
           # shuts down at 93°C. The card's own thresholds are the protection here.
           #
           # Vitest's exit code is the gate — there is no JSON to parse and no
           # `|| true` to undo. Each model unloads in its own afterAll.
-          npx vitest run ${{ inputs.suite }}
+          # Unquoted on purpose: empty must expand to no argument, and the value is
+          # constrained to the choice list above.
+          npx vitest run $IN_SUITE
 
       - name: Restore GPU
         if: always()

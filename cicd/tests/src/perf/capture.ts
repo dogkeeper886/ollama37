@@ -7,7 +7,8 @@
  * `thinking` are kept separate so a thinking model with an empty `response`
  * is still judged on its real output.
  */
-import { Ollama, type GenerateResponse } from 'ollama';
+import { type GenerateResponse } from 'ollama';
+import { ollamaClient } from '../ollama-client.js';
 
 export interface CaptureResult {
   model: string;
@@ -34,7 +35,7 @@ function tps(count: number, durationNs: number): number {
 
 /** Release a model's VRAM. Safe when nothing is loaded; failures are ignored. */
 export async function unloadModel(host: string, model: string): Promise<void> {
-  await new Ollama({ host }).generate({ model, prompt: '', keep_alive: 0 }).catch(() => {});
+  await ollamaClient(host).generate({ model, prompt: '', keep_alive: 0 }).catch(() => {});
 }
 
 export async function captureResponse(
@@ -49,7 +50,7 @@ export async function captureResponse(
    *  false, so every existing caller keeps today's load-run-unload behaviour. */
   keepLoaded = false
 ): Promise<CaptureResult> {
-  const ollama = new Ollama({ host });
+  const ollama = ollamaClient(host);
 
   // num_batch must be set on the warmup too — Ollama reserves the compute graph
   // (the Q·Kᵀ score buffer) at load time, so the batch that decides VRAM is the
@@ -80,15 +81,18 @@ export async function captureResponse(
     throw new Error(`captureResponse: ${model} at ${host} — ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // Every field of api.Metrics is `omitempty` (api/types.go:383): a fully cached
+  // prompt or a reply with no tokens omits the count rather than sending 0, while
+  // the client types it as a required number. Guard each one or the record goes NaN.
   const result: CaptureResult = {
     model,
-    inTokens: raw.prompt_eval_count,
-    outTokens: raw.eval_count,
-    promptEvalTps: tps(raw.prompt_eval_count, raw.prompt_eval_duration),
-    evalTps: tps(raw.eval_count, raw.eval_duration),
-    totalDurationS: round2(raw.total_duration / 1e9),
-    loadDurationS: round2(raw.load_duration / 1e9),
-    doneReason: raw.done_reason,
+    inTokens: raw.prompt_eval_count ?? 0,
+    outTokens: raw.eval_count ?? 0,
+    promptEvalTps: tps(raw.prompt_eval_count ?? 0, raw.prompt_eval_duration ?? 0),
+    evalTps: tps(raw.eval_count ?? 0, raw.eval_duration ?? 0),
+    totalDurationS: round2((raw.total_duration ?? 0) / 1e9),
+    loadDurationS: round2((raw.load_duration ?? 0) / 1e9),
+    doneReason: raw.done_reason ?? '',
     response: raw.response ?? '',
     thinking: raw.thinking ?? '',
   };
