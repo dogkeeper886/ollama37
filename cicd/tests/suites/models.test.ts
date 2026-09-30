@@ -62,8 +62,20 @@ async function dieUsage(): Promise<DieUsage> {
   };
 }
 
+/**
+ * Share of a die a model may fill before one more die is expected rather than
+ * wasted. 1 unless listed.
+ *
+ * ornith:35b (~22.8 GB) is ~99.5% of two dies — too tight for real KV/context
+ * growth, so a 3-die split is correct ("can't safely fit two -> use three").
+ * TC-MODELS-019 carried this as `* 9 / 10`; the port dropped it and run
+ * 36710119123 failed ornith on 22751 MiB across 3 dies.
+ */
+const HEADROOM: Record<string, number> = { 'ornith:35b': 0.9 };
+
 /** One die, or a footprint that genuinely needs the dies it is spread over. */
-const fits = (u: DieUsage): boolean => u.active <= 1 || u.totalMib > (u.active - 1) * DIE_MIB;
+const fits = (u: DieUsage, model: string): boolean =>
+  u.active <= 1 || u.totalMib > (u.active - 1) * DIE_MIB * (HEADROOM[model] ?? 1);
 
 const generate = (model: string): Promise<GenerateResponse> =>
   ollama.generate({
@@ -118,13 +130,13 @@ describe.each(MODELS)('%s', (model) => {
     // allocation onto one die more than it needs. Reload once before calling it
     // a regression; overshooting twice is one.
     let usage = await dieUsage();
-    if (!fits(usage)) {
+    if (!fits(usage, model)) {
       await ollama.generate({ model, prompt: '', keep_alive: 0 }).catch(() => {});
       await generate(model);
       usage = await dieUsage();
       await annotate('reloaded once');
     }
     await annotate(`${usage.totalMib} MiB across ${usage.active} die(s)`);
-    expect(fits(usage), `${usage.totalMib} MiB fits in ${usage.active - 1} dies but uses ${usage.active}`).toBe(true);
+    expect(fits(usage, model), `${usage.totalMib} MiB fits in ${usage.active - 1} dies but uses ${usage.active}`).toBe(true);
   });
 });
