@@ -22,7 +22,7 @@ runs:
 
           # A host with the driver installed that cannot be queried is a broken host, not
           # a CPU host. Reporting "none detected" there would silently strip attribution
-          # from the result — the same reason gpu-temp-guard.sh aborts on unreadable polls.
+          # from the result — the same reason the old gpu-temp-guard.sh aborted on unreadable polls.
           # stderr goes to a file, never into the parsed output: a benign nvidia-smi
           # warning must not be mistaken for a GPU row.
           err="$(mktemp)"

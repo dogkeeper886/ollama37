@@ -20,4 +20,3 @@ docker/output/
 tests/node_modules/
 
 # Vitest reporter output (junit.xml), written per run.
-cicd/tests/results/

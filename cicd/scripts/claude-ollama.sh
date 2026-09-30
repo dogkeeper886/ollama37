@@ -6,9 +6,10 @@
 #   cicd/scripts/claude-ollama.sh --acp [model]
 #
 # --acp starts the Claude ACP agent (the CI agent judge's default) instead of
-# the claude CLI, so the judge can run on ollama. From cicd/tests:
+# the claude CLI, so the judge can run on ollama. The agent is an npm dependency
+# of the archived v2 harness (#542); from archive/v2-test-framework/tests:
 #
-#   JUDGE_MODE=dual JUDGE_AGENT="../scripts/claude-ollama.sh --acp" npm run test
+#   JUDGE_MODE=dual JUDGE_AGENT="../../../cicd/scripts/claude-ollama.sh --acp" npm run test
 #
 # Both inputs are read from the environment under this script's own prefix, so
 # neither collides with another program's variables — notably OLLAMA_HOST, which
@@ -33,9 +34,9 @@ MODEL="${1:-${CLAUDE_OLLAMA_MODEL:-qwen3.8:27b}}"
 
 # The ACP agent is an npm dependency of the test runner and runs its own
 # bundled Claude binary, so it needs node rather than the claude CLI.
-ACP_ENTRY="$(dirname "$0")/../tests/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"
+ACP_ENTRY="$(dirname "$0")/../../archive/v2-test-framework/tests/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"
 if [ -n "$ACP" ]; then
-  [ -f "$ACP_ENTRY" ] || { echo "ACP agent not installed: run npm ci in cicd/tests" >&2; exit 1; }
+  [ -f "$ACP_ENTRY" ] || { echo "ACP agent not installed: run npm ci in archive/v2-test-framework/tests" >&2; exit 1; }
 else
   command -v claude >/dev/null || {
     echo "claude not found. Install: curl -fsSL https://claude.ai/install.sh | bash" >&2
