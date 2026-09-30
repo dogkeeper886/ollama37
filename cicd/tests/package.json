@@ -7,26 +7,18 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc -p tsconfig.check.json",
-    "test": "tsx src/cli.ts run",
-    "test:build": "tsx src/cli.ts run --suite build",
-    "test:runtime": "tsx src/cli.ts run --suite runtime",
-    "test:inference": "tsx src/cli.ts run --suite inference",
-    "list": "tsx src/cli.ts list",
+    "test": "vitest run",
     "dev": "tsx src/cli.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.47.0",
     "@agentclientprotocol/sdk": "^0.25.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.0",
-    "glob": "^10.3.10",
-    "js-yaml": "^4.1.0",
     "ollama": "^0.6.4"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.14.0",
     "execa": "^9.6.1",
     "tsx": "^4.16.0",

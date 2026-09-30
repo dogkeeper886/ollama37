@@ -63,7 +63,7 @@ jobs:
           NUM_BATCH: ${{ inputs.num_batch }}
         run: |
           # An empty input takes the host's list. The models suite subsets per host through
-          # the runner's OLLAMA37_TEST_IDS; this is throughput's equivalent, and it lives in
+          # the runner's OLLAMA37_MODELS; this is throughput's equivalent, and it lives in
           # the runner's own .env because actions/checkout@v4 cleans untracked files from the
           # checkout every run, so a repo-local .env cannot serve CI.
           # Resolved once here, then exported, so the benchmark and the unload step below
@@ -114,7 +114,7 @@ jobs:
           # No gpu-temp-guard: its 80°C abort killed sustained multi-model runs
           # (35549667518, peak 81°C at case 9 of 19) while the K80 itself only slows at
           # 88°C and shuts down at 93°C. The card's own thresholds are the protection
-          # here, as they are in test-models.yml.
+          # here, as they are in test-suites-v2.yml.
           # shellcheck disable=SC2086 -- intentional word splitting on models + flag
           npx tsx src/cli.ts bench-throughput $MODELS \
             --num-predict "${{ inputs.num_predict || '100' }}" \

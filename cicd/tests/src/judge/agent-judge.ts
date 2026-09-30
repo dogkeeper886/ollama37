@@ -255,9 +255,23 @@ export class AgentJudge {
    * the reply, and only what passes it reaches here. What is left needs a reader,
    * and it is one question: fluent words in an order that means nothing, which no
    * pattern catches and which is not random at the character level.
+   *
+   * The question names what "readable" means and the two shapes a healthy reply
+   * takes that the bare question read as failure. Asked "Is this paragraph
+   * readable language?", gpt-oss-64k:20b said "no" to a clean Lincoln rewrite 5 of
+   * 5 times and coin-flipped on a bulleted `thinking` cut off by num_predict — the
+   * throughput replies all end on budget, and a list is not a paragraph (#524).
+   * Probed 5 votes each on four real replies and three garbage texts (word salad,
+   * token soup, mixed junk): 7/20 readable passed before, 17/20 after, and the
+   * garbage failed 15/15 both times. Dropping the word-order clause passed 20/20
+   * readable but let word salad through once in five.
    */
   private buildPrompt(paragraph: string): string {
-    return `Is this paragraph readable language? yes or no\n\n"${this.truncate(paragraph, CONFIG.judge.stdoutLimit)}"`;
+    return (
+      'Is this text readable language, with words in an order that means something? ' +
+      'It may stop mid-sentence or be a list; that is fine. yes or no\n\n' +
+      `"${this.truncate(paragraph, CONFIG.judge.stdoutLimit)}"`
+    );
   }
 
   /**

@@ -266,8 +266,21 @@ export async function runThroughput(opts: ThroughputOptions): Promise<number> {
     // has hit and nothing currently guards.
     let cap;
     try {
-      // keepLoaded: the GPU snapshot below must read the model while it is resident.
-      cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true);
+      // Back-to-back models on the K80 now and then crash a cold load ("llama
+      // runner process has terminated"); gemma4:12b did in run 36574791702 and
+      // measured cleanly alone. The models suite absorbs it with 5 tries, 8s
+      // apart, and so does this. Only that error: anything else is the model's.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          // keepLoaded: the GPU snapshot below must read the model while it is resident.
+          cap = await captureResponse(host, model, PROMPT, numPredict, numCtx, numBatch, true);
+          break;
+        } catch (e) {
+          if (attempt === 5 || !String(e).includes('llama runner process has terminated')) throw e;
+          process.stderr.write(`  runner terminated on load, retry ${attempt}/4\n`);
+          await new Promise((r) => setTimeout(r, 8000));
+        }
+      }
     } catch (e) {
       process.stderr.write(`  ERROR: ${e instanceof Error ? e.message : e}\n`);
       await unloadModel(host, model);

@@ -27,21 +27,37 @@ async function health(): Promise<string> {
   return stdout.trim() || 'not_found';
 }
 
+/**
+ * Poll until the container is healthy, up to 60s — 30 attempts, 2s apart, the
+ * budget TC-RUNTIME-001 used.
+ *
+ * Whoever started the container did so moments ago: the Yield GPU step brings
+ * ollama37 up immediately before this suite runs, and a K80 host takes a while
+ * to pass its first health check. TC-RUNTIME-003 could assert `healthy` outright
+ * only because it depended on TC-RUNTIME-001, which had already waited. Nothing
+ * waits now unless this does (run 36709620849 read 'starting').
+ */
+async function waitForHealthy(): Promise<string> {
+  let status = await health();
+  for (let i = 0; i < 30 && status !== 'healthy'; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    status = await health();
+  }
+  return status;
+}
+
 describe('container', () => {
   test.skipIf(!RESTART)('starts under compose', async ({ annotate }) => {
     await compose(['down']).catch(() => {});
     await compose(['up', '-d']);
-    for (let i = 0; i < 30; i++) {
-      if ((await health()) === 'healthy') break;
-      await new Promise((r) => setTimeout(r, 2000));
-    }
+    await waitForHealthy();
     const { stdout } = await compose(['ps']);
     await annotate(stdout.split('\n').slice(1).join('\n'));
     expect(stdout).toContain('Up');
   });
 
   test('reports healthy', async ({ annotate }) => {
-    const status = await health();
+    const status = await waitForHealthy();
     await annotate(status);
     expect(status).toBe('healthy');
   });

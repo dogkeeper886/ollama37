@@ -151,6 +151,10 @@ jobs:
           fi
           echo "Models: ${OLLAMA37_MODELS:-(suite default)}"
           echo "Suite:  ${IN_SUITE:-(every ported suite)}"
+          # Named per suite: test-pipeline.yml calls this once per suite in one run,
+          # and upload-artifact@v4 rejects a second artifact of the same name.
+          # Written before vitest so a failing run still names its upload.
+          echo "artifact=suites-v2-$(basename "${IN_SUITE:-all}" .test.ts)" >> "$GITHUB_OUTPUT"
           # No gpu-temp-guard: its 80°C abort killed full-suite runs (35549667518,
           # peak 81°C at case 9 of 19) while the K80 itself only slows at 88°C and
           # shuts down at 93°C. The card's own thresholds are the protection here.
@@ -174,6 +178,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: suites-v2-results
+          name: ${{ steps.suite-tests.outputs.artifact || 'suites-v2-all' }}
           path: cicd/tests/results/junit.xml
           if-no-files-found: warn
