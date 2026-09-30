@@ -1,12 +1,15 @@
 /**
- * Call ollama /api/generate and project an enriched, typed perf record
- * (port of cicd/scripts/lib/response_capture.sh).
+ * Call ollama /api/generate through the official `ollama` client and project an
+ * enriched, typed perf record (port of cicd/scripts/lib/response_capture.sh).
  *
  * Sequence: warmup (1-token prime → loads model) → deterministic benchmark
  * generate (temperature 0, seed 42) → unload (keep_alive:0). `response` and
  * `thinking` are kept separate so a thinking model with an empty `response`
  * is still judged on its real output.
  */
+import { type GenerateResponse } from 'ollama';
+import { ollamaClient } from '../ollama-client.js';
+
 export interface CaptureResult {
   model: string;
   inTokens: number;
@@ -30,18 +33,9 @@ function tps(count: number, durationNs: number): number {
   return durationNs > 0 ? round2(count / (durationNs / 1e9)) : 0;
 }
 
-async function generate(host: string, body: Record<string, unknown>): Promise<any> {
-  const res = await fetch(`${host}/api/generate`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return res.json();
-}
-
 /** Release a model's VRAM. Safe when nothing is loaded; failures are ignored. */
 export async function unloadModel(host: string, model: string): Promise<void> {
-  await generate(host, { model, keep_alive: 0 }).catch(() => {});
+  await ollamaClient(host).generate({ model, prompt: '', keep_alive: 0 }).catch(() => {});
 }
 
 export async function captureResponse(
@@ -56,6 +50,8 @@ export async function captureResponse(
    *  false, so every existing caller keeps today's load-run-unload behaviour. */
   keepLoaded = false
 ): Promise<CaptureResult> {
+  const ollama = ollamaClient(host);
+
   // num_batch must be set on the warmup too — Ollama reserves the compute graph
   // (the Q·Kᵀ score buffer) at load time, so the batch that decides VRAM is the
   // one on the request that first loads the model. Omit entirely when unset so
@@ -66,23 +62,28 @@ export async function captureResponse(
   const ctxOpt = numCtx ? { num_ctx: numCtx } : {};
 
   // Warmup: load the model + prime caches (ignore failures).
-  await generate(host, { model, prompt: 'Hi', stream: false, options: { num_predict: 1, ...ctxOpt, ...batchOpt } }).catch(() => {});
+  await ollama
+    .generate({ model, prompt: 'Hi', stream: false, options: { num_predict: 1, ...ctxOpt, ...batchOpt } })
+    .catch(() => {});
 
-  // Benchmark call (deterministic).
-  const raw = await generate(host, {
-    model,
-    prompt,
-    stream: false,
-    options: { temperature: 0, seed: 42, num_predict: numPredict, ...ctxOpt, ...batchOpt },
-  });
-
-  // fetch does not throw on HTTP 4xx; ollama returns {error: "..."} for an
-  // unknown/unloadable model. Treat that as a failure (parity with curl -sf)
-  // rather than reporting a misleading all-zeros record.
-  if (!raw || typeof raw !== 'object' || raw.error) {
-    throw new Error(`captureResponse: ${model} at ${host} — ${raw?.error ?? 'no/invalid response'}`);
+  // Benchmark call (deterministic). The client throws on an API error, so an
+  // unknown or unloadable model surfaces as a rejection rather than an
+  // all-zeros record; name the model and host, which the client's message does not.
+  let raw: GenerateResponse;
+  try {
+    raw = await ollama.generate({
+      model,
+      prompt,
+      stream: false,
+      options: { temperature: 0, seed: 42, num_predict: numPredict, ...ctxOpt, ...batchOpt },
+    });
+  } catch (err) {
+    throw new Error(`captureResponse: ${model} at ${host} — ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // Every field of api.Metrics is `omitempty` (api/types.go:383): a fully cached
+  // prompt or a reply with no tokens omits the count rather than sending 0, while
+  // the client types it as a required number. Guard each one or the record goes NaN.
   const result: CaptureResult = {
     model,
     inTokens: raw.prompt_eval_count ?? 0,

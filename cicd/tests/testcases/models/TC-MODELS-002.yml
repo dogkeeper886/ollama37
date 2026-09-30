@@ -4,10 +4,6 @@ suite: models
 priority: 2
 timeout: 900000
 dependencies: []
-intent:
-  user_story: |
-    Verify gemma3:27b answers on the K80
-
 steps:
   - name: Test inference
     command: |

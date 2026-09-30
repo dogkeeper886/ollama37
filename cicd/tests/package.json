@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc -p tsconfig.check.json",
     "test": "tsx src/cli.ts run",
     "test:build": "tsx src/cli.ts run --suite build",
     "test:runtime": "tsx src/cli.ts run --suite runtime",
@@ -21,13 +22,16 @@
     "commander": "^12.1.0",
     "dotenv": "^16.4.0",
     "glob": "^10.3.10",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "ollama": "^0.6.4"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.14.0",
+    "execa": "^9.6.1",
     "tsx": "^4.16.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -5,10 +5,6 @@ priority: 2
 timeout: 600000
 dependencies: []
 issue: "438"
-intent:
-  user_story: |
-    Verify lfm2.5-thinking:1.2b answers on the K80
-
 steps:
   - name: Test inference
     command: |

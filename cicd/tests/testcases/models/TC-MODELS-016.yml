@@ -5,10 +5,6 @@ priority: 4
 timeout: 1200000
 dependencies: []
 issue: 367
-intent:
-  user_story: |
-    Verify gemma4:12b answers text, image and audio prompts on the K80
-
 steps:
   - name: Warm up (tolerate transient cold-load retry under suite GPU pressure)
     command: |

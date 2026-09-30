@@ -30,7 +30,6 @@ import {
 } from '@agentclientprotocol/sdk';
 import { TestResult, Judgment } from '../types.js';
 import { CONFIG } from '../config.js';
-import { extractJson } from './extract-json.js';
 
 export class AgentJudge {
   private agentCmd: string;
@@ -38,8 +37,16 @@ export class AgentJudge {
   private child?: ChildProcess;
   private conn?: ClientSideConnection;
   private sessionId?: string;
-  /** Accumulates the current turn's agent text (reset before each prompt). */
-  private turnText = '';
+  /**
+   * The current turn's agent messages, in arrival order (reset before each prompt).
+   *
+   * Kept per message rather than as one string, because ContentChunk carries a
+   * `messageId` and the schema says a change in it starts a NEW message. A turn can
+   * therefore hold several: this agent answers "Yes" with no messageId, then repeats
+   * "Yes" under `msg_...`. Concatenating across that boundary produced "YesYes", and
+   * before the answer was one word it produced the whole JSON verdict twice.
+   */
+  private messages: { id: string | undefined; text: string }[] = [];
   /** The current turn's streamed thinking and reply, timestamped, for the loop guard. */
   private streamed: { at: number; text: string }[] = [];
   /** Set by the loop guard when it cancels a turn; the turn then fails with this reason. */
@@ -118,7 +125,16 @@ export class AgentJudge {
         if ((u.sessionUpdate === 'agent_message_chunk' || u.sessionUpdate === 'agent_thought_chunk')
             && u.content.type === 'text') {
           this.streamed.push({ at: Date.now(), text: u.content.text });
-          if (u.sessionUpdate === 'agent_message_chunk') this.turnText += u.content.text;
+          if (u.sessionUpdate === 'agent_message_chunk') {
+            // ACP types this MessageId | null, so an explicit null must not read as a
+          // different message from an absent field — that would split one reply in two.
+          const id = (u as { messageId?: string | null }).messageId ?? undefined;
+            const last = this.messages[this.messages.length - 1];
+            // Same message -> same chunk stream, so append. A different id is a new
+            // message and must not be glued onto the previous one.
+            if (last && last.id === id) last.text += u.content.text;
+            else this.messages.push({ id, text: u.content.text });
+          }
         }
       },
       // A judge must not execute anything — refuse every tool-permission request.
@@ -225,98 +241,34 @@ export class AgentJudge {
   /**
    * Build structured JSON prompt for evaluation of a single test.
    */
-  private buildPrompt(result: TestResult): string {
-    const r = result;
-
-    const steps = r.steps.map((step, j) => {
-      const stepDef = r.testCase.steps[j];
-      const base = {
-        name: step.name,
-        command: step.command.trim(),
-        exit_code: step.exitCode,
-        duration_ms: step.duration,
-        timeout_ms: stepDef?.timeout || r.testCase.timeout,
-        stdout: this.truncate(step.stdout, CONFIG.judge.stdoutLimit),
-        stderr: this.truncate(step.stderr, CONFIG.judge.stderrLimit),
-      };
-      // A step that ran a model sends its reply as fields. `response` and
-      // `thinking` mean different things — a thinking model can fill one and
-      // leave the other empty — and `done_reason: length` means the token
-      // budget ended the reply rather than the model losing the thread. Glued
-      // into one blob, as they were before, none of that is legible.
-      if (!step.reply) return base;
-      const { response, thinking, toolCalls, error, doneReason, evalCount } = step.reply;
-      return {
-        ...base,
-        reply: {
-          response: this.truncate(response ?? '', CONFIG.judge.stdoutLimit),
-          thinking: this.truncate(thinking ?? '', CONFIG.judge.stdoutLimit),
-          ...(toolCalls ? { tool_calls: toolCalls } : {}),
-          ...(error ? { error } : {}),
-          done_reason: doneReason ?? '',
-          eval_count: evalCount ?? 0,
-        },
-      };
-    });
-
-    const promptData = {
-      role: `You judge ${CONFIG.projectName} test output.`,
-      rules: [
-        'An error in step stdout fails the test, e.g. {"error":"..."}',
-        'An error fails the test even at exit code 0',
-        'AI-generated text varies. Accept reasonable variation',
-        'Long durations within timeout are acceptable',
-        // Describes the fields; it does not say which to grade. That is the
-        // caller's criteria, because a thinking model can leave `response`
-        // empty and still have produced good output.
-        "A step's `reply` holds the model's own fields: `response` is the answer, `thinking` is its reasoning, and `done_reason: length` means the token budget ended the reply",
-      ],
-      test: {
-        id: r.testCase.id,
-        name: r.testCase.name,
-        suite: r.testCase.suite,
-        goal: r.testCase.goal || r.testCase.name,
-        criteria: r.testCase.criteria,
-        timeout_ms: r.testCase.timeout,
-        duration_ms: r.totalDuration,
-      },
-      steps,
-      container_logs: this.truncate(r.logs, CONFIG.judge.logsLimit),
-      respond: {
-        format: 'Respond with one JSON object',
-        fields: {
-          testId: r.testCase.id,
-          pass: 'the output meets every criterion',
-          reason: 'why',
-          evidence: 'the failing line; required when pass is false',
-        },
-      },
-    };
-
-    const prompt = JSON.stringify(promptData, null, 2);
-
-    // Log prompt stats
-    const totalStdout = r.steps.reduce((sum, s) => sum + s.stdout.length, 0);
-    const totalStderr = r.steps.reduce((sum, s) => sum + s.stderr.length, 0);
-    process.stderr.write(`  [judge] Prompt for ${r.testCase.id}: logs ${r.logs.length} chars, stdout ${totalStdout} chars, stderr ${totalStderr} chars\n`);
-    process.stderr.write(`  [judge] Prompt size: ${prompt.length} chars\n`);
-
-    return prompt;
+  /**
+   * One question, and the text to answer it about.
+   *
+   * The old payload sent a role, five rules, a goal, a criteria paragraph, the
+   * evidence and a response schema -- three instruction blocks owned by two files,
+   * arriving together with no precedence and contradicting each other, and never a
+   * question. A judge that wrote "this is coherent, readable English" and then
+   * returned pass:false was answering something nobody had asked.
+   *
+   * A script decides everything a script can: simpleContentCheck rejects empty
+   * output, output with no letters or digits, and one short unit repeated to fill
+   * the reply, and only what passes it reaches here. What is left needs a reader,
+   * and it is one question: fluent words in an order that means nothing, which no
+   * pattern catches and which is not random at the character level.
+   */
+  private buildPrompt(paragraph: string): string {
+    return `Is this paragraph readable language? yes or no\n\n"${this.truncate(paragraph, CONFIG.judge.stdoutLimit)}"`;
   }
 
-  /**
-   * Extract the first JSON object from a model response, tolerating prose or
-   * markdown fences around it.
-   */
   /**
    * Run one prompt turn through the agent and return its raw reply text.
    * Bounded by CONFIG.judge.timeout. On timeout/failure the turn isn't actually
    * cancelled — it keeps running on the session and its late chunks would bleed
-   * into the next test's reply (which shares this.turnText). So we tear the
+   * into the next test's reply (which shares this.messages). So we tear the
    * agent down here; the next test re-spawns a clean session via ensureStarted.
    */
   private async promptAgent(prompt: string): Promise<string> {
-    this.turnText = '';
+    this.messages = [];
     this.streamed = [];
     this.loopReason = undefined;
     const guard = setInterval(() => this.checkForLoop(), CONFIG.judge.loopCheckMs);
@@ -336,7 +288,13 @@ export class AgentJudge {
       this.kill();
       throw new Error(this.loopReason);
     }
-    return this.turnText;
+    // The answer is the agent's last message. Earlier ones are supersedes -- a
+    // partial answer it then restated -- not content to be concatenated.
+    // Every message, joined. ACP says a new messageId starts a new message, and
+    // consecutive messages are sequential parts of one turn — so an agent that
+    // answers "Yes." and then adds a closing remark keeps its verdict here. The
+    // reader below takes the LAST yes/no, which also absorbs a doubled answer.
+    return this.messages.map((m) => m.text).join('\n');
   }
 
   /**
@@ -370,10 +328,29 @@ export class AgentJudge {
    * Judge a single test result.
    */
   private async judgeOne(result: TestResult): Promise<Judgment> {
-    const prompt = this.buildPrompt(result);
     const testId = result.testCase.id;
 
-    const responseText = await this.promptAgent(prompt);
+    // The response, or the thinking when the response is empty -- the same two
+    // fields in the same order as simpleContentCheck, which already rejected the
+    // rows where both are empty. A response means the model finished, so the
+    // thinking behind it is working notes and a second paragraph would only drag
+    // the verdict; an empty response means the budget ran out mid-turn, and the
+    // thinking is then the only language the model produced.
+    //
+    // stdout stays out. It is the step's whole console output -- jq lines and
+    // sentinels around the prose -- and asking whether that is readable language
+    // earns a truthful "no" (TC-MODELS-003, run 36597608237).
+    const step = result.steps.find((s) => s.reply);
+    const paragraph = step?.reply?.response?.trim() || step?.reply?.thinking?.trim() || '';
+
+    // No step asked a model at all: build, models and inference drive the CLI and
+    // check sentinels. This judge has no paragraph, so it abstains and the simple
+    // judge, which reads exit codes and patterns, decides alone.
+    if (!paragraph) {
+      return { testId, pass: true, reason: 'judge: no model reply to read' };
+    }
+
+    const responseText = await this.promptAgent(this.buildPrompt(paragraph));
 
     // Handle empty response
     if (!responseText) {
@@ -385,56 +362,31 @@ export class AgentJudge {
       };
     }
 
-    process.stderr.write(`  [judge] Raw response for ${testId} (${responseText.length} chars): ${responseText.substring(0, 500)}\n`);
+    process.stderr.write(`  [judge] Raw response for ${testId} (${responseText.length} chars): ${responseText.substring(0, 200)}\n`);
 
-    const json = extractJson(responseText);
-    if (!json) {
-      process.stderr.write(`  [judge] WARNING: No JSON object in response for ${testId}\n`);
-      return {
-        testId,
-        pass: false,
-        reason: `No JSON object in agent response: ${responseText.substring(0, 200)}`,
-      };
+    // "yes" means readable, which passes. Asked the other way round -- "is this
+    // gibberish?" -- the affirmative answer would be the failing one, which is the
+    // arrangement a careless parse inverts.
+    //
+    // \1? absorbs a doubled answer. The agent returns its turn text twice --
+    // "yesyes", "nono", and before this it returned the whole JSON verdict twice --
+    // so a match anchored on both sides finds nothing. Allowing the repeat is
+    // narrower than dropping the trailing \b, which would match "no" inside
+    // "nonsense" and fail a readable paragraph.
+    // The LAST yes/no in the reply, not the first: an agent that reasons before
+    // answering ("There is no gibberish here — yes, it reads fine") would
+    // otherwise be read off its reasoning. \b on both sides keeps "no" out of
+    // "nonsense".
+    const found = [...responseText.toLowerCase().matchAll(/\b(yes|no)\b/g)];
+    if (found.length === 0) {
+      return { testId, pass: false, reason: `No yes/no in agent response: ${responseText.substring(0, 200)}` };
     }
-
-    try {
-      const judgment = JSON.parse(json) as Judgment;
-
-      // Validate testId matches
-      if (judgment.testId !== testId) {
-        process.stderr.write(`  [judge] WARNING: Response testId "${judgment.testId}" doesn't match expected "${testId}"\n`);
-        judgment.testId = testId;
-      }
-
-      // Coerce string "true"/"false" to boolean (models often return strings)
-      if (typeof judgment.pass === 'string') {
-        judgment.pass = (judgment.pass as unknown as string).toLowerCase() === 'true';
-      }
-
-      // Validate required fields
-      if (typeof judgment.pass !== 'boolean') {
-        process.stderr.write(`  [judge] WARNING: Response missing "pass" field for ${testId}\n`);
-        return {
-          testId,
-          pass: false,
-          reason: `Agent response missing "pass" field: ${responseText.substring(0, 200)}`,
-        };
-      }
-
-      if (!judgment.reason) {
-        judgment.reason = judgment.pass ? 'Passed (no reason provided)' : 'Failed (no reason provided)';
-      }
-
-      return judgment;
-    } catch {
-      process.stderr.write(`  [judge] WARNING: Failed to parse JSON for ${testId}\n`);
-      process.stderr.write(`  [judge] Full response: ${responseText}\n`);
-      return {
-        testId,
-        pass: false,
-        reason: `Failed to parse agent response: ${responseText.substring(0, 200)}`,
-      };
-    }
+    const readable = found[found.length - 1][1] === 'yes';
+    return {
+      testId,
+      pass: readable,
+      reason: readable ? 'judge: readable language' : 'judge: not readable language',
+    };
   }
 
   /**

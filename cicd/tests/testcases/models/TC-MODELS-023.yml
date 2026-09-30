@@ -4,10 +4,6 @@ suite: models
 priority: 23
 timeout: 900000
 dependencies: []
-intent:
-  user_story: |
-    Verify llama3.1:8b answers on the K80
-
 steps:
   - name: Test inference
     command: |

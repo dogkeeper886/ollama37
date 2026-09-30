@@ -6,10 +6,6 @@ timeout: 1200000
 dependencies: []
 issue: 492
 
-intent:
-  user_story: |
-    Verify qwen3.8:27b answers and calls a tool on the K80
-
 steps:
   - name: Test inference
     command: |

@@ -6,10 +6,6 @@ timeout: 60000
 dependencies:
   - TC-BUILD-001
   - TC-BUILD-002
-intent:
-  user_story: |
-    Verify the multi-stage build ships a slim runtime image
-
 steps:
   - name: Check runtime image size
     command: "size=$(docker images ollama37:latest --format '{{.Size}}'); echo \"$size\"; numfmt --from=iec \"${size%B}\" | awk '{gb=$1/1073741824; if (gb >= 1 && gb <= 3) print \"SIZE_OK\"; else print \"SIZE_FAIL: \" gb \"GB\"}'"

@@ -4,10 +4,6 @@ suite: models
 priority: 1
 timeout: 900000
 dependencies: []
-intent:
-  user_story: |
-    Verify gpt-oss:20b answers on the K80
-
 steps:
   - name: Test inference
     command: |

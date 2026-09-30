@@ -1,0 +1,179 @@
+name: Suite Tests (v2)
+
+# The rewritten harness (#535): Vitest + the Ollama client, replacing the YAML
+# testcases and the executor that ran them. One workflow for every ported suite,
+# because `vitest run` already selects and orders them. Runs beside the old
+# per-suite workflows until the remaining suites are ported.
+#
+# No judge input. These suites check that a model loads, answers in language and
+# gives its dies back — every one of those is a deterministic assertion, and the
+# reply's content rules live in simpleContentCheck rather than in jq. Prose worth
+# a reader is throughput's business.
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which suite file to run. Empty = every ported suite."
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - "suites/build.test.ts"
+          - "suites/runtime.test.ts"
+          - "suites/models.test.ts"
+          - "suites/inference.test.ts"
+      models:
+        description: "Space- or comma-separated models for the models suite. Empty = the runner's OLLAMA37_MODELS, else the suite's built-in list."
+        required: false
+        type: string
+      test_model:
+        description: "Model for the inference suite (TEST_MODEL). Empty = the suite default."
+        required: false
+        type: string
+      build_image:
+        description: "Build the runtime image from source in the build suite. An hour of nvcc; skipped unless asked for."
+        required: false
+        default: false
+        type: boolean
+      restart_container:
+        description: "Let the runtime suite run `docker compose down` and `up`. Tears down whatever is serving."
+        required: false
+        default: false
+        type: boolean
+      debug:
+        description: "Enable OLLAMA_DEBUG=1 in container"
+        required: false
+        default: false
+        type: boolean
+      runner_label:
+        description: "Which GPU testbed to run on. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti, sm86 = RTX 3060."
+        required: false
+        default: "sm37"
+        type: choice
+        options:
+          - "sm37"
+          - "sm61"
+          - "sm86"
+  workflow_call:
+    inputs:
+      suite:
+        description: "Which suite file to run. Empty = every ported suite"
+        required: false
+        type: string
+      models:
+        description: "Space- or comma-separated models for the models suite"
+        required: false
+        type: string
+      test_model:
+        description: "Model for the inference suite (TEST_MODEL)"
+        required: false
+        type: string
+      build_image:
+        description: "Build the runtime image from source in the build suite"
+        required: false
+        default: false
+        type: boolean
+      restart_container:
+        description: "Let the runtime suite restart the container"
+        required: false
+        default: false
+        type: boolean
+      debug:
+        description: "Enable OLLAMA_DEBUG=1 in container"
+        required: false
+        default: false
+        type: boolean
+      runner_label:
+        description: "Which GPU testbed to run on"
+        required: false
+        default: "sm37"
+        type: string
+    outputs:
+      result:
+        description: "Suite test result"
+        value: ${{ jobs.suites.outputs.result }}
+
+jobs:
+  suites:
+    name: Suite Tests (v2)
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
+    environment: cicd-1
+    env:
+      OLLAMA37_ROOT: ${{ github.workspace }}
+      OLLAMA_DEBUG: ${{ inputs.debug && '1' || '' }}
+    outputs:
+      result: ${{ steps.suite-tests.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Identify host
+        uses: ./.github/actions/identify-host
+
+      - name: Setup test runner
+        uses: ./.github/actions/setup-test-runner
+
+      # Vitest strips types without checking them, so a type error in suites/ would
+      # otherwise ship. Before the GPU is taken, so a broken branch fails fast.
+      - name: Type-check
+        run: cd cicd/tests && npm run typecheck
+
+      - name: Yield GPU
+        uses: ./.github/actions/yield-gpu
+
+      - name: Run suite tests
+        id: suite-tests
+        env:
+          # Both gates are off by default. The build suite's compile takes an hour,
+          # and the runtime suite's restart tears down whatever is serving — neither
+          # should happen because someone ran "the tests".
+          OLLAMA37_BUILD_IMAGE: ${{ inputs.build_image && '1' || '' }}
+          OLLAMA37_RESTART_CONTAINER: ${{ inputs.restart_container && '1' || '' }}
+          # Through env, never interpolated into the script: workflow_call passes
+          # these as free-form strings, and ${{ }} substitutes before bash parses,
+          # so a value holding a quote or $(…) would run on the self-hosted runner.
+          IN_MODELS: ${{ inputs.models }}
+          IN_TEST_MODEL: ${{ inputs.test_model }}
+          IN_SUITE: ${{ inputs.suite }}
+        run: |
+          cd cicd/tests
+          # The dispatch input wins; left empty, the runner's own OLLAMA37_MODELS
+          # stands, which is how sm61 and sm86 name the models that fit one card.
+          # Exporting an empty value here would shadow it.
+          if [ -n "$IN_MODELS" ]; then
+            export OLLAMA37_MODELS="$IN_MODELS"
+          fi
+          if [ -n "$IN_TEST_MODEL" ]; then
+            export TEST_MODEL="$IN_TEST_MODEL"
+          fi
+          echo "Models: ${OLLAMA37_MODELS:-(suite default)}"
+          echo "Suite:  ${IN_SUITE:-(every ported suite)}"
+          # No gpu-temp-guard: its 80°C abort killed full-suite runs (35549667518,
+          # peak 81°C at case 9 of 19) while the K80 itself only slows at 88°C and
+          # shuts down at 93°C. The card's own thresholds are the protection here.
+          #
+          # Vitest's exit code is the gate — there is no JSON to parse and no
+          # `|| true` to undo. Each model unloads in its own afterAll.
+          # workflow_dispatch constrains this to the choice list, but workflow_call
+          # takes a free-form string — so quote it, and keep the empty case (run
+          # every suite) as its own branch rather than relying on word splitting.
+          if [ -n "$IN_SUITE" ]; then
+            npx vitest run "$IN_SUITE"
+          else
+            npx vitest run
+          fi
+
+      - name: Restore GPU
+        if: always()
+        uses: ./.github/actions/restore-gpu
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suites-v2-results
+          path: cicd/tests/results/junit.xml
+          if-no-files-found: warn

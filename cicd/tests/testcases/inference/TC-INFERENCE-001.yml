@@ -4,17 +4,6 @@ suite: inference
 priority: 1
 timeout: 600000
 dependencies: []
-intent:
-  user_story: |
-    Confirm the test model is available (pulled) in the container — present it if
-    already pulled, or fetch it from the registry only when absent. The model is
-    adjustable via the TEST_MODEL environment variable (set by the workflow's
-    `model` input); it defaults to gemma3:4b so existing runs are unchanged.
-  notes: |
-    Confirms availability, not registry membership — a locally-imported model
-    (`ollama create`) counts as pulled. Never loads the model onto the GPU, so it
-    is safe on any testbed regardless of flash-attention support.
-
 steps:
   - name: Ensure test model is available
     command: |
