@@ -1,0 +1,69 @@
+# Every prompt a test sends, and every question the agent judge asks (#542).
+# Nothing else in cicd/tests may hold prompt or judge text: tests name a prompt,
+# lib/prompts.ts is the only reader, and a prompt names its own judge question,
+# so no test can pick a weaker one or none.
+#
+# Point OLLAMA37_PROMPTS at another file to run an experiment without a code change.
+#
+# A prompt has:
+#   text | text_file   the prompt, inline or from a file beside this one
+#   task               appended after the text, when the text is material to work on
+#   long               builds a prompt of --context tokens instead (see long-context)
+#   expect             a string the reply must contain (checked by lib/check.ts)
+#   options            Ollama options for the request
+#   judge              the name of a question under `judges`
+
+prompts:
+  # Does the model load and answer in language? A wrong answer still passes.
+  short-answer:
+    text: "What is 2+2? Answer in one short sentence."
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: readable
+
+  # Decode speed on a realistic prompt (~870 tokens in, 100 out).
+  speech-rewrite:
+    text_file: prompts/speech.txt
+    task: >-
+      Rewrite the speech above in plainer English. Cut every verbal tic and filler
+      word. Put each sentence's main character first. Turn each negative sentence
+      affirmative. Replace any phrase that one exact word can replace. Output only
+      the rewritten speech.
+    options: { temperature: 0, seed: 42, num_predict: 100 }
+    judge: readable
+
+  # A long window: filler to --context tokens, one fact ~30% in, then the task.
+  long-context:
+    long:
+      filler: >-
+        flash attention kernel tensor core memory bandwidth throughput latency prefill
+        decode softmax matmul cublas turing ampere kepler compute capability toolchain
+        codegen register warp shuffle transpose quantization inference context window
+        batch sequence token cache
+      sentence: "The {words} determines {word} performance."
+      needle: "CRITICAL FACT: the secret launch code is 7492. Remember this exact number."
+      depth: 0.3
+    task: >-
+      The passage above is repetitive filler; ignore it except for the one CRITICAL
+      FACT. In about 100 words, explain what flash attention is and why it helps large
+      language model inference on GPUs. Then on its own final line write the secret
+      launch code from the passage exactly like: LAUNCH CODE: <code>.
+    expect: "7492"
+    options: { temperature: 0, seed: 42, num_predict: 1024 }
+    judge: readable
+
+  # Pick the right tool from a menu and answer from what it returned.
+  tool-call:
+    text: "List the projects."
+    options: { temperature: 0, seed: 0, num_ctx: 8192 }
+    judge: grounded
+
+judges:
+  readable: |
+    Is this text readable language, with words in an order that means something? It may stop mid-sentence or be a list; that is fine. yes or no
+
+    "{reply}"
+  grounded: |
+    Does this answer use the result? yes or no
+
+    RESULT: "{result}"
+    ANSWER: "{reply}"
