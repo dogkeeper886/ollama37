@@ -101,6 +101,10 @@ jobs:
     runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
     environment: cicd-1
     env:
+      # The build suite's compile bakes this into the binary. Unset, it falls back
+      # to 0.0.0 and the registry rejects every gated pull from the image with 412.
+      # Carried over from test-build.yml, which set it the same way.
+      OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION || '0.0.0' }}
       OLLAMA37_ROOT: ${{ github.workspace }}
       OLLAMA_DEBUG: ${{ inputs.debug && '1' || '' }}
     outputs:
