@@ -13,6 +13,7 @@ import { type GenerateResponse } from 'ollama';
 import { simpleContentCheck } from '../src/perf/content-check.js';
 import { ollamaClient } from '../src/ollama-client.js';
 import { serverComputeApps } from './gpu.js';
+import { discPng, spokenWav } from './media.js';
 
 const HOST = process.env.OLLAMA_HOST ?? 'http://localhost:11434';
 const ollama = ollamaClient(HOST);
@@ -21,6 +22,9 @@ const ollama = ollamaClient(HOST);
 const DIE_MIB = 11441;
 
 const PROMPT = 'What is 2+2? Answer in one short sentence.';
+
+/** One token budget for every request in the suite. */
+const OPTIONS = { temperature: 0, seed: 0, num_predict: 400 };
 
 /** The runner names the models that fit its card; unset falls back to the K80 fleet. */
 const MODELS = (process.env.OLLAMA37_MODELS?.trim()
@@ -82,7 +86,7 @@ const generate = (model: string): Promise<GenerateResponse> =>
     model,
     prompt: PROMPT,
     stream: false,
-    options: { temperature: 0, seed: 0, num_predict: 400 },
+    options: OPTIONS,
   });
 
 describe.each(MODELS)('%s', (model) => {
@@ -139,4 +143,66 @@ describe.each(MODELS)('%s', (model) => {
     await annotate(`${usage.totalMib} MiB across ${usage.active} die(s)`);
     expect(fits(usage, model), `${usage.totalMib} MiB fits in ${usage.active - 1} dies but uses ${usage.active}`).toBe(true);
   });
+
+  // gemma4:12b is here for its image and audio paths (#367). The gate is that the
+  // request reaches the encoder and comes back readable, not that the shape or
+  // word is named: synthetic speech transcribes marginally. The reply is read from
+  // `content` alone — TC-MODELS-016 once passed on words the model reasoned in
+  // `thinking` about an image it never got (#498).
+  test.runIf(model === 'gemma4:12b')('answers an image', async ({ annotate }) => {
+    const reply = await chatWith(model, 'What shape is in this image? Reply with one lowercase word, no punctuation.', discPng());
+    await annotate(`content: ${reply.slice(0, 200)}`);
+    expectEngaged(reply, /does not support|cannot see|can't see|unable to see|no image/i);
+  });
+
+  test.runIf(model === 'gemma4:12b')('answers spoken audio', async ({ annotate }) => {
+    const wav = await spokenWav('hello hello hello');
+    const reply = await chatWith(model, 'Which word is spoken in this audio? Reply with one lowercase word, no punctuation.', wav);
+    await annotate(`content: ${reply.slice(0, 200)}`);
+    expectEngaged(reply, /does not support audio|cannot hear|can't hear|text-based|text-only|no audio|don't have the ability/i);
+  });
+
+  // qwen3.8:27b is here for its chat path: its renderer prompts for an XML tool
+  // format only Qwen35Parser reads (#491). A tool call that comes back parsed
+  // proves that path, whatever the model says around it.
+  test.runIf(model === 'qwen3.8:27b')('returns a parsed tool call', async ({ annotate }) => {
+    const res = await ollama.chat({
+      model,
+      messages: [{ role: 'user', content: 'What time is it? Use the tool.' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'get_current_time',
+            description: 'Get the current time',
+            parameters: { type: 'object', properties: {} },
+          },
+        },
+      ],
+      stream: false,
+      options: OPTIONS,
+    });
+    const calls = res.message.tool_calls ?? [];
+    await annotate(`tool_calls: ${JSON.stringify(calls)}`);
+    expect(calls[0]?.function.name).toBe('get_current_time');
+  });
 });
+
+/** One user turn carrying one image or audio clip; returns `message.content`. */
+async function chatWith(model: string, content: string, media: string): Promise<string> {
+  const res = await ollama.chat({
+    model,
+    messages: [{ role: 'user', content, images: [media] }],
+    stream: false,
+    options: OPTIONS,
+  });
+  expect(res.done).toBe(true);
+  return res.message.content;
+}
+
+/** Readable content that does not refuse the input it was given. */
+function expectEngaged(content: string, refusal: RegExp): void {
+  const verdict = simpleContentCheck(content, '');
+  expect(verdict.pass, verdict.reason).toBe(true);
+  expect(content).not.toMatch(refusal);
+}
