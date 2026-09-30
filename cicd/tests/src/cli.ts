@@ -2,20 +2,13 @@
 /**
  * CLI for the ollama37 test framework.
  *
- * Usage:
- *   npx tsx src/cli.ts run [options]
- *   npx tsx src/cli.ts list [options]
+ * The suites run under Vitest (`npx vitest run`); these are the commands that
+ * have not moved onto it yet (#536 steps 5-8).
  */
 
 import 'dotenv/config'; // load cicd/tests/.env into process.env before config.ts reads it
 import { Command } from 'commander';
-import path from 'path';
-import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'fs';
-import { TestLoader } from './loader.js';
-import { TestExecutor } from './executor.js';
-import { SimpleJudge, AgentJudge } from './judge/index.js';
-import { JsonReporter, ConsoleReporter } from './reporter/index.js';
-import { RunConfig, TestResult, TestSummary } from './types.js';
+import { writeFileSync, readFileSync } from 'fs';
 import { CONFIG, pickEnv } from './config.js';
 import {
   runThroughput,
@@ -28,279 +21,12 @@ import { runContext } from './perf/context.js';
 import { runMcpTest } from './mcp/test-mcp.js';
 import { modelBounds } from './perf/model-bounds.js';
 
-/**
- * Judge executed results and write the reports. `run` calls it straight after the
- * tests; `judge` calls it later on results a `run` saved, once the judge's server is up.
- */
-async function judgeAndReport(
-  results: TestResult[],
-  judgeMode: RunConfig['judgeMode'],
-  outputDir: string,
-  outputFormat: RunConfig['outputFormat'],
-  startTime: Date,
-  suiteName: string
-): Promise<TestSummary> {
-  // Run judges
-  process.stderr.write('\n[JUDGE] Running simple judge...\n');
-  const simpleJudge = new SimpleJudge();
-  const simpleJudgments = simpleJudge.judgeAll(results);
-
-  let agentJudgments = simpleJudgments.map((j) => ({
-    ...j,
-    reason: judgeMode === 'dual' ? j.reason : 'Agent judge disabled (simple mode)',
-  }));
-
-  if (judgeMode === 'dual') {
-    // A test the simple judge already failed is failed whatever the agent says (both
-    // must pass), so don't ask it. That also keeps flagged replies — REPLY_REPEAT above
-    // all — away from the agent, which loops when it quotes repeated text back.
-    const simpleFailed = new Map(simpleJudgments.filter((j) => !j.pass).map((j) => [j.testId, j]));
-    const toJudge = results.filter((r) => !simpleFailed.has(r.testCase.id));
-    const skipped = [...simpleFailed.values()].map((j) => ({
-      testId: j.testId,
-      pass: false,
-      reason: `Skipped — simple judge already failed: ${j.reason}`,
-    }));
-    agentJudgments = skipped;
-
-    if (toJudge.length === 0) {
-      process.stderr.write('[JUDGE] Agent judge skipped: every test already failed the simple judge\n');
-    } else {
-      process.stderr.write(`[JUDGE] Running agent judge on ${toJudge.length} test(s), ${skipped.length} skipped...\n`);
-      const agentJudge = new AgentJudge();
-
-      const available = await agentJudge.isAvailable();
-      if (available) {
-        agentJudgments = [...skipped, ...(await agentJudge.judgeResults(toJudge))];
-      } else {
-        process.stderr.write('[WARN] Agent judge not available, using simple judge results\n');
-        agentJudgments = simpleJudgments;
-      }
-    }
-  }
-
-  // Generate and output reports
-  const jsonReporter = new JsonReporter(outputDir);
-  const { summary, reports } = jsonReporter.generateReports(
-    results,
-    simpleJudgments,
-    agentJudgments,
-    startTime,
-    suiteName
-  );
-
-  // Write JSON files regardless of format
-  jsonReporter.writeReports(summary, reports);
-
-  // Console output
-  if (outputFormat === 'console') {
-    const consoleReporter = new ConsoleReporter();
-    consoleReporter.report(summary, reports);
-  } else if (outputFormat === 'json') {
-    jsonReporter.outputSummary(summary, reports);
-  }
-
-  return summary;
-}
-
 const program = new Command();
 
 program
   .name('ollama37-test')
   .description('Test framework for ollama37 CUDA 3.7 CI/CD validation')
   .version('2.0.0');
-
-/**
- * Run command - execute tests
- */
-program
-  .command('run')
-  .description('Run test cases')
-  .option('-s, --suite <suite>', 'Run only tests from this suite (build, runtime, inference, models)')
-  .option('-i, --id <id>', 'Run only the test with this ID')
-  .option('--dry-run', 'Show what would run without executing', false)
-  .option('-o, --output-dir <dir>', 'Output directory for results')
-  .option('-f, --format <format>', 'Output format (console, json)', 'console')
-  .action(async (options) => {
-    const startTime = new Date();
-
-    // Resolve paths
-    const testsDir = path.dirname(new URL(import.meta.url).pathname);
-    const projectRoot = path.resolve(testsDir, '..', '..', '..');
-    const testcasesDir = path.join(testsDir, '..', 'testcases');
-
-    // Generate output directory with timestamp
-    const timestamp = startTime.toISOString().replace(/[:.]/g, '-').substring(0, 19);
-    const suiteName = options.suite || 'all';
-    const outputDir = options.outputDir || path.join(testsDir, '..', '..', 'results', `${timestamp}_${suiteName}`);
-
-    // Ensure output directory exists
-    if (!existsSync(outputDir)) {
-      mkdirSync(outputDir, { recursive: true });
-    }
-
-    // Agent judge runs in 'dual' mode — enabled via the JUDGE_MODE env var.
-    const judgeMode: RunConfig['judgeMode'] = CONFIG.judge.mode === 'dual' ? 'dual' : 'simple';
-
-    const config: RunConfig = {
-      suite: options.suite as RunConfig['suite'],
-      testId: options.id,
-      dryRun: options.dryRun,
-      judgeMode,
-      outputDir,
-      outputFormat: options.format as RunConfig['outputFormat'],
-      workingDir: projectRoot,
-    };
-
-    process.stderr.write(`\n[CONFIG] Project root: ${projectRoot}\n`);
-    process.stderr.write(`[CONFIG] Server: ${process.env.OLLAMA37_CONTAINER} at ${process.env.OLLAMA_HOST}\n`);
-    process.stderr.write(`[CONFIG] Testcases: ${testcasesDir}\n`);
-    process.stderr.write(`[CONFIG] Output: ${outputDir}\n`);
-    process.stderr.write(`[CONFIG] Agent Judge: ${config.judgeMode === 'dual' ? 'enabled (dual)' : 'disabled (simple only)'}\n`);
-
-    // Load test cases
-    const loader = new TestLoader(testcasesDir);
-    const allTestCases = await loader.loadAll();
-
-    if (allTestCases.length === 0) {
-      process.stderr.write('[ERROR] No test cases found\n');
-      process.exit(1);
-    }
-
-    // Apply user filters
-    let filteredTestCases = allTestCases;
-
-    // Filter by suite
-    if (config.suite) {
-      filteredTestCases = filteredTestCases.filter((tc) => tc.suite === config.suite);
-    }
-
-    // Filter by the host's subset, from the runner's .env
-    if (process.env.OLLAMA37_TEST_IDS) {
-      const ids = process.env.OLLAMA37_TEST_IDS.split(',').map((s) => s.trim());
-      filteredTestCases = filteredTestCases.filter((tc) => ids.includes(tc.id));
-    }
-
-    // Filter by ID
-    if (config.testId) {
-      filteredTestCases = filteredTestCases.filter((tc) => tc.id === config.testId);
-    }
-
-    if (filteredTestCases.length === 0) {
-      process.stderr.write('[ERROR] No matching test cases found\n');
-      process.exit(1);
-    }
-
-    // Resolve cross-suite dependencies
-    const { tests: resolvedTestCases, autoIncluded } = loader.resolveDependencies(
-      filteredTestCases,
-      allTestCases
-    );
-
-    if (autoIncluded.length > 0) {
-      process.stderr.write(`[INFO] Auto-included ${autoIncluded.length} dependency test(s): ${autoIncluded.join(', ')}\n`);
-    }
-
-    // Sort by dependencies
-    const testCases = loader.sortByDependencies(resolvedTestCases);
-
-    process.stderr.write(`[INFO] Found ${testCases.length} test(s) to run\n`);
-
-    // Dry run - just show what would run
-    if (config.dryRun) {
-      process.stderr.write('\n[DRY RUN] Would execute:\n');
-      for (const tc of testCases) {
-        process.stderr.write(`  - ${tc.id}: ${tc.name} (${tc.suite})\n`);
-        for (const step of tc.steps) {
-          process.stderr.write(`      Step: ${step.name}\n`);
-        }
-      }
-      process.exit(0);
-    }
-
-    // Execute tests
-    const executor = new TestExecutor(config);
-    const results = await executor.executeAll(testCases);
-
-    // Save the raw results, so `judge` can judge them in a later step
-    writeFileSync(path.join(outputDir, 'results.json'), JSON.stringify(results));
-
-    const summary = await judgeAndReport(
-      results,
-      config.judgeMode,
-      outputDir,
-      config.outputFormat,
-      startTime,
-      suiteName
-    );
-
-    // Exit with appropriate code
-    process.exit(summary.failed > 0 ? 1 : 0);
-  });
-
-/**
- * Judge command - judge the results a `run` saved
- */
-program
-  .command('judge <resultsDir>')
-  .description('Judge the results a run saved in <resultsDir>, and rewrite its reports')
-  .option('-f, --format <format>', 'Output format (console, json)', 'console')
-  .action(async (resultsDir, options) => {
-    const results: TestResult[] = JSON.parse(
-      readFileSync(path.join(resultsDir, 'results.json'), 'utf-8')
-    );
-    const judgeMode: RunConfig['judgeMode'] = CONFIG.judge.mode === 'dual' ? 'dual' : 'simple';
-    const suiteName = [...new Set(results.map((r) => r.testCase.suite))].join('+') || 'all';
-    process.stderr.write(`[CONFIG] Judging ${results.length} result(s) from ${resultsDir}\n`);
-    const summary = await judgeAndReport(
-      results,
-      judgeMode,
-      resultsDir,
-      options.format as RunConfig['outputFormat'],
-      new Date(),
-      suiteName
-    );
-    process.exit(summary.failed > 0 ? 1 : 0);
-  });
-
-/**
- * List command - show available tests
- */
-program
-  .command('list')
-  .description('List available test cases')
-  .option('-s, --suite <suite>', 'Filter by suite')
-  .action(async (options) => {
-    const testsDir = path.dirname(new URL(import.meta.url).pathname);
-    const testcasesDir = path.join(testsDir, '..', 'testcases');
-
-    const loader = new TestLoader(testcasesDir);
-    let testCases = await loader.loadAll();
-
-    if (options.suite) {
-      testCases = testCases.filter((tc) => tc.suite === options.suite);
-    }
-
-    testCases = loader.sortByDependencies(testCases);
-    const groups = loader.groupBySuite(testCases);
-
-    console.log('\nAvailable Test Cases:');
-    console.log('='.repeat(60));
-
-    for (const [suite, cases] of groups) {
-      console.log(`\n${suite.toUpperCase()} SUITE (${cases.length} tests):`);
-      for (const tc of cases) {
-        console.log(`  ${tc.id}: ${tc.name}`);
-        console.log(`    Priority: ${tc.priority}, Timeout: ${tc.timeout}ms`);
-        if (tc.dependencies.length > 0) {
-          console.log(`    Depends on: ${tc.dependencies.join(', ')}`);
-        }
-      }
-    }
-
-    console.log('\n' + '='.repeat(60));
-    console.log(`Total: ${testCases.length} test(s)`);
-  });
 
 /**
  * bench-throughput — measure tok/s across models and validate the output.
@@ -339,8 +65,8 @@ program
  * judge-throughput — judge what a bench-throughput run already captured.
  *
  * The benchmark holds the GPU; the judge must not. Running it here, from the saved
- * report, lets CI give the card back before any judging starts (test-models.yml's
- * Yield → run → Restore → judge order). Reads the full captured text, which is why
+ * report, lets CI give the card back before any judging starts (the Yield → run →
+ * Restore → judge order #513 set). Reads the full captured text, which is why
  * the report persists it rather than only a preview.
  */
 program

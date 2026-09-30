@@ -1,6 +1,6 @@
 /**
  * Deterministic output check (port of cicd/scripts/lib/simple_check.sh, plus the
- * two jq sentinels the models suite carries in TC-MODELS-003).
+ * two jq sentinels the YAML models testcases carried, REPLY_NO_TEXT and REPLY_REPEAT).
  *
  * Three ways to fail, all cheap and model-free: empty output, output with no
  * letters or digits in it (REPLY_NO_TEXT), and one short unit repeated to fill
@@ -21,8 +21,8 @@ export interface ContentVerdict {
 /**
  * True when `s` is its own first `u` characters repeated, for some unit length
  * 1..50. Short strings are exempt (a reply must be at least max(100, 5*u) long)
- * so a brief genuine answer is not read as a loop. Mirrors the jq in
- * cicd/tests/testcases/models/TC-MODELS-003.yml.
+ * so a brief genuine answer is not read as a loop. Ported from the jq
+ * the YAML models testcases carried (#535).
  */
 function isRepeatedUnit(s: string): boolean {
   const n = s.length;

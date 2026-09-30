@@ -9,7 +9,7 @@ description: >
 
 inputs:
   args:
-    description: "cli.ts invocation, e.g. `judge ../results/models` or `judge-throughput /tmp/throughput-results.json`"
+    description: "cli.ts invocation, e.g. `judge-throughput /tmp/throughput-results.json`"
     required: true
   output-file:
     description: "Redirect stdout here and cat it afterwards. Leave unset to tee stdout into the step summary instead."

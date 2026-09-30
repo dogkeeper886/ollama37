@@ -9,7 +9,7 @@ description: >-
 
 Build the ollama37 image with CI:
 1. Check the version the build injects with `gh variable list` (`OLLAMA_VERSION`).
-2. Run the full build suite with `gh workflow run test-build.yml --ref <branch> -f runner_label=sm37`, with no `test_id`, so `TC-BUILD-004` retags `ollama37:latest` to `dogkeeper886/ollama37:latest`.
+2. Run the build suite with the build gate on, `gh workflow run test-suites-v2.yml --ref <branch> -f runner_label=sm37 -f suite=suites/build.test.ts -f build_image=true`, so `carries the tag compose reads` retags `ollama37:latest` to `dogkeeper886/ollama37:latest`.
 3. Wait for it with `gh run watch <run-id> --exit-status`.
-4. Confirm the retag with `gh run view <run-id> --log | grep 'retagged sha256'`.
+4. Confirm the retag with `gh run download <run-id> -n suites-v2-build -D /tmp/build-junit && grep -o 'sha256:[0-9a-f]*' /tmp/build-junit/junit.xml`.
 5. Apply the image with the `ollama37-ci-apply` skill.

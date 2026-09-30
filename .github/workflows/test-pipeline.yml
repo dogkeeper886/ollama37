@@ -1,16 +1,27 @@
 name: Full Test Pipeline
 
+# Every ported suite, one job each, in the order a build is validated: build the
+# image, bring the container up on it, then ask it for language. A job runs only
+# when the one before it passed.
+#
+# No judge input: the v2 suites assert deterministically (#535). The two gates
+# default on here, and only here — the pipeline is the full validation, and the
+# old one compiled the image (TC-BUILD-002) and restarted the container
+# (TC-RUNTIME-001) on every run.
+
 on:
   workflow_dispatch:
     inputs:
-      judge_mode:
-        description: "Test judge mode for inference + models (dual = SimpleJudge plus the keyless agent judge; simple = SimpleJudge only)"
+      build_image:
+        description: "Build the runtime image from source in the build suite (an hour of nvcc), then retag it"
         required: false
-        default: "dual"
-        type: choice
-        options:
-          - "dual"
-          - "simple"
+        default: true
+        type: boolean
+      restart_container:
+        description: "Let the runtime suite run `docker compose down` and `up` on the new image"
+        required: false
+        default: true
+        type: boolean
       debug:
         description: "Enable OLLAMA_DEBUG=1 in container"
         required: false
@@ -29,36 +40,37 @@ on:
 jobs:
   build:
     name: Build Tests
-    uses: ./.github/workflows/test-build.yml
+    uses: ./.github/workflows/test-suites-v2.yml
     with:
+      suite: suites/build.test.ts
+      build_image: ${{ inputs.build_image }}
       debug: ${{ inputs.debug }}
       runner_label: ${{ inputs.runner_label }}
 
   runtime:
     name: Runtime Tests
     needs: build
-    uses: ./.github/workflows/test-runtime.yml
+    uses: ./.github/workflows/test-suites-v2.yml
     with:
+      suite: suites/runtime.test.ts
+      restart_container: ${{ inputs.restart_container }}
       debug: ${{ inputs.debug }}
       runner_label: ${{ inputs.runner_label }}
 
   inference:
     name: Inference Tests
     needs: runtime
-    uses: ./.github/workflows/test-inference.yml
-    # Pass CLAUDE_CODE_OAUTH_TOKEN down to the keyless agent judge (dual mode).
-    secrets: inherit
+    uses: ./.github/workflows/test-suites-v2.yml
     with:
-      judge_mode: ${{ inputs.judge_mode }}
+      suite: suites/inference.test.ts
       debug: ${{ inputs.debug }}
       runner_label: ${{ inputs.runner_label }}
 
   models:
     name: Models Tests
     needs: inference
-    uses: ./.github/workflows/test-models.yml
-    secrets: inherit
+    uses: ./.github/workflows/test-suites-v2.yml
     with:
-      judge_mode: ${{ inputs.judge_mode }}
+      suite: suites/models.test.ts
       debug: ${{ inputs.debug }}
       runner_label: ${{ inputs.runner_label }}
