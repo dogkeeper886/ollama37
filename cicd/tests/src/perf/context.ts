@@ -133,9 +133,10 @@ async function ensureModel(host: string, model: string): Promise<void> {
   });
 }
 
-/** Wrap the captured output so the AgentJudge can grade its coherence. */
-function toTestResult(model: string, response: string, thinking: string): TestResult {
-  const output = [thinking, response].filter((s) => s.trim()).join('\n\n');
+/** Wrap the captured output so the AgentJudge can grade its coherence. The reply
+ *  travels as fields, as in throughput.ts: `stdout` once carried the two joined,
+ *  and `done_reason` rides along so a reply the budget ended is visible as such (#527). */
+function toTestResult(model: string, response: string, thinking: string, doneReason: string): TestResult {
   return {
     testCase: {
       id: model,
@@ -148,18 +149,18 @@ function toTestResult(model: string, response: string, thinking: string): TestRe
       steps: [{ name: 'generate', command: '(captured /api/generate response)' }],
       criteria: JUDGE_CRITERIA,
     },
-    // `reply` as well as stdout: the agent judge reads the model's fields and
+    // `reply`, not stdout: the agent judge reads the model's fields and
     // abstains on a step that has none, so without this every model here would
     // be judged pass without being read (#535).
     steps: [
       {
         name: 'generate',
         command: '(captured /api/generate response)',
-        stdout: output,
+        stdout: '',
         stderr: '',
         exitCode: 0,
         duration: 0,
-        reply: { response, thinking },
+        reply: { response, thinking, doneReason },
       },
     ],
     totalDuration: 0,
@@ -239,7 +240,7 @@ export async function runContext(opts: ContextOptions): Promise<number> {
         const byModel = new Map(results.map((r) => [r.model, r]));
         const trs = eligible.map((r) => {
           const ft = fullText.get(r.model) ?? { response: r.response_preview, thinking: '' };
-          return toTestResult(r.model, ft.response, ft.thinking);
+          return toTestResult(r.model, ft.response, ft.thinking, r.done_reason);
         });
         const verdicts = await agentJudge.judgeResults(trs);
         for (const v of verdicts) {
