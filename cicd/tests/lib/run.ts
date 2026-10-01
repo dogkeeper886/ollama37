@@ -137,14 +137,16 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
     `**${models} model(s), ${run.results.length} reply(s), ${judged} judged, ${abstained} abstained, ${notJudged} failed the check, ${failed} failed**` +
       (empty ? ' — no reply was recorded, so nothing was tested' : ''),
     '',
-    '| Model | Prompt | Checks | Judge | Pass | Prefill tok/s | Decode tok/s | Reply |',
-    '|---|---|---|---|---|---|---|---|',
+    '| Model | Prompt | Checks | Judge | Pass | Prefill tok/s | Decode tok/s | In / out tok | More | Reply |',
+    '|---|---|---|---|---|---|---|---|---|---|',
     ...run.results.map((r) => {
       const checks = Object.entries(r.checks).map(([k, v]) => `${k}: ${v.pass ? 'ok' : v.reason}`).join('; ');
       const text = readable(r.reply).replace(/\s+/g, ' ').replace(/\|/g, '\\|').slice(0, 80);
-      return `| ${r.model} | ${r.prompt} | ${checks} | ${r.judge.reason} | ${r.pass ? 'PASS' : 'FAIL'} | ${r.metrics.prefillTps} | ${r.metrics.decodeTps} | ${text} |`;
+      const { inTokens, outTokens, prefillTps, decodeTps, ...more } = r.metrics;
+      const extra = Object.entries(more).map(([k, v]) => `${k}=${v}`).join(' ');
+      return `| ${r.model} | ${r.prompt} | ${checks} | ${r.judge.reason} | ${r.pass ? 'PASS' : 'FAIL'} | ${prefillTps} | ${decodeTps} | ${inTokens} / ${outTokens} | ${extra} | ${text} |`;
     }),
-    ...run.errors.map((e) => `| ${e.model} | — | error: ${e.error.replace(/\|/g, '\\|').slice(0, 120)} | — | FAIL | — | — | — |`),
+    ...run.errors.map((e) => `| ${e.model} | — | error: ${e.error.replace(/\|/g, '\\|').slice(0, 120)} | — | FAIL | — | — | — | — | — |`),
     ...(bodyError ? ['', `Run error: ${bodyError}`] : []),
     '',
   ];

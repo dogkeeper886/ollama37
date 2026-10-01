@@ -11,7 +11,7 @@
  * `generate` is the one export that returns model text, and it only runs inside
  * runTest, so every reply is checked and every reply is judged. The client is
  * private. The other calls here produce no model text: pull a missing model,
- * load one (an empty prompt), unload one.
+ * load one (an empty prompt), read its GPU share, unload one.
  */
 import http from 'node:http';
 import https from 'node:https';
@@ -68,6 +68,13 @@ export async function ensureModel(model: string): Promise<'present' | 'pulled'> 
 /** Load the weights without generating (an empty prompt), with the options that decide the reservation. */
 export async function load(model: string, options: Record<string, unknown> = {}): Promise<void> {
   await client.generate({ model, prompt: '', stream: false, options });
+}
+
+/** Percent of the loaded model resident in VRAM, per /api/ps; 0 when it is not loaded. */
+export async function offload(model: string): Promise<number> {
+  const { models } = await client.ps();
+  const m = models.find((x) => x.name === model || x.model === model);
+  return m && m.size ? Math.round((m.size_vram / m.size) * 100) : 0;
 }
 
 /** Release the weights. */
