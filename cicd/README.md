@@ -35,7 +35,7 @@ runTest('models', body)
 
 | Prompt | Test | Judge |
 |---|---|---|
-| `short-answer` | models | `broken`: "Is this text garbage, crash output, or random words?" (passes on no) |
+| `short-answer` | models | `broken`: "Is this text garbage, crash output, or words in random order?" (passes on no) |
 | `image`, `audio` (gemma4:12b), `time-tool` (qwen3.8:27b) | models | `broken`, `grounded` |
 | `speech-rewrite`, `long-context` | throughput | `broken` |
 | `tool-call` | mcp | `grounded`: "Does this answer use the result?" (passes on yes) |

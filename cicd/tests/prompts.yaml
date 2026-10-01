@@ -107,7 +107,7 @@ judges:
   broken:
     pass: "no"
     question: |
-      Is this text garbage, crash output, or random words? yes or no
+      Is this text garbage, crash output, or words in random order? yes or no
 
       "{reply}"
   grounded:
