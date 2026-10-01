@@ -98,15 +98,26 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
   current = { test, results: [], templates: new Map(), errors: [] };
   const run = current;
   let bodyError: string | undefined;
+  let restoreError: string | undefined;
 
-  shell('gpu-yield.sh');
+  // The yield is inside the try: it stops the host's own server before it starts
+  // the one under test, so a yield that fails halfway must still be restored.
   try {
+    shell('gpu-yield.sh');
     await body();
   } catch (e) {
     bodyError = e instanceof Error ? e.message : String(e);
     process.stderr.write(`RUN ERROR: ${bodyError}\n`);
   } finally {
-    shell('gpu-restore.sh');
+    // A failed restore must not throw away a run's replies: record it, judge and
+    // report as usual, and fail the run. The workflows restore again in an
+    // always() step, which also covers a job that was cancelled or timed out.
+    try {
+      shell('gpu-restore.sh');
+    } catch (e) {
+      restoreError = e instanceof Error ? e.message : String(e);
+      process.stderr.write(`RESTORE ERROR: ${restoreError}\n`);
+    }
   }
 
   // Judge every reply the run recorded. A reply the script check failed is not
@@ -148,6 +159,7 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
     }),
     ...run.errors.map((e) => `| ${e.model} | — | error: ${e.error.replace(/\|/g, '\\|').slice(0, 120)} | — | FAIL | — | — | — | — | — |`),
     ...(bodyError ? ['', `Run error: ${bodyError}`] : []),
+    ...(restoreError ? ['', `GPU restore failed: ${restoreError}`] : []),
     '',
   ];
   const md = lines.join('\n');
@@ -157,7 +169,7 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
   const out = arg('output');
   if (out) {
     mkdirSync(dirname(resolve(out)), { recursive: true });
-    writeFileSync(out, JSON.stringify({ test, models, judged, abstained, notJudged, failed, results: run.results, errors: run.errors, bodyError }, null, 2));
+    writeFileSync(out, JSON.stringify({ test, models, judged, abstained, notJudged, failed, results: run.results, errors: run.errors, bodyError, restoreError }, null, 2));
   }
-  process.exit(failed > 0 || empty || bodyError ? 1 : 0);
+  process.exit(failed > 0 || empty || bodyError || restoreError ? 1 : 0);
 }

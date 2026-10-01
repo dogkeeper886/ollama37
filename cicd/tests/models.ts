@@ -37,7 +37,7 @@ await runTest('models', () =>
     // than it needs. Reload once before calling it a regression.
     if (!fits(vram.dies, vram.totalMib, model)) {
       await unload(model);
-      await load(model);
+      await load(model, 'short-answer');
       vram = serverVram();
     }
     r.checks.resident = { pass: vram.totalMib > 0, reason: `${vram.totalMib} MiB across ${vram.dies} die(s)` };

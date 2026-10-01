@@ -97,6 +97,10 @@ prompts:
     judge: grounded
     models: ["qwen3.8:27b"]
 
+# A throwaway question that starts the judge agent and loads its model before the
+# first real one, so a cold start is not charged to a reply.
+warmup: "Reply with exactly: ok"
+
 judges:
   # Every judge question names the answer that passes, so a question can be asked
   # either way round without the code guessing.

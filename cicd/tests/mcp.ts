@@ -44,7 +44,7 @@ await runTest('mcp', async () => {
   try {
     await forEachModel(modelsArg('OLLAMA37_MCP_MODELS'), async (model) => {
       await ensureModel(model);
-      await load(model, options);
+      await load(model, 'tool-call', { options });
       const r = await converse(model, 'tool-call', menu, { options });
       if (r.metrics.saturated) r.checks.window = { pass: false, reason: `a round filled the context window (max prompt ${r.metrics.maxPrompt})` };
       await unload(model);

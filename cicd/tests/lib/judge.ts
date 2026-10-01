@@ -27,6 +27,7 @@ import {
   type RequestPermissionRequest,
   type RequestPermissionResponse,
 } from '@agentclientprotocol/sdk';
+import { warmupQuestion } from './prompts.js';
 
 export interface Judgment {
   verdict: 'yes' | 'no' | 'abstain';
@@ -44,6 +45,14 @@ const LOOP_CHECK_MS = 5_000;
 const LOOP_LIMIT = 100;
 /** Longest reply text put in front of the judge. */
 const REPLY_LIMIT = 1000;
+/**
+ * Longest tool result put in front of a grounded judge. Larger than the reply cap,
+ * since an answer can rest on any part of the result; bounded because the judge
+ * model runs at its default 4k context and a judgement already takes ~2k tokens in
+ * and up to ~1.2k out (2,500 characters is ~650 tokens). A larger result needs a
+ * larger judge context.
+ */
+const RESULT_LIMIT = 2500;
 
 /**
  * The judge's working directory: empty, outside any repository. Claude Code puts
@@ -202,15 +211,18 @@ let agent: Agent | undefined;
  * an abstain, which fails the reply. (?:\1)? absorbs a doubled turn ("yesyes").
  */
 export async function judge(template: string, reply: string, result = ''): Promise<Judgment> {
-  const cut = (s: string) => (s.length > REPLY_LIMIT ? `${s.slice(0, REPLY_LIMIT)}... (truncated)` : s);
-  const question = template.replaceAll('{reply}', cut(reply)).replaceAll('{result}', cut(result));
+  // A cut is said out loud, so the judge does not read "absent from what it was
+  // shown" as "absent from the result".
+  const cut = (s: string, limit: number) =>
+    s.length > limit ? `${s.slice(0, limit)}... (cut here; the full text is ${s.length} characters)` : s;
+  const question = template.replaceAll('{reply}', cut(reply, REPLY_LIMIT)).replaceAll('{result}', cut(result, RESULT_LIMIT));
   if (!agent) {
     agent = new Agent();
     // A throwaway turn with a long deadline, so the cold start (agent spawn, judge
     // model load) is not charged to the first real question. Failing here still
     // leaves the question below to abstain on its own.
     agent.limit = WARMUP_MS;
-    await agent.ask('Reply with exactly: ok').catch(() => {});
+    await agent.ask(warmupQuestion()).catch(() => {});
     agent.limit = TIMEOUT_MS;
   }
   let answer: string;

@@ -41,6 +41,9 @@ jobs:
       OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION }}
       BUILD: ${{ inputs.build_image && '--build' || '' }}
       RESTART: ${{ inputs.restart && '--restart' || '' }}
+      # On a host with no OLLAMA37_SERVICE, bring the container up rather than wait
+      # on a server nobody started -- setup is where the container is owned.
+      OLLAMA37_COMPOSE_FALLBACK: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/identify-host

@@ -57,20 +57,21 @@ function nodeFetch(timeoutMs: number): Fetch {
 
 const client = new Ollama({ host: HOST, fetch: nodeFetch(1_200_000) });
 
-/** Pull the model when the server does not have it. A locally created model is present without being in a registry. */
+/**
+ * Pull the model when the server does not have it. A locally created model is
+ * present without being in a registry. Streamed: a non-streamed pull sends nothing
+ * until it ends, so a large one would trip the client's idle timeout mid-download.
+ */
 export async function ensureModel(model: string): Promise<'present' | 'pulled'> {
   try {
     await client.show({ model });
     return 'present';
   } catch {
-    await client.pull({ model, stream: false });
+    let last = '';
+    for await (const p of await client.pull({ model, stream: true })) last = p.status;
+    if (last !== 'success') throw new Error(`pull ${model} ended with "${last}"`);
     return 'pulled';
   }
-}
-
-/** Load the weights without generating (an empty prompt), with the options that decide the reservation. */
-export async function load(model: string, options: Record<string, unknown> = {}): Promise<void> {
-  await client.generate({ model, prompt: '', stream: false, options });
 }
 
 /** Percent of the loaded model resident in VRAM, per /api/ps; 0 when it is not loaded. */
@@ -78,6 +79,16 @@ export async function offload(model: string): Promise<number> {
   const { models } = await client.ps();
   const m = models.find((x) => x.name === model || x.model === model);
   return m && m.size ? Math.round((m.size_vram / m.size) * 100) : 0;
+}
+
+/**
+ * Load the weights for the named prompt without generating (an empty prompt). The
+ * load decides the VRAM reservation, so it carries the same options the prompt's
+ * request will -- otherwise the first request reloads the model at a new size.
+ */
+export async function load(model: string, name: string, opts: GenerateOptions = {}): Promise<void> {
+  const options = { ...prompt(name, opts.tokens).options, ...(opts.options ?? {}) };
+  await withLoadRetry(() => client.generate({ model, prompt: '', stream: false, options }));
 }
 
 /** Release the weights. */

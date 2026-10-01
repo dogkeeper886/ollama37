@@ -36,7 +36,7 @@ await runTest(context ? `throughput (long context ${context})` : 'throughput', (
     await ensureModel(model);
     // The request that loads a model reserves its compute graph, so the options
     // that size it go on the load, not only on the timed request.
-    await load(model, options);
+    await load(model, name, { tokens: context, options });
     const r = await generate(model, name, { tokens: context, options });
     const gpu = await offload(model);
     const vram = serverVram();

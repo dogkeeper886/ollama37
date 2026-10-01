@@ -44,7 +44,7 @@ interface Entry {
   options?: Record<string, unknown>; judge?: string;
 }
 interface Judge { pass: 'yes' | 'no'; question: string }
-interface File { prompts: Record<string, Entry>; judges: Record<string, Judge> }
+interface File { prompts: Record<string, Entry>; judges: Record<string, Judge>; warmup: string }
 
 const FILE = process.env.OLLAMA37_PROMPTS
   ?? resolve(dirname(fileURLToPath(import.meta.url)), '..', 'prompts.yaml');
@@ -53,6 +53,7 @@ function load(): File {
   const f = parse(readFileSync(FILE, 'utf-8')) as File;
   const bad = (msg: string): never => { throw new Error(`${FILE}: ${msg}`); };
   if (!f?.prompts || !f?.judges) bad('needs `prompts` and `judges`');
+  if (typeof f.warmup !== 'string' || !f.warmup.trim()) bad('needs `warmup`, the judge\'s throwaway first question');
   for (const [name, j] of Object.entries(f.judges)) {
     if (j?.pass !== 'yes' && j?.pass !== 'no') bad(`judge "${name}" needs pass: "yes" or "no"`);
     if (!j.question?.includes('{reply}')) bad(`judge "${name}" has no {reply}`);
@@ -96,6 +97,9 @@ function buildLong(l: Long, tokens: number): string {
   if (!placed) parts.push(l.needle);
   return parts.join(' ');
 }
+
+/** The judge's throwaway first question. */
+export const warmupQuestion = (): string => config.warmup;
 
 /** All prompt names, for a script's --help and for validating its choice. */
 export const promptNames = (): string[] => Object.keys(config.prompts);

@@ -59,6 +59,11 @@ jobs:
       - name: Run
         working-directory: cicd/tests
         run: npx tsx mcp.ts ${MODELS:+--models "$MODELS"} ${NUM_CTX:+--num-ctx "$NUM_CTX"} --output results/mcp.json
+      # runTest restores the GPU itself, but a cancelled or timed-out job kills it
+      # first; this gives the card back whatever happened above.
+      - name: Restore GPU
+        if: always()
+        run: cicd/scripts/gpu-restore.sh
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
