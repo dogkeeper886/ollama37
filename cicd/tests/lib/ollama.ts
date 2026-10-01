@@ -18,7 +18,8 @@ import http from 'node:http';
 import https from 'node:https';
 import { Ollama, type ChatResponse, type Fetch, type GenerateResponse, type Message } from 'ollama';
 import type { Menu, ToolResult } from './mcp.js';
-import { prompt } from './prompts.js';
+import { prompt, type Prompt } from './prompts.js';
+import { discPng, spokenWav } from './media.js';
 import { check, type Reply } from './check.js';
 import { assertInRun, record, type Result } from './run.js';
 
@@ -109,13 +110,20 @@ export interface GenerateOptions {
 
 const perSec = (count?: number, ns?: number) => (count && ns ? +(count / (ns / 1e9)).toFixed(2) : 0);
 
+/** The prompt's image or audio clip, base64, for the request's `images` field. */
+async function media(p: Prompt): Promise<string[] | undefined> {
+  if (!p.media) return undefined;
+  return [p.media.kind === 'disc' ? discPng() : await spokenWav(p.media.words)];
+}
+
 /** Send the named prompt to `model`, check the reply, and record it for the judge. */
 export async function generate(model: string, name: string, opts: GenerateOptions = {}): Promise<Result> {
   assertInRun();
   const p = prompt(name, opts.tokens);
   const options = { ...p.options, ...(opts.options ?? {}) };
+  const images = await media(p);
   const res: GenerateResponse = await withLoadRetry(() =>
-    client.generate({ model, prompt: p.text, stream: false, options }),
+    client.generate({ model, prompt: p.text, stream: false, options, ...(images ? { images } : {}) }),
   );
   const reply: Reply = {
     response: res.response ?? '',
@@ -130,7 +138,7 @@ export async function generate(model: string, name: string, opts: GenerateOption
     judgePass: p.judgePass,
     judgeTemplate: p.judge,
     reply,
-    check: check(reply, p.expect),
+    check: check(reply, p.expect, p.reject),
     metrics: {
       inTokens: res.prompt_eval_count ?? 0,
       outTokens: res.eval_count ?? 0,
@@ -199,7 +207,7 @@ export async function converse(model: string, name: string, menu: Menu, opts: Ge
     judgePass: p.judgePass,
     judgeTemplate: p.judge,
     reply,
-    check: check(reply, p.expect),
+    check: check(reply, p.expect, p.reject),
     metrics: { inTokens, outTokens, prefillTps: 0, decodeTps: perSec(outTokens, evalNs), rounds, maxPrompt, saturated },
   });
   r.checks.toolCall = calls.length === 0

@@ -26,12 +26,22 @@ export interface Prompt {
   judgePass: 'yes' | 'no';
   /** A string the reply must contain, when the prompt plants one. */
   expect?: string;
+  /** Strings the reply must not contain (case-insensitive): refusals. */
+  reject: string[];
+  /** An image or audio clip to send with the prompt. */
+  media?: Media;
+  /** Tools offered to the model; each answers its fixed result. */
+  tools: LocalTool[];
 }
+
+export type Media = { kind: 'disc' } | { kind: 'speech'; words: string };
+export interface LocalTool { name: string; description: string; result: string }
 
 interface Long { filler: string; sentence: string; needle: string; depth: number }
 interface Entry {
   text?: string; text_file?: string; task?: string; long?: Long;
-  expect?: string; options?: Record<string, unknown>; judge?: string;
+  expect?: string; reject?: string[]; media?: Media; tools?: LocalTool[]; models?: string[];
+  options?: Record<string, unknown>; judge?: string;
 }
 interface Judge { pass: 'yes' | 'no'; question: string }
 interface File { prompts: Record<string, Entry>; judges: Record<string, Judge> }
@@ -53,6 +63,11 @@ function load(): File {
     if (!e.judge) bad(`prompt "${name}" names no judge`);
     if (!f.judges[e.judge!]) bad(`prompt "${name}" names judge "${e.judge}", which is not under judges`);
     if (e.long && !(e.long.depth > 0 && e.long.depth < 1)) bad(`prompt "${name}": long.depth must be in (0, 1)`);
+    if (e.media && !(e.media.kind === 'disc' || (e.media.kind === 'speech' && typeof e.media.words === 'string' && e.media.words))) {
+      bad(`prompt "${name}": media must be {kind: disc} or {kind: speech, words: "..."}`);
+    }
+    for (const t of e.tools ?? []) if (!t.name || typeof t.result !== 'string') bad(`prompt "${name}": each tool needs a name and a result`);
+    if (e.tools?.length && e.judge !== 'grounded') bad(`prompt "${name}" offers tools, so its judge must be grounded`);
   }
   return f;
 }
@@ -85,6 +100,10 @@ function buildLong(l: Long, tokens: number): string {
 /** All prompt names, for a script's --help and for validating its choice. */
 export const promptNames = (): string[] => Object.keys(config.prompts);
 
+/** Prompts whose `models` list names `model`: the model-specific paths models.ts adds. */
+export const promptsFor = (model: string): string[] =>
+  Object.entries(config.prompts).filter(([, e]) => e.models?.includes(model)).map(([n]) => n);
+
 /** The prompt called `name`. `tokens` sizes a `long` prompt and is ignored otherwise. */
 export function prompt(name: string, tokens?: number): Prompt {
   const e = config.prompts[name];
@@ -107,5 +126,8 @@ export function prompt(name: string, tokens?: number): Prompt {
     judgeName: e.judge!,
     judgePass: config.judges[e.judge!].pass,
     expect: e.expect,
+    reject: e.reject ?? [],
+    media: e.media,
+    tools: e.tools ?? [],
   };
 }

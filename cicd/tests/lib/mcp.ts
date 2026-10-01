@@ -30,6 +30,8 @@ export class Menu {
   /** Required argument names per tool, from its inputSchema. */
   required: Record<string, string[]> = {};
   private owner = new Map<string, Client>();
+  /** In-process tools: name → fixed result. */
+  private fixed = new Map<string, string>();
   private clients: Client[] = [];
 
   static async open(servers: ServerConfig[]): Promise<Menu> {
@@ -64,6 +66,8 @@ export class Menu {
 
   /** Run one tool call. A wrong name or bad arguments is the model's mistake under test: reported, not thrown. */
   async call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const result = this.fixed.get(name);
+    if (result !== undefined) return { name, content: result, isError: false };
     const client = this.owner.get(name);
     if (!client) return { name, content: `unknown tool "${name}"`, isError: true };
     try {
@@ -75,6 +79,17 @@ export class Menu {
     } catch (e) {
       return { name, content: `tool call failed: ${e instanceof Error ? e.message : String(e)}`, isError: true };
     }
+  }
+
+  /** A menu of in-process tools, each answering a fixed result (prompts.yaml `tools`). */
+  static local(tools: { name: string; description: string; result: string }[]): Menu {
+    const menu = new Menu();
+    for (const t of tools) {
+      menu.required[t.name] = [];
+      menu.fixed.set(t.name, t.result);
+      menu.tools.push({ type: 'function', function: { name: t.name, description: t.description, parameters: { type: 'object', properties: {} } } });
+    }
+    return menu;
   }
 
   async close(): Promise<void> {

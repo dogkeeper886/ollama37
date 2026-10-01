@@ -10,6 +10,11 @@
 #   task               appended after the text, when the text is material to work on
 #   long               builds a prompt of --context tokens instead (see long-context)
 #   expect             a string the reply must contain (checked by lib/check.ts)
+#   reject             strings the reply must not contain, case-insensitive (refusals)
+#   media              an image or audio clip sent with the prompt: {kind: disc} or
+#                      {kind: speech, words: "..."} (built by lib/media.ts)
+#   tools              tools offered to the model, each answering a fixed result
+#   models             models.ts also runs this prompt for these models (besides short-answer)
 #   options            Ollama options for the request
 #   judge              the name of a question under `judges` (each names the answer that passes)
 
@@ -56,6 +61,41 @@ prompts:
     text: "List the projects."
     options: { temperature: 0, seed: 0, num_ctx: 8192 }
     judge: grounded
+
+  # Model-specific paths, run by models.ts for the models each one names.
+
+  # gemma4:12b's image path (#367). Naming the shape is not required; reaching the
+  # image and answering is. A refusal is fluent text, so it is rejected outright.
+  image:
+    text: "What shape is in this image? Reply with one lowercase word, no punctuation."
+    media: { kind: disc }
+    reject: ["does not support", "cannot see", "can't see", "unable to see", "no image"]
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: broken
+    models: ["gemma4:12b"]
+
+  # gemma4:12b's audio path (#367). Synthetic speech transcribes marginally, so the
+  # word itself is not checked; engaging with the sound is.
+  audio:
+    text: "Which word is spoken in this audio? Reply with one lowercase word, no punctuation."
+    media: { kind: speech, words: "hello hello hello" }
+    reject: ["does not support audio", "cannot hear", "can't hear", "text-based", "text-only", "no audio", "don't have the ability"]
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: broken
+    models: ["gemma4:12b"]
+
+  # qwen3.8:27b's chat path: its renderer prompts for an XML tool format only
+  # Qwen35Parser reads (#491). A parsed call to the tool, then an answer from its
+  # result, proves that path.
+  time-tool:
+    text: "What time is it? Use the tool."
+    tools:
+      - name: get_current_time
+        description: Get the current time
+        result: "14:05"
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: grounded
+    models: ["qwen3.8:27b"]
 
 judges:
   # Every judge question names the answer that passes, so a question can be asked

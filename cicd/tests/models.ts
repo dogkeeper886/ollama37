@@ -5,10 +5,13 @@
  *   npx tsx models.ts [--models "a b c"] [--output results/models.json]
  *
  * Per model: pull if missing → generate('short-answer') → check + judge (by the
- * run) → weights resident, no die wasted → unload. A wrong answer passes; a reply
- * that is not language does not.
+ * run) → weights resident, no die wasted → the model's own paths, if prompts.yaml
+ * names any (gemma4:12b's image and audio, qwen3.8:27b's tool call) → unload. A
+ * wrong answer passes; a reply that is not language, or a refusal, does not.
  */
-import { ensureModel, generate, load, unload } from './lib/ollama.js';
+import { converse, ensureModel, generate, load, unload } from './lib/ollama.js';
+import { prompt, promptsFor } from './lib/prompts.js';
+import { Menu } from './lib/mcp.js';
 import { forEachModel, modelsArg, runTest } from './lib/run.js';
 import { serverVram } from './lib/gpu.js';
 
@@ -40,6 +43,12 @@ await runTest('models', () =>
     r.checks.resident = { pass: vram.totalMib > 0, reason: `${vram.totalMib} MiB across ${vram.dies} die(s)` };
     r.checks.dies = { pass: fits(vram.dies, vram.totalMib, model), reason: `${vram.totalMib} MiB across ${vram.dies} die(s)` };
     r.metrics.model = had;
+    // Model-specific paths, while the weights are resident.
+    for (const name of promptsFor(model)) {
+      const p = prompt(name);
+      if (p.tools.length) await converse(model, name, Menu.local(p.tools));
+      else await generate(model, name);
+    }
     await unload(model);
   }),
 );

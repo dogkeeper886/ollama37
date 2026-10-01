@@ -33,11 +33,17 @@ function isLoop(s: string): boolean {
   return false;
 }
 
-export function check(r: Reply, expect?: string): Verdict {
+export function check(r: Reply, expect?: string, reject: string[] = []): Verdict {
   const text = readable(r);
   if (!text) return { pass: false, reason: 'no text in response or thinking' };
   if (!/[\p{L}\p{N}]/u.test(text)) return { pass: false, reason: 'no letters or digits' };
   if (isLoop(text)) return { pass: false, reason: 'one short unit repeated to fill the reply' };
+  // A refusal ("I cannot see images") is fluent text the judge would pass; it means
+  // the media never reached the model, so it fails here. The answer field only:
+  // reasoning about what it cannot see is not a refusal.
+  const said = r.response.toLowerCase();
+  const refused = reject.find((p) => said.includes(p.toLowerCase()));
+  if (refused) return { pass: false, reason: `refused: "${refused}"` };
   if (expect && !r.response.includes(expect) && !r.thinking.includes(expect)) {
     return { pass: false, reason: `expected "${expect}" is missing` };
   }
