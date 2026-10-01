@@ -11,14 +11,14 @@
 #   long               builds a prompt of --context tokens instead (see long-context)
 #   expect             a string the reply must contain (checked by lib/check.ts)
 #   options            Ollama options for the request
-#   judge              the name of a question under `judges`
+#   judge              the name of a question under `judges` (each names the answer that passes)
 
 prompts:
   # Does the model load and answer in language? A wrong answer still passes.
   short-answer:
     text: "What is 2+2? Answer in one short sentence."
     options: { temperature: 0, seed: 0, num_predict: 400 }
-    judge: readable
+    judge: broken
 
   # Decode speed on a realistic prompt (~870 tokens in, 100 out).
   speech-rewrite:
@@ -29,7 +29,7 @@ prompts:
       affirmative. Replace any phrase that one exact word can replace. Output only
       the rewritten speech.
     options: { temperature: 0, seed: 42, num_predict: 100 }
-    judge: readable
+    judge: broken
 
   # A long window: filler to --context tokens, one fact ~30% in, then the task.
   long-context:
@@ -49,7 +49,7 @@ prompts:
       launch code from the passage exactly like: LAUNCH CODE: <code>.
     expect: "7492"
     options: { temperature: 0, seed: 42, num_predict: 1024 }
-    judge: readable
+    judge: broken
 
   # Pick the right tool from a menu and answer from what it returned.
   tool-call:
@@ -58,12 +58,18 @@ prompts:
     judge: grounded
 
 judges:
-  readable: |
-    Is this text readable language, with words in an order that means something? It may stop mid-sentence or be a list; that is fine. yes or no
+  # Every judge question names the answer that passes, so a question can be asked
+  # either way round without the code guessing.
+  broken:
+    pass: "no"
+    question: |
+      Is this text garbage, crash output, or random words? yes or no
 
-    "{reply}"
-  grounded: |
-    Does this answer use the result? yes or no
+      "{reply}"
+  grounded:
+    pass: "yes"
+    question: |
+      Does this answer use the result? yes or no
 
-    RESULT: "{result}"
-    ANSWER: "{reply}"
+      RESULT: "{result}"
+      ANSWER: "{reply}"

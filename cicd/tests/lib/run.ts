@@ -25,13 +25,16 @@ export interface Result {
   model: string;
   prompt: string;
   judgeName: string;
+  /** The judge's answer that passes the reply (prompts.yaml). */
+  judgePass: 'yes' | 'no';
   reply: Reply;
   /** `content` is the script check generate() ran; a test may add its own (never remove). */
   checks: Record<string, Verdict>;
   metrics: { inTokens: number; outTokens: number; prefillTps: number; decodeTps: number } & Record<string, unknown>;
   /** What the reply must rest on, for a grounded judge: the tool result the model was given. */
   groundedOn?: string;
-  judge: Judgment | { verdict: 'pending'; reason: string };
+  /** `not-judged`: the script check already failed it, so it was never sent. Never passes. */
+  judge: Judgment | { verdict: 'pending' | 'not-judged'; reason: string };
   pass: boolean;
 }
 
@@ -110,27 +113,28 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
   // sent -- it fails anyway, and a judge asked to quote a loop loops with it.
   for (const r of run.results) {
     if (!r.checks.content.pass) {
-      r.judge = { verdict: 'no', reason: `not judged: ${r.checks.content.reason}` };
+      r.judge = { verdict: 'not-judged', reason: `not judged: ${r.checks.content.reason}` };
     } else if (r.judgeName === 'grounded' && !r.groundedOn) {
       r.judge = { verdict: 'abstain', reason: 'grounded judge has no tool result to check against' };
     } else {
       process.stderr.write(`  [judge] ${r.model} (${r.prompt})...\n`);
       r.judge = await judge(run.templates.get(r)!, readable(r.reply), r.groundedOn);
     }
-    r.pass = Object.values(r.checks).every((c) => c.pass) && r.judge.verdict === 'yes';
+    r.pass = Object.values(r.checks).every((c) => c.pass) && r.judge.verdict === r.judgePass;
   }
   closeJudge();
 
   const failed = run.results.filter((r) => !r.pass).length + run.errors.length;
   const judged = run.results.filter((r) => r.judge.verdict === 'yes' || r.judge.verdict === 'no').length;
   const abstained = run.results.filter((r) => r.judge.verdict === 'abstain').length;
+  const notJudged = run.results.filter((r) => r.judge.verdict === 'not-judged').length;
   const models = new Set([...run.results.map((r) => r.model), ...run.errors.map((e) => e.model)]).size;
   const empty = run.results.length === 0;
 
   const lines = [
     `## ${test}`,
     '',
-    `**${models} model(s), ${run.results.length} reply(s), ${judged} judged, ${abstained} abstained, ${failed} failed**` +
+    `**${models} model(s), ${run.results.length} reply(s), ${judged} judged, ${abstained} abstained, ${notJudged} failed the check, ${failed} failed**` +
       (empty ? ' — no reply was recorded, so nothing was tested' : ''),
     '',
     '| Model | Prompt | Checks | Judge | Pass | Prefill tok/s | Decode tok/s | Reply |',
@@ -151,7 +155,7 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
   const out = arg('output');
   if (out) {
     mkdirSync(dirname(resolve(out)), { recursive: true });
-    writeFileSync(out, JSON.stringify({ test, models, judged, abstained, failed, results: run.results, errors: run.errors, bodyError }, null, 2));
+    writeFileSync(out, JSON.stringify({ test, models, judged, abstained, notJudged, failed, results: run.results, errors: run.errors, bodyError }, null, 2));
   }
   process.exit(failed > 0 || empty || bodyError ? 1 : 0);
 }

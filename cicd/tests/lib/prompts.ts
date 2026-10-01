@@ -22,6 +22,8 @@ export interface Prompt {
   /** The judge question with `{reply}` (and `{result}` for grounded) still in it. */
   judge: string;
   judgeName: string;
+  /** The judge's answer that passes the reply. */
+  judgePass: 'yes' | 'no';
   /** A string the reply must contain, when the prompt plants one. */
   expect?: string;
 }
@@ -31,7 +33,8 @@ interface Entry {
   text?: string; text_file?: string; task?: string; long?: Long;
   expect?: string; options?: Record<string, unknown>; judge?: string;
 }
-interface File { prompts: Record<string, Entry>; judges: Record<string, string> }
+interface Judge { pass: 'yes' | 'no'; question: string }
+interface File { prompts: Record<string, Entry>; judges: Record<string, Judge> }
 
 const FILE = process.env.OLLAMA37_PROMPTS
   ?? resolve(dirname(fileURLToPath(import.meta.url)), '..', 'prompts.yaml');
@@ -40,8 +43,9 @@ function load(): File {
   const f = parse(readFileSync(FILE, 'utf-8')) as File;
   const bad = (msg: string): never => { throw new Error(`${FILE}: ${msg}`); };
   if (!f?.prompts || !f?.judges) bad('needs `prompts` and `judges`');
-  for (const [name, q] of Object.entries(f.judges)) {
-    if (!q.includes('{reply}')) bad(`judge "${name}" has no {reply}`);
+  for (const [name, j] of Object.entries(f.judges)) {
+    if (j?.pass !== 'yes' && j?.pass !== 'no') bad(`judge "${name}" needs pass: "yes" or "no"`);
+    if (!j.question?.includes('{reply}')) bad(`judge "${name}" has no {reply}`);
   }
   for (const [name, e] of Object.entries(f.prompts)) {
     const sources = [e.text, e.text_file, e.long].filter((x) => x !== undefined).length;
@@ -99,8 +103,9 @@ export function prompt(name: string, tokens?: number): Prompt {
     name,
     text,
     options: { ...(e.options ?? {}) },
-    judge: config.judges[e.judge!],
+    judge: config.judges[e.judge!].question,
     judgeName: e.judge!,
+    judgePass: config.judges[e.judge!].pass,
     expect: e.expect,
   };
 }

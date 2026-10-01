@@ -118,6 +118,7 @@ export async function generate(model: string, name: string, opts: GenerateOption
     model,
     prompt: name,
     judgeName: p.judgeName,
+    judgePass: p.judgePass,
     judgeTemplate: p.judge,
     reply,
     check: check(reply, p.expect),

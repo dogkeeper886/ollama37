@@ -29,6 +29,8 @@ import {
 export interface Judgment {
   verdict: 'yes' | 'no' | 'abstain';
   reason: string;
+  /** The judge model's reasoning before its answer, as streamed; empty when it emits none. */
+  thinking?: string;
 }
 
 /** Bounds on one question. A loop is a 3-word phrase seen LOOP_LIMIT times in LOOP_WINDOW_MS. */
@@ -65,6 +67,8 @@ class Agent {
   private conn?: ClientSideConnection;
   /** This turn's agent messages; a new messageId starts a new one (ACP). */
   private messages: { id: string | undefined; text: string }[] = [];
+  /** This turn's reasoning, kept for the verdict. */
+  thoughts = '';
   private streamed: { at: number; text: string }[] = [];
   private loopReason?: string;
 
@@ -98,6 +102,7 @@ class Agent {
         const u = params.update;
         if ((u.sessionUpdate === 'agent_message_chunk' || u.sessionUpdate === 'agent_thought_chunk') && u.content.type === 'text') {
           this.streamed.push({ at: Date.now(), text: u.content.text });
+          if (u.sessionUpdate === 'agent_thought_chunk') this.thoughts += u.content.text;
           if (u.sessionUpdate === 'agent_message_chunk') {
             const id = (u as { messageId?: string | null }).messageId ?? undefined;
             const last = this.messages[this.messages.length - 1];
@@ -152,6 +157,7 @@ class Agent {
     );
     this.messages = [];
     this.streamed = [];
+    this.thoughts = '';
     this.loopReason = undefined;
     const guard = setInterval(() => this.checkForLoop(sessionId), LOOP_CHECK_MS);
     try {
@@ -178,9 +184,12 @@ let agent: Agent | undefined;
 
 /**
  * Put `question` (a judge template from prompts.yaml) to the judge, with
- * `{reply}` and `{result}` filled in. The verdict is the LAST yes/no in the
- * answer, so reasoning before it ("no gibberish here -- yes") is not read as the
- * verdict; \b keeps "no" out of "nonsense".
+ * `{reply}` and `{result}` filled in, and read its answer: the FIRST yes/no in
+ * the answer text. The model's reasoning streams separately (the thinking), so
+ * the answer leads with its verdict ("**Yes** -- this is random words") and the
+ * explanation after it is full of "no" ("no grammar ... no crash output") that a
+ * last-word rule would read as the verdict. \b keeps "no" out of "nonsense";
+ * (?:\1)? absorbs an agent that doubles its turn text ("yesyes").
  */
 export async function judge(template: string, reply: string, result = ''): Promise<Judgment> {
   const cut = (s: string) => (s.length > REPLY_LIMIT ? `${s.slice(0, REPLY_LIMIT)}... (truncated)` : s);
@@ -200,10 +209,11 @@ export async function judge(template: string, reply: string, result = ''): Promi
   } catch (e) {
     return { verdict: 'abstain', reason: `judge could not answer: ${e instanceof Error ? e.message : e}` };
   }
-  const found = [...answer.toLowerCase().matchAll(/\b(yes|no)\b/g)];
-  if (found.length === 0) return { verdict: 'abstain', reason: `no yes/no in: ${answer.slice(0, 120)}` };
-  const v = found[found.length - 1][1] as 'yes' | 'no';
-  return { verdict: v, reason: `judge said ${v}` };
+  const thinking = agent.thoughts.trim();
+  const first = answer.toLowerCase().replace(/[*_`#>]/g, '').match(/\b(yes|no)(?:\1)?\b/);
+  if (!first) return { verdict: 'abstain', reason: `no yes/no in: ${answer.slice(0, 120)}`, thinking };
+  const v = first[1] as 'yes' | 'no';
+  return { verdict: v, reason: `judge said ${v}`, thinking };
 }
 
 /** Stop the agent process at the end of a run. */
