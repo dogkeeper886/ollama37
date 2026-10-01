@@ -8,14 +8,16 @@
  *                    └─ recorded for the judge, who runs after the GPU is back
  *                         └─ Result { reply, check, judge, pass }
  *
- * `generate` is the one export that returns model text, and it only runs inside
- * runTest, so every reply is checked and every reply is judged. The client is
+ * `generate` and `converse` (the same, with a tool menu) are the only exports
+ * that return model text, and they only run inside runTest, so every reply is
+ * checked and every reply is judged. The client is
  * private. The other calls here produce no model text: pull a missing model,
  * load one (an empty prompt), read its GPU share, unload one.
  */
 import http from 'node:http';
 import https from 'node:https';
-import { Ollama, type Fetch, type GenerateResponse } from 'ollama';
+import { Ollama, type ChatResponse, type Fetch, type GenerateResponse, type Message } from 'ollama';
+import type { Menu, ToolResult } from './mcp.js';
 import { prompt } from './prompts.js';
 import { check, type Reply } from './check.js';
 import { assertInRun, record, type Result } from './run.js';
@@ -136,4 +138,76 @@ export async function generate(model: string, name: string, opts: GenerateOption
       decodeTps: perSec(res.eval_count, res.eval_duration),
     },
   });
+}
+
+/**
+ * The named prompt with a tool menu: chat, run each tool call against the real
+ * server, feed the results back, until the model answers or `maxRounds` pass.
+ * The final answer is checked and recorded like any reply, with the tool results
+ * as what a grounded judge checks it against. The calls themselves are checked
+ * here: a tool was called, it exists, its required arguments were given, and it
+ * ran without error. A model whose template cannot do tools throws, and the run
+ * records the model as failed.
+ */
+export async function converse(model: string, name: string, menu: Menu, opts: GenerateOptions & { maxRounds?: number } = {}): Promise<Result> {
+  assertInRun();
+  const p = prompt(name, opts.tokens);
+  const options = { ...p.options, ...(opts.options ?? {}) };
+  const numCtx = Number(options.num_ctx ?? 0);
+  const messages: Message[] = [{ role: 'user', content: p.text }];
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const results: ToolResult[] = [];
+  let inTokens = 0, outTokens = 0, evalNs = 0, maxPrompt = 0, rounds = 0, saturated = false, answer: ChatResponse | undefined;
+
+  for (let round = 0; round < (opts.maxRounds ?? 5) && !answer; round++) {
+    const res: ChatResponse = await withLoadRetry(() =>
+      client.chat({ model, messages, tools: menu.tools, stream: false, options }),
+    );
+    rounds++;
+    const pe = res.prompt_eval_count ?? 0, ev = res.eval_count ?? 0;
+    inTokens += pe; outTokens += ev; evalNs += res.eval_duration ?? 0; maxPrompt = Math.max(maxPrompt, pe);
+    // The round's prompt plus its output reached the window: the KV cache filled.
+    if (numCtx && pe + ev >= numCtx) saturated = true;
+    const toolCalls = res.message.tool_calls ?? [];
+    if (toolCalls.length === 0) { answer = res; break; }
+    messages.push({ role: 'assistant', content: res.message.content, tool_calls: toolCalls });
+    for (const tc of toolCalls) {
+      const raw = tc.function.arguments as unknown;
+      let args: Record<string, unknown> = {};
+      if (typeof raw === 'string') { try { args = JSON.parse(raw); } catch { /* left empty: the args check fails it */ } }
+      else args = (raw ?? {}) as Record<string, unknown>;
+      calls.push({ name: tc.function.name, args });
+      const r = await menu.call(tc.function.name, args);
+      results.push(r);
+      messages.push({ role: 'tool', content: r.content, tool_name: r.name });
+    }
+  }
+
+  const reply: Reply = {
+    response: answer?.message.content ?? '',
+    thinking: answer?.message.thinking ?? '',
+    doneReason: answer ? answer.done_reason ?? '' : `no answer in ${opts.maxRounds ?? 5} rounds`,
+    evalCount: outTokens,
+  };
+  const unknown = calls.filter((c) => !(c.name in menu.required)).map((c) => c.name);
+  const missing = calls.flatMap((c) => (menu.required[c.name] ?? []).filter((k) => !(k in c.args)).map((k) => `${c.name}.${k}`));
+  const failed = results.filter((r) => r.isError).map((r) => r.name);
+  const r = record({
+    model,
+    prompt: name,
+    judgeName: p.judgeName,
+    judgePass: p.judgePass,
+    judgeTemplate: p.judge,
+    reply,
+    check: check(reply, p.expect),
+    metrics: { inTokens, outTokens, prefillTps: 0, decodeTps: perSec(outTokens, evalNs), rounds, maxPrompt, saturated },
+  });
+  r.checks.toolCall = calls.length === 0
+    ? { pass: false, reason: 'no tool was called' }
+    : unknown.length ? { pass: false, reason: `unknown tool: ${unknown.join(', ')}` }
+    : missing.length ? { pass: false, reason: `missing required args: ${missing.join(', ')}` }
+    : failed.length ? { pass: false, reason: `tool returned an error: ${failed.join(', ')}` }
+    : { pass: true, reason: calls.map((c) => c.name).join(', ') };
+  r.groundedOn = results.map((x) => `${x.name}: ${x.content}`).join('\n');
+  return r;
 }
