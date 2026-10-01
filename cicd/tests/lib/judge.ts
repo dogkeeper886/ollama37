@@ -15,7 +15,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -42,6 +44,14 @@ const LOOP_CHECK_MS = 5_000;
 const LOOP_LIMIT = 100;
 /** Longest reply text put in front of the judge. */
 const REPLY_LIMIT = 1000;
+
+/**
+ * The judge's working directory: empty, outside any repository. Claude Code puts
+ * the git status and recent commits of its working directory into the system
+ * prompt; run inside this repo, the judge read our commits about the judge and
+ * reasoned from them ("a test case for a judge ... mentioned in the git history").
+ */
+const JUDGE_CWD = mkdtempSync(join(tmpdir(), 'ollama37-judge-'));
 
 /** The agent's environment: JUDGE_BASE_URL/JUDGE_MODEL become the Anthropic-compatible settings. */
 function agentEnv(): NodeJS.ProcessEnv {
@@ -84,10 +94,10 @@ class Agent {
 
   private spawnAgent(): ChildProcess {
     const stdio: ['pipe', 'pipe', 'inherit'] = ['pipe', 'pipe', 'inherit'];
-    if (process.env.JUDGE_AGENT) return spawn(process.env.JUDGE_AGENT, { stdio, env: agentEnv(), shell: true });
+    if (process.env.JUDGE_AGENT) return spawn(process.env.JUDGE_AGENT, { cwd: JUDGE_CWD, stdio, env: agentEnv(), shell: true });
     const req = createRequire(import.meta.url);
     const entry = resolve(dirname(req.resolve('@agentclientprotocol/claude-agent-acp/package.json')), 'dist/index.js');
-    return spawn(process.execPath, [entry], { stdio, env: agentEnv() });
+    return spawn(process.execPath, [entry], { cwd: JUDGE_CWD, stdio, env: agentEnv() });
   }
 
   private async start(): Promise<void> {
@@ -152,7 +162,7 @@ class Agent {
     await this.start();
     // tools: [] drops Claude Code's built-in tools; the judge only reads and answers.
     const { sessionId } = await this.within(
-      this.conn!.newSession({ cwd: process.cwd(), mcpServers: [], _meta: { claudeCode: { options: { tools: [] } } } }),
+      this.conn!.newSession({ cwd: JUDGE_CWD, mcpServers: [], _meta: { claudeCode: { options: { tools: [] } } } }),
       'agent session/new',
     );
     this.messages = [];
@@ -184,12 +194,12 @@ let agent: Agent | undefined;
 
 /**
  * Put `question` (a judge template from prompts.yaml) to the judge, with
- * `{reply}` and `{result}` filled in, and read its answer: the FIRST yes/no in
- * the answer text. The model's reasoning streams separately (the thinking), so
- * the answer leads with its verdict ("**Yes** -- this is random words") and the
- * explanation after it is full of "no" ("no grammar ... no crash output") that a
- * last-word rule would read as the verdict. \b keeps "no" out of "nonsense";
- * (?:\1)? absorbs an agent that doubles its turn text ("yesyes").
+ * `{reply}` and `{result}` filled in, and read its verdict: the answer must OPEN
+ * with yes or no, past markdown and quotes. The reasoning streams separately (the
+ * thinking), so a sound answer leads with its verdict ("**Yes** -- this is random
+ * words") and the explanation after it is full of "no" that must not count.
+ * Anything else -- a hedge, another language, a verdict buried mid-answer -- is
+ * an abstain, which fails the reply. (?:\1)? absorbs a doubled turn ("yesyes").
  */
 export async function judge(template: string, reply: string, result = ''): Promise<Judgment> {
   const cut = (s: string) => (s.length > REPLY_LIMIT ? `${s.slice(0, REPLY_LIMIT)}... (truncated)` : s);
@@ -210,7 +220,7 @@ export async function judge(template: string, reply: string, result = ''): Promi
     return { verdict: 'abstain', reason: `judge could not answer: ${e instanceof Error ? e.message : e}` };
   }
   const thinking = agent.thoughts.trim();
-  const first = answer.toLowerCase().replace(/[*_`#>]/g, '').match(/\b(yes|no)(?:\1)?\b/);
+  const first = answer.toLowerCase().replace(/^[\s*_`#>"'“”‘’]+/, '').match(/^(yes|no)(?:\1)?\b/);
   if (!first) return { verdict: 'abstain', reason: `no yes/no in: ${answer.slice(0, 120)}`, thinking };
   const v = first[1] as 'yes' | 'no';
   return { verdict: v, reason: `judge said ${v}`, thinking };
