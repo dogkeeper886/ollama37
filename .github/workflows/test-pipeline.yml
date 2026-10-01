@@ -1,0 +1,62 @@
+name: Full Test Pipeline
+
+# Setup, then proof the judge works, then the three tests (#542). Each job runs
+# only when the one before it passed, so a broken judge never grades a run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_image:
+        description: "Build the runtime image from source (about an hour) and retag it"
+        required: false
+        default: true
+        type: boolean
+      restart:
+        description: "Recreate the container on the image before the health checks"
+        required: false
+        default: true
+        type: boolean
+      mcp_models:
+        description: "Models for the MCP test (they need native tool support)"
+        required: false
+        default: "qwen3.8:27b"
+        type: string
+      runner_label:
+        description: "Which GPU testbed. sm37 = Tesla K80 (full validation)."
+        required: false
+        default: "sm37"
+        type: choice
+        options: ["sm37", "sm61", "sm86"]
+
+jobs:
+  setup:
+    uses: ./.github/workflows/test-setup.yml
+    with:
+      build_image: ${{ inputs.build_image }}
+      restart: ${{ inputs.restart }}
+      runner_label: ${{ inputs.runner_label }}
+  canary:
+    needs: setup
+    uses: ./.github/workflows/test-canary.yml
+    secrets: inherit
+    with:
+      runner_label: ${{ inputs.runner_label }}
+  models:
+    needs: canary
+    uses: ./.github/workflows/test-models.yml
+    secrets: inherit
+    with:
+      runner_label: ${{ inputs.runner_label }}
+  throughput:
+    needs: models
+    uses: ./.github/workflows/test-throughput.yml
+    secrets: inherit
+    with:
+      runner_label: ${{ inputs.runner_label }}
+  mcp:
+    needs: throughput
+    uses: ./.github/workflows/test-mcp.yml
+    secrets: inherit
+    with:
+      models: ${{ inputs.mcp_models }}
+      runner_label: ${{ inputs.runner_label }}

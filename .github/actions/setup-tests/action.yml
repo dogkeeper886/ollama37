@@ -1,0 +1,11 @@
+name: Setup tests
+description: >
+  Node and cicd/tests' dependencies, so a job can run the test scripts (#542).
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+    - shell: bash
+      run: cd cicd/tests && npm ci

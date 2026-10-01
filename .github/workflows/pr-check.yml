@@ -1,0 +1,25 @@
+name: PR check
+
+# On every pull request, on a GitHub-hosted runner, no GPU (#542):
+# - the test code typechecks;
+# - only cicd/tests/lib/ollama.ts talks to the model, so no reply can skip the
+#   check and the judge;
+# - no prompt or judge text lives outside cicd/tests/prompts.yaml and prompts/.
+
+on:
+  pull_request:
+    paths: ["cicd/**", ".github/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-tests
+      - name: Typecheck
+        run: cd cicd/tests && npm run typecheck
+      - name: Only lib/ollama.ts calls the model
+        run: cicd/scripts/check-structure.sh
