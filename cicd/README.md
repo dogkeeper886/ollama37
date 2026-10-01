@@ -58,7 +58,7 @@ In CI: `test-pipeline.yml` runs setup → canary → models → throughput → m
 
 ## The host decides the server under test
 
-Each runner's `.env` names its own:
+Each runner's `.env` (in the runner's folder, e.g. `~/actions-runner/.env`; template: [`runner.env.example`](runner.env.example)) names its own. The runner reads it only at start, so restart its service after a change:
 
 | Knob | Read by |
 |---|---|
