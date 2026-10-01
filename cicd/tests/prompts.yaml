@@ -1,0 +1,119 @@
+# Every prompt a test sends, and every question the agent judge asks (#542).
+# Nothing else in cicd/tests may hold prompt or judge text: tests name a prompt,
+# lib/prompts.ts is the only reader, and a prompt names its own judge question,
+# so no test can pick a weaker one or none.
+#
+# Point OLLAMA37_PROMPTS at another file to run an experiment without a code change.
+#
+# A prompt has:
+#   text | text_file   the prompt, inline or from a file beside this one
+#   task               appended after the text, when the text is material to work on
+#   long               builds a prompt of --context tokens instead (see long-context)
+#   expect             a string the reply must contain (checked by lib/check.ts)
+#   reject             strings the reply must not contain, case-insensitive (refusals)
+#   media              an image or audio clip sent with the prompt: {kind: disc} or
+#                      {kind: speech, words: "..."} (built by lib/media.ts)
+#   tools              tools offered to the model, each answering a fixed result
+#   models             models.ts also runs this prompt for these models (besides short-answer)
+#   options            Ollama options for the request
+#   judge              the name of a question under `judges` (each names the answer that passes)
+
+prompts:
+  # Does the model load and answer in language? A wrong answer still passes.
+  short-answer:
+    text: "What is 2+2? Answer in one short sentence."
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: broken
+
+  # Decode speed on a realistic prompt (~870 tokens in, 100 out).
+  speech-rewrite:
+    text_file: prompts/speech.txt
+    task: >-
+      Rewrite the speech above in plainer English. Cut every verbal tic and filler
+      word. Put each sentence's main character first. Turn each negative sentence
+      affirmative. Replace any phrase that one exact word can replace. Output only
+      the rewritten speech.
+    options: { temperature: 0, seed: 42, num_predict: 100 }
+    judge: broken
+
+  # A long window: filler to --context tokens, one fact ~30% in, then the task.
+  long-context:
+    long:
+      filler: >-
+        flash attention kernel tensor core memory bandwidth throughput latency prefill
+        decode softmax matmul cublas turing ampere kepler compute capability toolchain
+        codegen register warp shuffle transpose quantization inference context window
+        batch sequence token cache
+      sentence: "The {words} determines {word} performance."
+      needle: "CRITICAL FACT: the secret launch code is 7492. Remember this exact number."
+      depth: 0.3
+    task: >-
+      The passage above is repetitive filler; ignore it except for the one CRITICAL
+      FACT. In about 100 words, explain what flash attention is and why it helps large
+      language model inference on GPUs. Then on its own final line write the secret
+      launch code from the passage exactly like: LAUNCH CODE: <code>.
+    expect: "7492"
+    options: { temperature: 0, seed: 42, num_predict: 1024 }
+    judge: broken
+
+  # Pick the right tool from a menu and answer from what it returned.
+  tool-call:
+    text: "List the projects."
+    options: { temperature: 0, seed: 0, num_ctx: 8192 }
+    judge: grounded
+
+  # Model-specific paths, run by models.ts for the models each one names.
+
+  # gemma4:12b's image path (#367). Naming the shape is not required; reaching the
+  # image and answering is. A refusal is fluent text, so it is rejected outright.
+  image:
+    text: "What shape is in this image? Reply with one lowercase word, no punctuation."
+    media: { kind: disc }
+    reject: ["does not support", "cannot see", "can't see", "unable to see", "no image"]
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: broken
+    models: ["gemma4:12b"]
+
+  # gemma4:12b's audio path (#367). Synthetic speech transcribes marginally, so the
+  # word itself is not checked; engaging with the sound is.
+  audio:
+    text: "Which word is spoken in this audio? Reply with one lowercase word, no punctuation."
+    media: { kind: speech, words: "hello hello hello" }
+    reject: ["does not support audio", "cannot hear", "can't hear", "text-based", "text-only", "no audio", "don't have the ability"]
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: broken
+    models: ["gemma4:12b"]
+
+  # qwen3.8:27b's chat path: its renderer prompts for an XML tool format only
+  # Qwen35Parser reads (#491). A parsed call to the tool, then an answer from its
+  # result, proves that path.
+  time-tool:
+    text: "What time is it? Use the tool."
+    tools:
+      - name: get_current_time
+        description: Get the current time
+        result: "14:05"
+    options: { temperature: 0, seed: 0, num_predict: 400 }
+    judge: grounded
+    models: ["qwen3.8:27b"]
+
+# A throwaway question that starts the judge agent and loads its model before the
+# first real one, so a cold start is not charged to a reply.
+warmup: "Reply with exactly: ok"
+
+judges:
+  # Every judge question names the answer that passes, so a question can be asked
+  # either way round without the code guessing.
+  broken:
+    pass: "no"
+    question: |
+      Is this text garbage, crash output, or words in random order? yes or no
+
+      "{reply}"
+  grounded:
+    pass: "yes"
+    question: |
+      Does this answer use the result? yes or no
+
+      RESULT: "{result}"
+      ANSWER: "{reply}"

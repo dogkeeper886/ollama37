@@ -1,0 +1,69 @@
+name: Throughput
+
+# prefill and decode speed per model, every reply checked and judged; --context runs the long-context prompt (#542).
+# Wiring only: the test is cicd/tests/throughput.ts, which yields the GPU, runs, gives it
+# back, judges every reply and fails on anything unjudged.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Space-separated models (empty = the runner's .env list)"
+        required: false
+        type: string
+      context:
+        description: "Long-context mode: prompt length in tokens (empty = the speech-rewrite prompt)"
+        required: false
+        type: string
+      num_batch:
+        description: "num_batch per request (empty = model default)"
+        required: false
+        type: string
+      runner_label:
+        description: "Which GPU testbed. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti, sm86 = RTX 3060 (one card each)."
+        required: false
+        default: "sm37"
+        type: choice
+        options: ["sm37", "sm61", "sm86"]
+  workflow_call:
+    inputs:
+      models: { required: false, type: string }
+      context: { required: false, type: string }
+      num_batch: { required: false, type: string }
+      runner_label:
+        required: false
+        default: "sm37"
+        type: string
+
+jobs:
+  throughput:
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
+    environment: cicd-1
+    timeout-minutes: 660
+    env:
+      OLLAMA37_ROOT: ${{ github.workspace }}
+      MODELS: ${{ inputs.models }}
+      CONTEXT: ${{ inputs.context }}
+      NUM_BATCH: ${{ inputs.num_batch }}
+      JUDGE_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
+      JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/identify-host
+      - uses: ./.github/actions/setup-tests
+      - name: Run
+        working-directory: cicd/tests
+        run: npx tsx throughput.ts ${MODELS:+--models "$MODELS"} ${CONTEXT:+--context "$CONTEXT"} ${NUM_BATCH:+--num-batch "$NUM_BATCH"} --output results/throughput.json
+      # runTest restores the GPU itself, but a cancelled or timed-out job kills it
+      # first; this gives the card back whatever happened above.
+      - name: Restore GPU
+        if: always()
+        run: cicd/scripts/gpu-restore.sh
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: throughput-report
+          path: cicd/tests/results/throughput.json
+          if-no-files-found: warn

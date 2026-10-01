@@ -1,0 +1,33 @@
+name: Canary (the judge catches garbage)
+
+# A test that cannot go red proves nothing (#542). Runs models.ts against a fake
+# Ollama that answers fluent word salad, then a sound sentence: the judge must call
+# the first garbage and pass the second. Wiring only: cicd/scripts/canary.sh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Runner to judge from"
+        required: false
+        default: "sm37"
+        type: choice
+        options: ["sm37", "sm61", "sm86"]
+  workflow_call:
+    inputs:
+      runner_label: { required: false, default: "sm37", type: string }
+
+jobs:
+  canary:
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
+    environment: cicd-1
+    timeout-minutes: 30
+    env:
+      JUDGE_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
+      JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-tests
+      - name: Canary
+        run: cicd/scripts/canary.sh

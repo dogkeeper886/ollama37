@@ -1,0 +1,73 @@
+name: MCP tool use
+
+# each model drives a real MCP server: right tool, valid arguments, an answer grounded in the result (#542).
+# Wiring only: the test is cicd/tests/mcp.ts, which yields the GPU, runs, gives it
+# back, judges every reply and fails on anything unjudged.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Space-separated models (empty = the runner's .env list)"
+        required: false
+        type: string
+      num_ctx:
+        description: "Context window (empty = prompts.yaml, 8192)"
+        required: false
+        type: string
+      distractor:
+        description: "Add the Playwright MCP server as a distractor menu"
+        required: false
+        default: false
+        type: boolean
+      runner_label:
+        description: "Which GPU testbed. sm37 = Tesla K80 (reference). sm61 = GTX 1080 Ti, sm86 = RTX 3060 (one card each)."
+        required: false
+        default: "sm37"
+        type: choice
+        options: ["sm37", "sm61", "sm86"]
+  workflow_call:
+    inputs:
+      models: { required: false, type: string }
+      num_ctx: { required: false, type: string }
+      distractor: { required: false, default: false, type: boolean }
+      runner_label:
+        required: false
+        default: "sm37"
+        type: string
+
+jobs:
+  mcp:
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
+    environment: cicd-1
+    timeout-minutes: 660
+    env:
+      OLLAMA37_ROOT: ${{ github.workspace }}
+      MODELS: ${{ inputs.models }}
+      NUM_CTX: ${{ inputs.num_ctx }}
+      TESTLINK_URL: ${{ secrets.TESTLINK_URL }}
+      TESTLINK_API_KEY: ${{ secrets.TESTLINK_API_KEY }}
+      MCP_DISTRACTOR_COMMAND: ${{ inputs.distractor && 'npx' || '' }}
+      MCP_DISTRACTOR_ARGS: ${{ inputs.distractor && '@playwright/mcp@latest' || '' }}
+      JUDGE_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
+      JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/identify-host
+      - uses: ./.github/actions/setup-tests
+      - name: Run
+        working-directory: cicd/tests
+        run: npx tsx mcp.ts ${MODELS:+--models "$MODELS"} ${NUM_CTX:+--num-ctx "$NUM_CTX"} --output results/mcp.json
+      # runTest restores the GPU itself, but a cancelled or timed-out job kills it
+      # first; this gives the card back whatever happened above.
+      - name: Restore GPU
+        if: always()
+        run: cicd/scripts/gpu-restore.sh
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-report
+          path: cicd/tests/results/mcp.json
+          if-no-files-found: warn
