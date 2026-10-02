@@ -1,13 +1,15 @@
-name: Full Test Pipeline
+name: Build + Test Pipeline
 
-# Setup, then proof the judge works, then the three tests (#542). Each job runs
-# only when the one before it passed, so a broken judge never grades a run.
+# Build the image, deploy it, prove the judge still catches garbage, then test
+# every model (#542). Each job runs only when the one before it passed, so a broken
+# image is never tested and a broken judge never grades a run. Throughput and MCP
+# run on their own (test-throughput.yml, test-mcp.yml).
 
 on:
   workflow_dispatch:
     inputs:
       build_image:
-        description: "Build the runtime image from source (about an hour) and retag it"
+        description: "Compile the runtime image from source (about 25 minutes on sm37) and retag it"
         required: false
         default: true
         type: boolean
@@ -16,11 +18,6 @@ on:
         required: false
         default: true
         type: boolean
-      mcp_models:
-        description: "Models for the MCP test (they need native tool support)"
-        required: false
-        default: "qwen3.8:27b"
-        type: string
       runner_label:
         description: "Which GPU testbed. sm37 = Tesla K80 (full validation)."
         required: false
@@ -29,14 +26,19 @@ on:
         options: ["sm37", "sm61", "sm86"]
 
 jobs:
-  setup:
-    uses: ./.github/workflows/test-setup.yml
+  build:
+    uses: ./.github/workflows/build.yml
     with:
       build_image: ${{ inputs.build_image }}
+      runner_label: ${{ inputs.runner_label }}
+  deploy:
+    needs: build
+    uses: ./.github/workflows/deploy.yml
+    with:
       restart: ${{ inputs.restart }}
       runner_label: ${{ inputs.runner_label }}
   canary:
-    needs: setup
+    needs: deploy
     uses: ./.github/workflows/test-canary.yml
     secrets: inherit
     with:
@@ -46,17 +48,4 @@ jobs:
     uses: ./.github/workflows/test-models.yml
     secrets: inherit
     with:
-      runner_label: ${{ inputs.runner_label }}
-  throughput:
-    needs: models
-    uses: ./.github/workflows/test-throughput.yml
-    secrets: inherit
-    with:
-      runner_label: ${{ inputs.runner_label }}
-  mcp:
-    needs: throughput
-    uses: ./.github/workflows/test-mcp.yml
-    secrets: inherit
-    with:
-      models: ${{ inputs.mcp_models }}
       runner_label: ${{ inputs.runner_label }}

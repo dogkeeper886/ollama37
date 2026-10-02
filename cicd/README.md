@@ -54,7 +54,17 @@ npx tsx mcp.ts --models "qwen3.8:27b"
 
 Each prints a markdown report and takes `--output <file>` for JSON.
 
-In CI: `test-pipeline.yml` runs setup → canary → models → throughput → mcp, each only after the one before passed. Each also runs alone (`test-setup.yml`, `test-canary.yml`, `test-models.yml`, `test-throughput.yml`, `test-mcp.yml`). `pr-check.yml` typechecks and runs the structure check on every pull request.
+In CI:
+
+| Workflow | What it runs |
+|---|---|
+| `pipeline.yml` (Build + Test Pipeline) | build → deploy → canary → models, each only after the one before passed |
+| `build.yml` (Build) | toolchain check; with `build_image`, compile and retag |
+| `deploy.yml` (Deploy) | GPU hand-over, container up, health checks, GPU back |
+| `test-canary.yml` (Canary) | the judge still catches garbage |
+| `test-models.yml` (Models) | every model; one model is an inference test |
+| `test-throughput.yml`, `test-mcp.yml` | run on their own, outside the pipeline |
+| `pr-check.yml` | typecheck and the structure check, on every pull request |
 
 ## The host decides the server under test
 
