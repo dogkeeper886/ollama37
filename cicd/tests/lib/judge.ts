@@ -169,9 +169,12 @@ class Agent {
   /** One question in a fresh session; the joined text of every message in the turn. */
   async ask(question: string): Promise<string> {
     await this.start();
-    // tools: [] drops Claude Code's built-in tools; the judge only reads and answers.
+    // No tools at all: tools: [] drops Claude Code's built-in tools, and
+    // strictMcpConfig keeps the user's own MCP servers out (only mcpServers, here
+    // none, are loaded). Without it a server added to ~/.claude.json -- playwright,
+    // once -- rode along on every question and pushed it past the judge's 4k context.
     const { sessionId } = await this.within(
-      this.conn!.newSession({ cwd: JUDGE_CWD, mcpServers: [], _meta: { claudeCode: { options: { tools: [] } } } }),
+      this.conn!.newSession({ cwd: JUDGE_CWD, mcpServers: [], _meta: { claudeCode: { options: { tools: [], strictMcpConfig: true } } } }),
       'agent session/new',
     );
     this.messages = [];
