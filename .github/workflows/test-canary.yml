@@ -1,4 +1,4 @@
-name: Canary (the judge catches garbage)
+name: Canary
 
 # A test that cannot go red proves nothing (#542). Runs models.ts against a fake
 # Ollama that answers fluent word salad, then a sound sentence: the judge must call

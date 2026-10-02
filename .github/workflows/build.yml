@@ -1,0 +1,39 @@
+name: Build
+
+# Check the builder toolchain, then -- with build_image -- compile the runtime image
+# from source and retag it as the image compose runs (#542). Shell, not a test:
+# cicd/scripts/build-image.sh leaves a usable image or fails the job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_image:
+        description: "Compile the runtime image from source (about 25 minutes on sm37) and retag it. Off = check the toolchain and the existing image only."
+        required: false
+        default: false
+        type: boolean
+      runner_label:
+        description: "Which host builds. sm37 = Tesla K80 (the builder image is cached there)."
+        required: false
+        default: "sm37"
+        type: choice
+        options: ["sm37", "sm61", "sm86"]
+  workflow_call:
+    inputs:
+      build_image: { required: false, default: false, type: boolean }
+      runner_label: { required: false, default: "sm37", type: string }
+
+jobs:
+  build:
+    runs-on: [self-hosted, "${{ inputs.runner_label || 'sm37' }}"]
+    environment: cicd-1
+    timeout-minutes: 120
+    env:
+      OLLAMA37_ROOT: ${{ github.workspace }}
+      OLLAMA_VERSION: ${{ vars.OLLAMA_VERSION }}
+      BUILD: ${{ inputs.build_image && '--build' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/identify-host
+      - name: Build image
+        run: cicd/scripts/build-image.sh $BUILD
