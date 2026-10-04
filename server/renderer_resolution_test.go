@@ -1,12 +1,6 @@
 package server
 
-import (
-	"os"
-	"path/filepath"
-	"testing"
-
-	"github.com/ollama/ollama/fs/ggml"
-)
+import "testing"
 
 // Excerpts of the GGUF chat templates around the assistant's think block.
 const (
@@ -37,27 +31,9 @@ func TestRendererForChatTemplate(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			kv := map[string]any{"general.architecture": "qwen35"}
-			if tt.template != "" {
-				kv["tokenizer.chat_template"] = tt.template
-			}
-			path := filepath.Join(t.TempDir(), "model.gguf")
-			f, err := os.Create(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := ggml.WriteGGUF(f, kv, nil); err != nil {
-				t.Fatal(err)
-			}
-			f.Close()
-
-			if got := rendererForChatTemplate(path); got != tt.want {
+			if got := rendererForChatTemplate(tt.template); got != tt.want {
 				t.Errorf("rendererForChatTemplate() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-
-	if got := rendererForChatTemplate(filepath.Join(t.TempDir(), "missing.gguf")); got != "" {
-		t.Errorf("missing file: got %q, want empty", got)
 	}
 }
