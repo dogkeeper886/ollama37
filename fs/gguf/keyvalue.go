@@ -69,6 +69,20 @@ func (v Value) Floats() (f64s []float64) {
 	return values[float64](v, reflect.Float32, reflect.Float64)
 }
 
+// Number returns a numeric Value as a float, and false if it is not a number.
+func (v Value) Number() (float64, bool) {
+	vv := reflect.ValueOf(v.value)
+	switch {
+	case vv.CanInt():
+		return float64(vv.Int()), true
+	case vv.CanUint():
+		return float64(vv.Uint()), true
+	case vv.CanFloat():
+		return vv.Float(), true
+	}
+	return 0, false
+}
+
 // Bool returns Value as a boolean. If it is not a boolean, it returns false.
 func (v Value) Bool() bool {
 	return value[bool](v, reflect.Bool)

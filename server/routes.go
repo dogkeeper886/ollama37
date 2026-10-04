@@ -104,6 +104,9 @@ var (
 
 func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
+	if err := opts.FromMap(model.GenerationDefaults); err != nil {
+		return api.Options{}, err
+	}
 	if err := opts.FromMap(model.Options); err != nil {
 		return api.Options{}, err
 	}

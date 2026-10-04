@@ -18,6 +18,22 @@ const (
 	gemma4LargeMinParameterCount = 12_000_000_000
 )
 
+// ornithChatTemplate is the line of the ornith chat template, whitespace removed,
+// that sets it apart from qwen3.5/3.6: the assistant's <think> block renders on
+// every turn, not only after the last user query.
+const ornithChatTemplate = `reasoning_content=reasoning_content|trim%}{{-'<|im_start|>'+message.role+'\n<think>\n'+reasoning_content+'\n</think>\n\n'+content}}`
+
+// rendererForChatTemplate names the built-in renderer and parser that reproduce
+// a GGUF tokenizer.chat_template, or "" for none. Library models such as
+// ornith-1.5 ship no renderer or parser, since upstream renders the GGUF chat
+// template natively; this fork has no template engine for it.
+func rendererForChatTemplate(chatTemplate string) string {
+	if strings.Contains(strings.Join(strings.Fields(chatTemplate), ""), ornithChatTemplate) {
+		return "ornith"
+	}
+	return ""
+}
+
 func resolveRendererName(m *Model) string {
 	if m == nil || m.Config.Renderer == "" {
 		return ""

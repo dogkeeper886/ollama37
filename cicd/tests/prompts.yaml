@@ -64,15 +64,15 @@ prompts:
 
   # Model-specific paths, run by models.ts for the models each one names.
 
-  # gemma4:12b's image path (#367). Naming the shape is not required; reaching the
-  # image and answering is. A refusal is fluent text, so it is rejected outright.
+  # The image path of gemma4:12b (#367) and ornith-1.5 (#480). Naming the shape is
+  # not required; reaching the image and answering is. A refusal is fluent text, so it is rejected outright.
   image:
     text: "What shape is in this image? Reply with one lowercase word, no punctuation."
     media: { kind: disc }
     reject: ["does not support", "cannot see", "can't see", "unable to see", "no image"]
     options: { temperature: 0, seed: 0, num_predict: 400 }
     judge: broken
-    models: ["gemma4:12b"]
+    models: ["gemma4:12b", "ornith-1.5:9b", "ornith-1.5:35b"]
 
   # gemma4:12b's audio path (#367). Synthetic speech transcribes marginally, so the
   # word itself is not checked; engaging with the sound is.

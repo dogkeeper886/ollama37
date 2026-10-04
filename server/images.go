@@ -65,8 +65,23 @@ type Model struct {
 	Digest         string
 	Options        map[string]any
 	Messages       []api.Message
+	// GenerationDefaults are the sampler defaults the GGUF carries
+	// (general.sampling.*), applied under Options.
+	GenerationDefaults model.GenerationDefaults
 
 	Template *template.Template
+}
+
+func generationDefaultsFromGGUF(f *gguf.File) model.GenerationDefaults {
+	return model.ParseGGUFGenerationDefaults(
+		func(key string) (int64, bool) {
+			n, ok := f.KeyValue(key).Number()
+			return int64(n), ok
+		},
+		func(key string) (float64, bool) {
+			return f.KeyValue(key).Number()
+		},
+	)
 }
 
 // Capabilities returns the capabilities that the model supports
@@ -418,6 +433,20 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 			model.License = append(model.License, string(bts))
+		}
+	}
+
+	if model.ModelPath != "" {
+		if f, err := gguf.Open(model.ModelPath); err == nil {
+			model.GenerationDefaults = generationDefaultsFromGGUF(f)
+			// A model that names no renderer, parser or template gets the built-in
+			// pair that matches its GGUF chat template.
+			if model.Config.Renderer == "" && model.Config.Parser == "" && model.Template == template.DefaultTemplate {
+				if name := rendererForChatTemplate(f.KeyValue("tokenizer.chat_template").String()); name != "" {
+					model.Config.Renderer, model.Config.Parser = name, name
+				}
+			}
+			f.Close()
 		}
 	}
 
