@@ -65,6 +65,8 @@ func ParserForName(name string) Parser {
 		return &Qwen35Parser{}
 	case "qwen3.8":
 		return &Qwen35Parser{honorThink: true}
+	case "glimmer":
+		return &GlimmerParser{}
 	case "passthrough":
 		return &PassthroughParser{}
 	case "harmony":
