@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/fs/gguf"
 )
 
 const (
@@ -17,6 +18,29 @@ const (
 	// clearly in the large range.
 	gemma4LargeMinParameterCount = 12_000_000_000
 )
+
+// ornithChatTemplate is the line of the ornith chat template, whitespace removed,
+// that sets it apart from qwen3.5/3.6: the assistant's <think> block renders on
+// every turn, not only after the last user query.
+const ornithChatTemplate = `reasoning_content=reasoning_content|trim%}{{-'<|im_start|>'+message.role+'\n<think>\n'+reasoning_content+'\n</think>\n\n'+content}}`
+
+// rendererForChatTemplate names the built-in renderer and parser that reproduce
+// the GGUF's tokenizer.chat_template, or "" for none. Library models such as
+// ornith-1.5 ship no renderer or parser, since upstream renders the GGUF chat
+// template natively; this fork has no template engine for it.
+func rendererForChatTemplate(path string) string {
+	f, err := gguf.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	tmpl := strings.Join(strings.Fields(f.KeyValue("tokenizer.chat_template").String()), "")
+	if strings.Contains(tmpl, ornithChatTemplate) {
+		return "ornith"
+	}
+	return ""
+}
 
 func resolveRendererName(m *Model) string {
 	if m == nil || m.Config.Renderer == "" {
