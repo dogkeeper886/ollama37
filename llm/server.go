@@ -184,7 +184,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		// engine implements, while gemma4uv is a patch embedder whose image
 		// tokens the language model encodes itself — a path it has no code for,
 		// so those models stay on llama.cpp, which does.
-		splitVision := len(projectors) > 0 && (arch == "qwen35" || arch == "qwen35moe" ||
+		splitVision := len(projectors) > 0 && (arch == "qwen35" || arch == "qwen35moe" || arch == "muse-glimmer" ||
 			(arch == "gemma4" && projectorType(projectors[0]) == "gemma4v"))
 		if len(projectors) == 0 || splitVision {
 			textProcessor, err = model.NewTextProcessor(modelPath)
