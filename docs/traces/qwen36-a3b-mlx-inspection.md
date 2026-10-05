@@ -130,7 +130,8 @@ data wastes effort on cases that may never run. Option 3 is the discipline.
 ## Next-session priorities
 
 1. **Runner skeleton (#189)** is now the critical path. Need Go cgo wrapper
-   around `libmlx.a` + `x/models/qwen3_6_a3b` model definition + tokenizer
+   around `libmlx.a` + `x/models/qwen3_6_a3b` model definition (it landed at
+   `x/mlxrunner/go/models/qwen3_6_a3b`; `x/` was removed in #559, see main before it) + tokenizer
    binding + sampling. Big chunk — probably the largest single piece of
    remaining work.
 2. As the runner exercises the forward pass, kernel stubs trip in priority

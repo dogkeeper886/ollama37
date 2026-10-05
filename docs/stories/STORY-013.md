@@ -22,7 +22,7 @@ The only temperature protection today is an ad-hoc `nvidia-smi` loop a human sta
 
 - The mechanism — a reusable wrapper script the workflows call, a composite GitHub action, or another shape — decided in planning.
 - Whether the threshold and sample interval should be knobs (and their defaults), and whether there's a separate "warn" band below the hard-abort line.
-- Exactly which workflows are in scope, and whether non-Ollama GPU work (e.g. MLX smoke) or build-only jobs should be guarded too.
+- Exactly which workflows are in scope, and whether non-Ollama GPU work (e.g. MLX smoke, since removed in #559) or build-only jobs should be guarded too.
 - How the abort is wired so the job fails cleanly mid-run (killing the model process, surviving the `| tee` to the step summary).
 
 ## Status

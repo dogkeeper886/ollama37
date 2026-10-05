@@ -19,6 +19,10 @@ func TestEstimateGPULayers(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "1")
 	t.Setenv("OLLAMA_KV_CACHE_TYPE", "") // Ensure default f16
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "2048")
+	// The fork scales graph estimates for K80 headroom (#352, default 2.5x).
+	// The GPU budgets below are upstream's raw graph sizes; this test came from
+	// upstream (6fd04ca9), which deleted it with llm/memory.go in f560bd07.
+	t.Setenv("OLLAMA_GRAPH_SAFETY_MULTIPLIER", "1")
 
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
