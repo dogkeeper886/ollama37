@@ -64,15 +64,16 @@ prompts:
 
   # Model-specific paths, run by models.ts for the models each one names.
 
-  # The image path of gemma4:12b (#367) and ornith-1.5 (#480). Naming the shape is
-  # not required; reaching the image and answering is. A refusal is fluent text, so it is rejected outright.
+  # The image path of gemma4:12b (#367), ornith-1.5 (#480) and muse-glimmer (#481).
+  # Naming the shape is not required; reaching the image and answering is. A
+  # refusal is fluent text, so it is rejected outright.
   image:
     text: "What shape is in this image? Reply with one lowercase word, no punctuation."
     media: { kind: disc }
     reject: ["does not support", "cannot see", "can't see", "unable to see", "no image"]
     options: { temperature: 0, seed: 0, num_predict: 400 }
     judge: broken
-    models: ["gemma4:12b", "ornith-1.5:9b", "ornith-1.5:35b"]
+    models: ["gemma4:12b", "ornith-1.5:9b", "ornith-1.5:35b", "muse-glimmer:30b"]
 
   # gemma4:12b's audio path (#367). Synthetic speech transcribes marginally, so the
   # word itself is not checked; engaging with the sound is.
@@ -84,8 +85,8 @@ prompts:
     judge: broken
     models: ["gemma4:12b"]
 
-  # qwen3.8:27b's chat path: its renderer prompts for an XML tool format only
-  # Qwen35Parser reads (#491). A parsed call to the tool, then an answer from its
+  # The renderer's tool format and its parser, for qwen3.8:27b (XML, #491) and
+  # muse-glimmer (ATEM, #481). A parsed call to the tool, then an answer from its
   # result, proves that path.
   time-tool:
     text: "What time is it? Use the tool."
@@ -95,7 +96,7 @@ prompts:
         result: "14:05"
     options: { temperature: 0, seed: 0, num_predict: 400 }
     judge: grounded
-    models: ["qwen3.8:27b"]
+    models: ["qwen3.8:27b", "muse-glimmer:30b"]
 
 # A throwaway question that starts the judge agent and loads its model before the
 # first real one, so a cold start is not charged to a reply.

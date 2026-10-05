@@ -65,7 +65,7 @@ func loadProjector(path string, kv fsggml.KV) ([]*fsggml.Tensor, tensorSource, e
 	switch projectorType {
 	case "qwen3vl_merger":
 		renames = qwen3vlMergerRenames
-	case "gemma4v":
+	case "gemma4v", "muse-glimmer":
 	default:
 		return nil, tensorSource{}, fmt.Errorf("unsupported projector type %q", projectorType)
 	}

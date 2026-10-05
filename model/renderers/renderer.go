@@ -73,6 +73,8 @@ func rendererForName(name string) Renderer {
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	case "ornith":
 		return newOrnithRenderer()
+	case "glimmer":
+		return &GlimmerRenderer{useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

@@ -1553,6 +1553,20 @@ func (t *Tensor) Tanh(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) InterpolateBilinear(ctx ml.Context, ne0, ne1, ne2, ne3 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_interpolate(ctx.(*Context).ctx, t.t, C.int64_t(ne0), C.int64_t(ne1), C.int64_t(ne2), C.int64_t(ne3), C.GGML_SCALE_MODE_BILINEAR),
+	}
+}
+
+func (t *Tensor) GELUErf(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gelu_erf_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,

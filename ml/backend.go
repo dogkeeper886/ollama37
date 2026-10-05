@@ -178,8 +178,12 @@ type Tensor interface {
 	Cos(ctx Context) Tensor
 	Exp(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
+	// InterpolateBilinear resizes t to the given shape with bilinear sampling.
+	InterpolateBilinear(ctx Context, ne0, ne1, ne2, ne3 int) Tensor
 	Softplus(ctx Context) Tensor
 	GELU(ctx Context, up ...Tensor) Tensor
+	// GELUErf is the exact GELU, x * Phi(x); GELU is its tanh approximation.
+	GELUErf(ctx Context) Tensor
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
 	Sigmoid(ctx Context) Tensor
