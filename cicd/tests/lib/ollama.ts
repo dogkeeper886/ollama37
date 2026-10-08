@@ -87,7 +87,7 @@ export async function offload(model: string): Promise<number> {
  * request will -- otherwise the first request reloads the model at a new size.
  */
 export async function load(model: string, name: string, opts: GenerateOptions = {}): Promise<void> {
-  const options = { ...prompt(name, opts.tokens).options, ...(opts.options ?? {}) };
+  const options = { ...prompt(name).options, ...(opts.options ?? {}) };
   await withLoadRetry(() => client.generate({ model, prompt: '', stream: false, options }));
 }
 
@@ -113,8 +113,6 @@ async function withLoadRetry<T>(f: () => Promise<T>): Promise<T> {
 }
 
 export interface GenerateOptions {
-  /** Size of a `long` prompt, in tokens. */
-  tokens?: number;
   /** Extra Ollama options, over the prompt's own (e.g. num_ctx, num_batch). */
   options?: Record<string, unknown>;
 }
@@ -130,7 +128,7 @@ async function media(p: Prompt): Promise<string[] | undefined> {
 /** Send the named prompt to `model`, check the reply, and record it for the judge. */
 export async function generate(model: string, name: string, opts: GenerateOptions = {}): Promise<Result> {
   assertInRun();
-  const p = prompt(name, opts.tokens);
+  const p = prompt(name);
   const options = { ...p.options, ...(opts.options ?? {}) };
   const images = await media(p);
   const res: GenerateResponse = await withLoadRetry(() =>
@@ -170,7 +168,7 @@ export async function generate(model: string, name: string, opts: GenerateOption
  */
 export async function converse(model: string, name: string, menu: Menu, opts: GenerateOptions & { maxRounds?: number } = {}): Promise<Result> {
   assertInRun();
-  const p = prompt(name, opts.tokens);
+  const p = prompt(name);
   const options = { ...p.options, ...(opts.options ?? {}) };
   const numCtx = Number(options.num_ctx ?? 0);
   const messages: Message[] = [{ role: 'user', content: p.text }];

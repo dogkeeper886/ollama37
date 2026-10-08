@@ -37,9 +37,8 @@ export interface Prompt {
 export type Media = { kind: 'disc' } | { kind: 'speech'; words: string };
 export interface LocalTool { name: string; description: string; result: string }
 
-interface Long { filler: string; sentence: string; needle: string; depth: number }
 interface Entry {
-  text?: string; text_file?: string; task?: string; long?: Long;
+  text?: string; text_file?: string; task?: string;
   expect?: string; reject?: string[]; media?: Media; tools?: LocalTool[]; models?: string[];
   options?: Record<string, unknown>; judge?: string;
 }
@@ -59,11 +58,10 @@ function load(): File {
     if (!j.question?.includes('{reply}')) bad(`judge "${name}" has no {reply}`);
   }
   for (const [name, e] of Object.entries(f.prompts)) {
-    const sources = [e.text, e.text_file, e.long].filter((x) => x !== undefined).length;
-    if (sources !== 1) bad(`prompt "${name}" needs exactly one of text, text_file, long`);
+    const sources = [e.text, e.text_file].filter((x) => x !== undefined).length;
+    if (sources !== 1) bad(`prompt "${name}" needs exactly one of text, text_file`);
     if (!e.judge) bad(`prompt "${name}" names no judge`);
     if (!f.judges[e.judge!]) bad(`prompt "${name}" names judge "${e.judge}", which is not under judges`);
-    if (e.long && !(e.long.depth > 0 && e.long.depth < 1)) bad(`prompt "${name}": long.depth must be in (0, 1)`);
     if (e.media && !(e.media.kind === 'disc' || (e.media.kind === 'speech' && typeof e.media.words === 'string' && e.media.words))) {
       bad(`prompt "${name}": media must be {kind: disc} or {kind: speech, words: "..."}`);
     }
@@ -75,29 +73,6 @@ function load(): File {
 
 const config = load();
 
-/**
- * Filler to about `tokens` tokens, the needle at `depth`, the task last. The same
- * target gives the same bytes, so two runs time the same prompt. ~0.8 words per
- * token for this filler; each sentence is 11 words.
- */
-function buildLong(l: Long, tokens: number): string {
-  const words = l.filler.split(/\s+/).filter(Boolean);
-  const targetWords = Math.max(64, Math.floor(tokens * 0.8));
-  const needleAt = Math.floor(targetWords * l.depth);
-  const parts: string[] = [];
-  let i = 0;
-  let placed = false;
-  for (let n = 0; n < targetWords; n += 11) {
-    if (!placed && n >= needleAt) { parts.push(l.needle); placed = true; }
-    const chunk: string[] = [];
-    for (let k = 0; k < 9; k++) { chunk.push(words[(i + 7 * k) % words.length]); i += 63; }
-    parts.push(l.sentence.replace('{words}', chunk.join(' ')).replace('{word}', words[i % words.length]));
-    i += 1;
-  }
-  if (!placed) parts.push(l.needle);
-  return parts.join(' ');
-}
-
 /** The judge's throwaway first question. */
 export const warmupQuestion = (): string => config.warmup;
 
@@ -108,19 +83,11 @@ export const promptNames = (): string[] => Object.keys(config.prompts);
 export const promptsFor = (model: string): string[] =>
   Object.entries(config.prompts).filter(([, e]) => e.models?.includes(model)).map(([n]) => n);
 
-/** The prompt called `name`. `tokens` sizes a `long` prompt and is ignored otherwise. */
-export function prompt(name: string, tokens?: number): Prompt {
+/** The prompt called `name`. */
+export function prompt(name: string): Prompt {
   const e = config.prompts[name];
   if (!e) throw new Error(`no prompt "${name}" in ${FILE}; have: ${promptNames().join(', ')}`);
-  let body: string;
-  if (e.long) {
-    if (!tokens) throw new Error(`prompt "${name}" is long: pass a token count`);
-    body = buildLong(e.long, tokens);
-  } else if (e.text_file) {
-    body = readFileSync(resolve(dirname(FILE), e.text_file), 'utf-8').trimEnd();
-  } else {
-    body = e.text!;
-  }
+  const body = e.text_file ? readFileSync(resolve(dirname(FILE), e.text_file), 'utf-8').trimEnd() : e.text!;
   const text = e.task ? `${body}\n\n${e.task}` : body;
   return {
     name,
