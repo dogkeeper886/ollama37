@@ -1,6 +1,6 @@
 name: Throughput
 
-# prefill and decode speed per model, every reply checked and judged; --context runs the long-context prompt (#542).
+# prefill and decode speed per model, every reply checked and judged; --prompt farewell-summary runs a long context (#542).
 # Wiring only: the test is cicd/tests/throughput.ts, which yields the GPU, runs, gives it
 # back, judges every reply and fails on anything unjudged.
 
@@ -11,8 +11,8 @@ on:
         description: "Space-separated models (empty = the runner's .env list)"
         required: false
         type: string
-      context:
-        description: "Long-context mode: prompt length in tokens (empty = the speech-rewrite prompt)"
+      prompt:
+        description: "Prompt from cicd/tests/prompts.yaml (empty = speech-rewrite; farewell-summary = ~8k tokens of context)"
         required: false
         type: string
       num_batch:
@@ -28,7 +28,7 @@ on:
   workflow_call:
     inputs:
       models: { required: false, type: string }
-      context: { required: false, type: string }
+      prompt: { required: false, type: string }
       num_batch: { required: false, type: string }
       runner_label:
         required: false
@@ -43,7 +43,7 @@ jobs:
     env:
       OLLAMA37_ROOT: ${{ github.workspace }}
       MODELS: ${{ inputs.models }}
-      CONTEXT: ${{ inputs.context }}
+      PROMPT: ${{ inputs.prompt }}
       NUM_BATCH: ${{ inputs.num_batch }}
       JUDGE_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
       JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
@@ -54,7 +54,7 @@ jobs:
       - uses: ./.github/actions/setup-tests
       - name: Run
         working-directory: cicd/tests
-        run: npx tsx throughput.ts ${MODELS:+--models "$MODELS"} ${CONTEXT:+--context "$CONTEXT"} ${NUM_BATCH:+--num-batch "$NUM_BATCH"} --output results/throughput.json
+        run: npx tsx throughput.ts ${MODELS:+--models "$MODELS"} ${PROMPT:+--prompt "$PROMPT"} ${NUM_BATCH:+--num-batch "$NUM_BATCH"} --output results/throughput.json
       # runTest restores the GPU itself, but a cancelled or timed-out job kills it
       # first; this gives the card back whatever happened above.
       - name: Restore GPU

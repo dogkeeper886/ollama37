@@ -8,7 +8,6 @@
 # A prompt has:
 #   text | text_file   the prompt, inline or from a file beside this one
 #   task               appended after the text, when the text is material to work on
-#   long               builds a prompt of --context tokens instead (see long-context)
 #   expect             a string the reply must contain (checked by lib/check.ts)
 #   reject             strings the reply must not contain, case-insensitive (refusals)
 #   media              an image or audio clip sent with the prompt: {kind: disc} or
@@ -36,24 +35,14 @@ prompts:
     options: { temperature: 0, seed: 42, num_predict: 100 }
     judge: broken
 
-  # A long window: filler to --context tokens, one fact ~30% in, then the task.
-  long-context:
-    long:
-      filler: >-
-        flash attention kernel tensor core memory bandwidth throughput latency prefill
-        decode softmax matmul cublas turing ampere kepler compute capability toolchain
-        codegen register warp shuffle transpose quantization inference context window
-        batch sequence token cache
-      sentence: "The {words} determines {word} performance."
-      needle: "CRITICAL FACT: the secret launch code is 7492. Remember this exact number."
-      depth: 0.3
+  # Decode speed over a long context (~8k tokens in, 100 out): Washington's Farewell
+  # Address (1796), from the Avalon Project at Yale Law School.
+  farewell-summary:
+    text_file: prompts/farewell.txt
     task: >-
-      The passage above is repetitive filler; ignore it except for the one CRITICAL
-      FACT. In about 100 words, explain what flash attention is and why it helps large
-      language model inference on GPUs. Then on its own final line write the secret
-      launch code from the passage exactly like: LAUNCH CODE: <code>.
-    expect: "7492"
-    options: { temperature: 0, seed: 42, num_predict: 1024 }
+      Summarize the address above in plain English. Keep its main warnings and advice
+      in the order it gives them. Output only the summary.
+    options: { temperature: 0, seed: 42, num_predict: 100, num_ctx: 12288 }
     judge: broken
 
   # Pick the right tool from a menu and answer from what it returned.
