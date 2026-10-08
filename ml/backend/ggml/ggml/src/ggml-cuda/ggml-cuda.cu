@@ -31,6 +31,7 @@
 #include "ggml-cuda/mmvf.cuh"
 #include "ggml-cuda/mmvq.cuh"
 #include "ggml-cuda/mmvq-k80.cuh"
+#include "ggml-cuda/mmvf-k80.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
 #include "ggml-cuda/opt-step-sgd.cuh"
@@ -2368,6 +2369,8 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
 
     if (!split && !bad_padding_clear && ggml_cuda_should_use_mmvq_k80(src0, src1, dst, ggml_cuda_info().devices[ctx.device].cc)) {
         ggml_cuda_mul_mat_vec_q_k80(ctx, src0, src1, dst);
+    } else if (!split && ggml_cuda_should_use_mmvf_k80(src0, src1, dst, ggml_cuda_info().devices[ctx.device].cc)) {
+        ggml_cuda_mul_mat_vec_f_k80(ctx, src0, src1, dst);
     } else if (!split && use_mul_mat_vec_f) {
         // the custom F16 vector kernel can be used over batched cuBLAS GEMM
         // but this is only faster for GPUs without tensor cores or with a thin src0 matrix (particularly KQV in attention)
