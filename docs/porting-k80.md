@@ -25,9 +25,10 @@ ported optimization helps — measure it.
 
 **Worked example — flash attention.** Both upstream and our own `docker/.env.example`
 assumed FA was a small win ("~3% tok/s"). On the K80 it is the opposite: for `gemma4:26b`,
-FA is a ~22% loss at short context and a **7.4× loss** at a 6,800-token prompt (1.18 vs
-8.74 tok/s decode; a 25-minute tool-calling run drops to under 3 minutes with FA off). The
-"optimization" was the bottleneck. See **#337**.
+FA off decodes ~22% faster at short context and **7.4× faster** at a 6,800-token prompt
+(8.74 vs 1.18 tok/s; a 25-minute tool-calling run drops to under 3 minutes with FA off). The
+"optimization" was the bottleneck. See **#337**. FA is now gated off on the K80 in code
+(`FlashAttentionSupported` in `ml/device.go`, #347, #385).
 
 **Rule:** when you port or enable an optimization — a flash-attention path, a fused kernel,
 a tensor-core routine, a KV-cache quantization — benchmark it on the K80 against the path
@@ -43,21 +44,17 @@ just a one-line prompt.
 
 ## How to benchmark on the K80
 
-Route GPU work through CI (don't run ad-hoc GPU containers on the host). The existing perf
-workflows cover the common cases:
+The steps — which workflow, which inputs — live in the project's skills and
+[`cicd/README.md`](../cicd/README.md), and change with CI. This section holds only the rules.
 
-| Workflow | Measures |
-|---|---|
-| `test-throughput.yml` | generation tok/s at a chosen `context_size` (`bench-throughput`) |
-| `test-mcp.yml` | long-context / tool-use decode over a large merged tool menu |
-
-For a single request, the server also reports prefill and decode speed in its own log as it
-runs — see [Reading prefill and decode speed in the server log](./server-log-metrics.md),
-which also covers where those numbers deliberately differ from the API's.
-
-FA and KV-cache type are server-global env vars set in `docker/docker-compose.yml`
-(`OLLAMA_FLASH_ATTENTION`, `OLLAMA_KV_CACHE_TYPE`), overridable via `docker/.env`. To A/B a
-setting, change `docker/.env`, recreate the container (`docker compose up -d`), run the
-workflow, then **restore** the original `docker/.env` and recreate again. Note that
-`q8_0` KV cache requires FA, so testing FA off also means `OLLAMA_KV_CACHE_TYPE=f16` — keep
-that confound in mind when reading the numbers.
+- **Study on the host first, then confirm through CI.** The host drives the K80 directly, so
+  code changes, studies and lab runs start there; CI confirms what ships.
+- **Check what else holds the GPUs before a long run.** Other agents share the host.
+- **Compare against the path the change replaces**, on the same model, prompt and context
+  size, run the same way.
+- **Change one variable at a time.** When one setting forces another — `q8_0` KV cache
+  requires FA, so FA off also means an `f16` cache — name the confound next to the numbers.
+- **Report prefill and decode separately.** They stress different paths, and a change can
+  win one and lose the other. [Reading prefill and decode speed in the server
+  log](./server-log-metrics.md) covers where the log's numbers differ from the API's.
+- **Restore every setting you changed** once the run is done.
