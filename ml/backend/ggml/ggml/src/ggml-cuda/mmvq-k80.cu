@@ -4,7 +4,7 @@ static constexpr int MMVQ_K80_ROWS  = 4; // rows per warp: the warp loads src1 o
 static constexpr int MMVQ_K80_WARPS = 4;
 
 // ys[i] = y[i] * {1, 2^-8, 2^-16, 1}[i % 4], undoing the bit position each nibble is decoded at.
-// ysum16[g] = sum of y over the 16 values of group g, for the q4_K min term.
+// ysum16[g] = sum of y over the 16 values of group g, for the q4_K min term; skipped when ysum16 is null.
 static __global__ void mmvq_k80_prep(const float * __restrict__ y, float * __restrict__ ys, float * __restrict__ ysum16, const int k) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     float v = i < k ? y[i] : 0.0f;
@@ -16,7 +16,7 @@ static __global__ void mmvq_k80_prep(const float * __restrict__ y, float * __res
     for (int o = 8; o > 0; o >>= 1) {
         v += __shfl_down_sync(0xFFFFFFFF, v, o, 16);
     }
-    if ((i & 15) == 0 && i < k) {
+    if (ysum16 && (i & 15) == 0 && i < k) {
         ysum16[i >> 4] = v;
     }
 }
@@ -117,7 +117,7 @@ static __device__ __forceinline__ uint32_t mmvq_k80_ld4(const char * p) {
 // One warp computes MMVQ_K80_Q6_K_ROWS rows, 2 blocks per step. Lane t decodes, in block (b0 + t/16) and
 // half h = (t/8)%2, the values h*128 + g*32 + l0 + k for g, k in 0..3 with l0 = 4*(t%8): their low 4 bits
 // come from ql and their high 2 bits from qh, and the bytes rebuilt from them keep the bit positions that
-// mmvq_k80_prep scales ys by. The "- 32" of each value folds into the sum of its 4 inputs.
+// mmvq_k80_prep scales ys by. The "- 32" of each value folds into its byte's decode constant.
 static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q6_K(
         const char * __restrict__ x, const float * __restrict__ ys,
         float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes) {
@@ -143,11 +143,9 @@ static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q6_K
             break;
         }
         float4 yv[4];
-        float  ysum[4];
 #pragma unroll
         for (int g = 0; g < 4; ++g) {
-            yv[g]   = __ldg((const float4 *) (ys + b*QK_K + 128*h + 32*g + l0));
-            ysum[g] = yv[g].x + 256.0f*yv[g].y + 65536.0f*yv[g].z + yv[g].w;
+            yv[g] = __ldg((const float4 *) (ys + b*QK_K + 128*h + 32*g + l0));
         }
 
 #pragma unroll
@@ -165,13 +163,14 @@ static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q6_K
             float s = 0.0f;
 #pragma unroll
             for (int g = 0; g < 4; ++g) {
-                float dot = mmvq_k80_magic(q[g] & 0xFFu)*yv[g].x;
-                dot = fmaf(mmvq_k80_magic(q[g] & 0xFF00u),   yv[g].y, dot);
-                dot = fmaf(mmvq_k80_magic(q[g] & 0xFF0000u), yv[g].z, dot);
-                dot = fmaf(mmvq_k80_magic(q[g] >> 24),       yv[g].w, dot);
+                // (2^23 + v*2^s) - (2^23 + 32*2^s) = (v - 32)*2^s, exact
+                float dot = (__int_as_float(0x4B000000u | (q[g] & 0xFFu))     - (8388608.0f + 32.0f))     *yv[g].x;
+                dot = fmaf(__int_as_float(0x4B000000u | (q[g] & 0xFF00u))     - (8388608.0f + 8192.0f),    yv[g].y, dot);
+                dot = fmaf(__int_as_float(0x4B000000u | (q[g] & 0xFF0000u))   - (8388608.0f + 2097152.0f), yv[g].z, dot);
+                dot = fmaf(__int_as_float(0x4B000000u | (q[g] >> 24))         - (8388608.0f + 32.0f),      yv[g].w, dot);
                 // int8 scale: flip the sign bit, decode as unsigned, subtract the bias
                 const float sc = mmvq_k80_magic((uint32_t) (uint8_t) __ldg(bp + sc_off + 2*g) ^ 0x80u) - 128.0f;
-                s = fmaf(sc, dot - 32.0f*ysum[g], s);
+                s = fmaf(sc, dot, s);
             }
             acc[r] = fmaf(d, s, acc[r]);
         }
@@ -192,7 +191,7 @@ bool ggml_cuda_should_use_mmvq_k80(const ggml_tensor * src0, const ggml_tensor *
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
         && src1->ne[1] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1 && src0->ne[2] == 1 && src0->ne[3] == 1
         && ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && ggml_is_contiguous(dst)
-        && (uintptr_t) src0->data % 16 == 0; // the kernel reads src0 as uint4
+        && (src0->type != GGML_TYPE_Q4_K || (uintptr_t) src0->data % 16 == 0); // the q4_K kernel reads src0 as uint4
 }
 
 void ggml_cuda_mul_mat_vec_q_k80(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -200,12 +199,16 @@ void ggml_cuda_mul_mat_vec_q_k80(ggml_backend_cuda_context & ctx, const ggml_ten
     const int nrows = src0->ne[1];
     cudaStream_t stream = ctx.stream();
 
+    const bool q4_K = src0->type == GGML_TYPE_Q4_K;
     ggml_cuda_pool_alloc<float> ys(ctx.pool(), ncols);
-    ggml_cuda_pool_alloc<float> ysum16(ctx.pool(), ncols/16);
+    ggml_cuda_pool_alloc<float> ysum16(ctx.pool()); // only q4_K's min term uses it
+    if (q4_K) {
+        ysum16.alloc(ncols/16);
+    }
     mmvq_k80_prep<<<(ncols + 255)/256, 256, 0, stream>>>((const float *) src1->data, ys.get(), ysum16.get(), ncols);
 
     const dim3 block_dims(WARP_SIZE, MMVQ_K80_WARPS, 1);
-    if (src0->type == GGML_TYPE_Q6_K) {
+    if (!q4_K) {
         const int rows_per_block = MMVQ_K80_Q6_K_ROWS*MMVQ_K80_WARPS;
         mmvq_k80_q6_K<<<(nrows + rows_per_block - 1)/rows_per_block, block_dims, 0, stream>>>(
             (const char *) src0->data, ys.get(), (float *) dst->data, ncols, nrows, src0->nb[1]);
