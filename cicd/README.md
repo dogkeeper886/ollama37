@@ -37,7 +37,7 @@ runTest('models', body)
 |---|---|---|
 | `short-answer` | models | `broken`: "Is this text garbage, crash output, or words in random order?" (passes on no) |
 | `image`, `audio` (gemma4:12b), `time-tool` (qwen3.8:27b) | models | `broken`, `grounded` |
-| `speech-rewrite`, `long-context` | throughput | `broken` |
+| `speech-rewrite`, `farewell-summary` | throughput | `broken` |
 | `tool-call` | mcp | `grounded`: "Does this answer use the result?" (passes on yes) |
 
 ## Run it
@@ -46,7 +46,7 @@ From `cicd/tests/` after `npm ci`:
 
 ```bash
 npx tsx models.ts --models "gemma3:4b"                  # one model = an inference test
-npx tsx throughput.ts --models "gemma3:4b" [--context 8192]
+npx tsx throughput.ts --models "gemma3:4b" [--prompt farewell-summary]
 npx tsx mcp.ts --models "qwen3.8:27b"
 ../scripts/canary.sh                                    # the judge still catches garbage
 ../scripts/check-structure.sh                           # the structure still holds
