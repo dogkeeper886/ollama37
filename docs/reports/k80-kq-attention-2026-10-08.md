@@ -32,7 +32,7 @@ model can do:
 
   | Run | Identical replies | The rest: words before they part |
   |---|---|---|
-  | CI short prompt, 8 models | 7 | `gemma4:12b` 10 of 51 |
+  | CI short prompt, 25 models | 19 | 10–64 words (`gemma4:12b` 10, `ornith-1.5:35b` 16, `gemma3:270m` 37, `gemma4:26b` 51, `qwen3-vl:30b` 56, `qwen3-vl:2b` 64) |
   | CI long context, 7 models | `llama3.1:8b` | 22–126 words (`qwen3.6:27b` 22, `ministral-3:3b` 27, `gemma3:27b` 48, `qwen3-vl:30b` 61, `deepseek-r1:8b` 71, `gpt-oss:20b` 126) |
 
   Replies that part stay on task and read as fluently as the old ones; the judge passes every
@@ -65,35 +65,60 @@ branch image after the pipeline deployed it (`8cc376c6`, run
   real.
 - **`qwen3.6:27b` gains least:** its shape (head dim 256, 6 query heads per KV head) is one of the
   kernel's slower ones, and it is a hybrid with few attention layers.
+- **That prompt is gone:** #566 replaced the generated filler with a real speech
+  (`farewell-summary`); these numbers stand as recorded.
 - **The planted fact, as an observation only:** the same 5 models write `LAUNCH CODE: 7492` on
   both sides. Recalling it measures the model as much as the kernel, so it is not counted as a
   correctness check; see [Correctness](#correctness).
 
 ## Decode on the short prompt in CI
 
-`test-throughput.yml` with the default `speech-rewrite` prompt (~870 tokens in, 100 out), on 8
-models that cover every head shape: branch run
-[37770510257](https://github.com/dogkeeper886/ollama37/actions/runs/37770510257) against #563's
+`test-throughput.yml` as always: the default `speech-rewrite` prompt (~870 tokens in, 100 out) on
+all 25 models in the runner's list. Branch run
+[37773830995](https://github.com/dogkeeper886/ollama37/actions/runs/37773830995) against #563's
 run [37735178243](https://github.com/dogkeeper886/ollama37/actions/runs/37735178243), whose code
-matches `main`. All 8 replies pass the check and the judge.
+matches `main`. All 25 replies pass the check and the judge.
+
+Head dim is global / local for gemma4; its KV-head count varies by layer, so its group is a range.
 
 | Model | Head dim, group | Decode before | Decode after | Δ |
 |---|---|--:|--:|--:|
-| `llama3.1:8b` | 128, 4 | 14.34 | 17.15 | +20 % |
-| `deepseek-r1:1.5b` | 128, 6 | 41.88 | 49.01 | +17 % |
-| `gemma4:12b` | 512 / 256, 16 | 8.07 | 9.28 | +15 % |
-| `gpt-oss:20b` | 64, 8 | 14.90 | 16.44 | +10 % |
-| `gemma3:4b` | 256, 2 | 22.80 | 24.76 | +9 % |
-| `muse-glimmer:30b` | 128, 16 | 4.97 | 5.13 | +3 % |
-| `qwen3.6:27b` | 256, 6 | 4.10 | 4.20 | +2 % |
-| `qwen3.6:35b` | 256, 8 | 11.38 | 11.64 | +2 % |
+| `ministral-3:3b` | 128, 4 | 21.31 | 29.54 | +39 % |
+| `qwen3-vl:30b` | 128, 8 | 12.08 | 15.68 | +30 % |
+| `gemma4:26b` | 512 / 256, 2–8 | 11.78 | 14.70 | +25 % |
+| `qwen3-vl:2b` | 128, 2 | 39.37 | 48.04 | +22 % |
+| `deepseek-r1:8b` | 128, 4 | 13.68 | 16.20 | +18 % |
+| `gemma4:12b` | 512 / 256, 2–16 | 8.07 | 9.51 | +18 % |
+| `deepseek-r1:1.5b` | 128, 6 | 41.88 | 49.11 | +17 % |
+| `llama3.1:8b` | 128, 4 | 14.34 | 16.53 | +15 % |
+| `gemma4:31b` | 512 / 256, 2–8 | 3.55 | 4.03 | +14 % |
+| `gemma4:e2b` | 512 / 256, 8 | 28.33 | 32.23 | +14 % |
+| `lfm2.5-thinking:1.2b` | 64, 4 | 77.03 | 87.42 | +13 % |
+| `gpt-oss:20b` | 64, 8 | 14.90 | 16.54 | +11 % |
+| `gemma3n:e2b` | —, 4 | 25.17 | 27.32 | +9 % |
+| `gemma3:4b` | 256, 2 | 22.80 | 24.72 | +8 % |
+| `gemma3:270m` | 256, 4 | 83.86 | 89.37 | +7 % |
+| `lfm2.5:8b` | 64, 4 | 40.24 | 43.09 | +7 % |
+| `gemma3:27b` | 128, 2 | 4.75 | 5.04 | +6 % |
+| `muse-glimmer:30b` | 128, 16 | 4.97 | 5.16 | +4 % |
+| `ornith:35b` | 256, 8 | 11.33 | 11.65 | +3 % |
+| `ornith-1.5:35b` | 256, 8 | 11.38 | 11.68 | +3 % |
+| `qwen3.6:27b` | 256, 6 | 4.10 | 4.21 | +3 % |
+| `ornith-1.5:9b` | 256, 4 | 11.30 | 11.52 | +2 % |
+| `qwen3.5:9b` | 256, 4 | 11.61 | 11.87 | +2 % |
+| `qwen3.6:35b` | 256, 8 | 11.38 | 11.65 | +2 % |
+| `qwen3.8:27b` | 256, 6 | 4.10 | 4.20 | +2 % |
 
-- **No regression; short prompts gain too.** At ~900 tokens of context KQ already cost
-  `llama3.1:8b` about 20 ms per token (632 µs per layer in the lab).
-- **7 of 8 replies are word for word identical to #563's.** `gemma4:12b` differs from word 10:
-  it lists the same task constraints, numbered differently.
-- **Prefill: within ±3 %,** except `deepseek-r1:1.5b` (+11 %) and `gemma3:4b` (+5 %), small
-  models where run-to-run variance is larger.
+- **No regression; every model gains.** At ~900 tokens of context KQ already cost `llama3.1:8b`
+  about 20 ms per token (632 µs per layer in the lab). The hybrid `qwen35` family (`qwen3.5`,
+  `qwen3.6`, `qwen3.8`, `ornith`) gains least: few of its layers are attention.
+- **19 of 25 replies are word for word identical to #563's.** The other 6 part after 10–64 words
+  and say the same in other words ("negatives into affirmatives" against "into positives",
+  `"no," "not,"` against `"not," "no,"`); `gemma3:270m` swaps one sentence of its rewrite.
+- **Prefill: within ±4 %.**
+- **An earlier 8-model subset** (run
+  [37770510257](https://github.com/dogkeeper886/ollama37/actions/runs/37770510257)) agrees: +2 % to
+  +20 %, 7 of 8 replies identical.
 
 ## Attention replica, one die
 
@@ -124,7 +149,7 @@ against a double-precision reference. ggml's time is wall clock per graph run, w
 | 256, 24 / 4, 4k | qwen3.6:27b, qwen3.8 | 8.4 MB | 1,652 µs | 206 µs | 8.0× |
 | 256, 16 / 2, 4k | qwen3.6:35b, ornith | 4.2 MB | 1,085 µs | 142 µs | 7.6× |
 | 256, 8 / 4, 4k | gemma3:4b | 8.4 MB | 548 µs | 82 µs | 6.7× |
-| 512, 16 / 1, 4k | gemma4:12b, e2b global | 4.2 MB | 2,221 µs | 285 µs | 7.8× |
+| 512, 16 / 1, 4k | gemma4:12b global | 4.2 MB | 2,221 µs | 285 µs | 7.8× |
 | 512, 32 / 4, 4k | gemma4:31b global | 16.8 MB | 4,433 µs | 637 µs | 7.0× |
 | 512, 32 / 16, 4k | | 67.1 MB | 4,434 µs | 579 µs | 7.7× |
 | 128, 32 / 2, 4k | muse-glimmer | 2.1 MB | 1,605 µs | 89 µs | 18.1× |
