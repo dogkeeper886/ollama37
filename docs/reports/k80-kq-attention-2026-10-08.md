@@ -120,6 +120,24 @@ Head dim is global / local for gemma4; its KV-head count varies by layer, so its
   [37770510257](https://github.com/dogkeeper886/ollama37/actions/runs/37770510257)) agrees: +2 % to
   +20 %, 7 of 8 replies identical.
 
+## Long context on a real speech in CI: crash check
+
+`test-throughput.yml` with `prompt=farewell-summary` (#566: Washington's Farewell Address, 37,091
+characters, `num_ctx` 12288) on all 25 models, run
+[37780450973](https://github.com/dogkeeper886/ollama37/actions/runs/37780450973). Its purpose is to
+find crashes or abnormal output at long context; it has no baseline yet.
+
+| Check | Result |
+|---|---|
+| Runner crashes or errors | none |
+| Spill to CPU | none; every model 100 % on GPU |
+| Broken text (judge) | none; all 25 judged not broken |
+| Loops | none; no 3-word phrase repeats more than twice |
+| Window | 24 models used 7,132–8,685 of 12,288 tokens; **`gemma4:12b` filled all 12,288 and was cut** |
+
+- **`gemma4:12b`'s overflow is its own bug, not this change's:** its siblings read the same text in
+  ~7,140 tokens. Tracked in #568, with its long-line crash and a VRAM estimate 1.79× its real use.
+
 ## Attention replica, one die
 
 [`attn.cu`](https://github.com/dogkeeper886/ollama37/blob/3ac65491/docs/reports/k80-kq-attention/attn.cu) (removed after this study) builds the non-FA attention graph the way
