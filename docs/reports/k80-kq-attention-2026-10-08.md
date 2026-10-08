@@ -19,35 +19,25 @@ The f16-to-FP32 conversion was not the cost. A die delivers ~7.5 f16 values per 
 and Kepler converts 32, so the kernel keeps the conversion instruction; a bit-operation decode
 would spend more shifts than it saves.
 
-## Decode against context, end to end
+## Correctness
 
-`/api/generate` on `ollama.service`, 64 tokens, temperature 0, one run per row
-([`ctx.py`](./k80-kq-attention/ctx.py)). Head dim and query heads per KV head in brackets.
+Two checks, each of which holds the model fixed, so they test the kernel rather than what a
+model can do:
 
-| Model | Prompt tokens | Baseline tok/s | #565 tok/s | Δ |
-|---|--:|--:|--:|--:|
-| `llama3.1:8b` (128, 4) | 19 | 18.69 | 18.82 | +1 % |
-| | 3,363 | 9.94 | 15.43 | +55 % |
-| | 7,277 | 6.24 | 12.93 | +107 % |
-| `gpt-oss:20b` (64, 8) | 71 | 18.45 | 18.71 | +1 % |
-| | 3,239 | 13.28 | 17.77 | +34 % |
-| | 6,947 | 9.86 | 16.32 | +66 % |
-| `gemma4:12b` (512 global / 256 local, up to 16) | 27 | 10.85 | 11.44 | +5 % |
-| | 6,363 | 6.55 | 9.58 | +46 % |
-| | 13,779 | 4.55 | 7.43 | +63 % |
-| `gemma3:4b` (256, 2) | 17 | 26.45 | 26.04 | −2 % |
-| | 3,185 | 21.49 | 24.00 | +12 % |
-| | 6,893 | 20.08 | 23.32 | +16 % |
-| `qwen3.5:9b` (256, 4) | 19 | 12.30 | 12.13 | −1 % |
-| | 3,363 | 10.79 | 11.40 | +6 % |
-| | 7,277 | 7.67 | 8.04 | +5 % |
+- **Against an exact reference.** On every head shape below, the kernel's KQ matches a
+  double-precision computation to a max relative error of 0.9–1.6e-7, the same as
+  `mul_mat_vec_f`.
+- **Against the old build.** The same model and prompt at temperature 0 and a fixed seed, `main`
+  against the branch, compared word for word:
 
-- **The gain tracks how much attention grows with context.** `gemma3:4b` keeps most layers on a
-  sliding window, and `qwen3.5:9b` has few attention layers, so their slopes were small to begin
-  with; something other than KQ still slows `qwen3.5:9b` at 7k.
-- **Replies read the same as the baseline's.**
-- **`gemma4:12b` crashes on the baseline too.** Its runner exits with status 2 on the first
-  request after a context-size reload; a retry succeeds. Not caused by this change.
+  | Run | Identical replies | The rest: words before they part |
+  |---|---|---|
+  | CI short prompt, 8 models | 7 | `gemma4:12b` 10 of 51 |
+  | CI long context, 7 models | `llama3.1:8b` | 22–126 words (`qwen3.6:27b` 22, `ministral-3:3b` 27, `gemma3:27b` 48, `qwen3-vl:30b` 61, `deepseek-r1:8b` 71, `gpt-oss:20b` 126) |
+
+  Replies that part stay on task and read as fluently as the old ones; the judge passes every
+  one. The new kernel adds its products in a different order than `mul_mat_vec_f`, so a
+  near-tie between two next tokens can fall the other way, and the texts part from there.
 
 ## Decode at long context in CI
 
@@ -70,15 +60,14 @@ branch image after the pipeline deployed it (`8cc376c6`, run
 
 - **Prefill: unchanged** (within ±3 %), as expected: batched KQ never takes the new path.
 - **Both runs fail the same two models,** so neither failure comes from this change.
-  `gemma4:12b`'s runner stops (the crash above). `ministral-3:3b`'s prompt fills its whole
+  `gemma4:12b`'s runner stops while tokenizing the prompt. `ministral-3:3b`'s prompt fills its whole
   8,048-token window and loses the planted fact the check looks for; its decode numbers are still
   real.
 - **`qwen3.6:27b` gains least:** its shape (head dim 256, 6 query heads per KV head) is one of the
   kernel's slower ones, and it is a hybrid with few attention layers.
-- **Every model that answered recalls the planted fact on both sides:** 5 of 5 end with
-  `LAUNCH CODE: 7492`, which sits 30 % deep in the prompt, so attention over the whole cache is
-  computed correctly. `llama3.1:8b` answers word for word as before; the others say the same in
-  different words. `qwen3.6:27b` spends all 1,024 tokens thinking on both sides.
+- **The planted fact, as an observation only:** the same 5 models write `LAUNCH CODE: 7492` on
+  both sides. Recalling it measures the model as much as the kernel, so it is not counted as a
+  correctness check; see [Correctness](#correctness).
 
 ## Decode on the short prompt in CI
 
@@ -108,7 +97,7 @@ matches `main`. All 8 replies pass the check and the judge.
 
 ## Attention replica, one die
 
-[`attn.cu`](./k80-kq-attention/attn.cu) builds the non-FA attention graph the way
+[`attn.cu`](https://github.com/dogkeeper886/ollama37/blob/3ac65491/docs/reports/k80-kq-attention/attn.cu) (removed after this study) builds the non-FA attention graph the way
 `ScaledDotProductAttention` builds it over the PermutedV causal cache: 32 layers, head dim 128,
 32 query heads over 8 KV heads.
 
@@ -122,7 +111,7 @@ largest part.
 
 ## KQ kernel, one die
 
-[`kq.cu`](./k80-kq-attention/kq.cu): the KQ mat-vec alone, both paths on the same device buffers,
+[`kq.cu`](https://github.com/dogkeeper886/ollama37/blob/3ac65491/docs/reports/k80-kq-attention/kq.cu) (removed after this study): the KQ mat-vec alone, both paths on the same device buffers,
 against a double-precision reference. ggml's time is wall clock per graph run, which includes
 ~20 µs of synchronization.
 
