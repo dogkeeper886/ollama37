@@ -10,8 +10,8 @@
 #   task               appended after the text, when the text is material to work on
 #   expect             a string the reply must contain (checked by lib/check.ts)
 #   reject             strings the reply must not contain, case-insensitive (refusals)
-#   media              an image or audio clip sent with the prompt: {kind: disc} or
-#                      {kind: speech, words: "..."} (built by lib/media.ts)
+#   media              an image or audio clip sent with the prompt: {kind: disc} (built
+#                      by lib/media.ts) or {kind: recording, file: ...} beside this one
 #   tools              tools offered to the model, each answering a fixed result
 #   models             models.ts also runs this prompt for these models (besides short-answer)
 #   options            Ollama options for the request
@@ -64,11 +64,14 @@ prompts:
     judge: broken
     models: ["gemma4:12b", "ornith-1.5:9b", "ornith-1.5:35b", "muse-glimmer:30b"]
 
-  # gemma4:12b's audio path (#367). Synthetic speech transcribes marginally, so the
-  # word itself is not checked; engaging with the sound is.
+  # gemma4:12b's audio path (#367), on a real recording (#581): Neil Armstrong's
+  # "That's one small step for man, one giant leap for mankind" (Apollo 11, 1969),
+  # 24 s, public domain as a NASA work, via Wikimedia Commons
+  # (File:Neil_Armstrong_small_step.wav, from NASA Kennedy's Apollo 11 archive).
   audio:
-    text: "Which word is spoken in this audio? Reply with one lowercase word, no punctuation."
-    media: { kind: speech, words: "hello hello hello" }
+    text: "Transcribe the speech in this audio. Reply with the spoken words only."
+    media: { kind: recording, file: prompts/apollo11-small-step.wav }
+    expect: "small step"
     reject: ["does not support audio", "cannot hear", "can't hear", "text-based", "text-only", "no audio", "don't have the ability"]
     options: { temperature: 0, seed: 0, num_predict: 400 }
     judge: broken

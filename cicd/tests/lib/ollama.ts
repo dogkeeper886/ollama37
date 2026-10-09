@@ -14,12 +14,13 @@
  * private. The other calls here produce no model text: pull a missing model,
  * load one (an empty prompt), read its GPU share, unload one.
  */
+import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
 import { Ollama, type ChatResponse, type Fetch, type GenerateResponse, type Message } from 'ollama';
 import type { Menu, ToolResult } from './mcp.js';
 import { prompt, type Prompt } from './prompts.js';
-import { discPng, spokenWav } from './media.js';
+import { discPng } from './media.js';
 import { check, type Reply } from './check.js';
 import { assertInRun, record, type Result } from './run.js';
 
@@ -122,7 +123,7 @@ const perSec = (count?: number, ns?: number) => (count && ns ? +(count / (ns / 1
 /** The prompt's image or audio clip, base64, for the request's `images` field. */
 async function media(p: Prompt): Promise<string[] | undefined> {
   if (!p.media) return undefined;
-  return [p.media.kind === 'disc' ? discPng() : await spokenWav(p.media.words)];
+  return [p.media.kind === 'disc' ? discPng() : (await readFile(p.media.file)).toString('base64')];
 }
 
 /** Send the named prompt to `model`, check the reply, and record it for the judge. */

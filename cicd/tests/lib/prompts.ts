@@ -34,7 +34,7 @@ export interface Prompt {
   tools: LocalTool[];
 }
 
-export type Media = { kind: 'disc' } | { kind: 'speech'; words: string };
+export type Media = { kind: 'disc' } | { kind: 'recording'; file: string };
 export interface LocalTool { name: string; description: string; result: string }
 
 interface Entry {
@@ -62,8 +62,8 @@ function load(): File {
     if (sources !== 1) bad(`prompt "${name}" needs exactly one of text, text_file`);
     if (!e.judge) bad(`prompt "${name}" names no judge`);
     if (!f.judges[e.judge!]) bad(`prompt "${name}" names judge "${e.judge}", which is not under judges`);
-    if (e.media && !(e.media.kind === 'disc' || (e.media.kind === 'speech' && typeof e.media.words === 'string' && e.media.words))) {
-      bad(`prompt "${name}": media must be {kind: disc} or {kind: speech, words: "..."}`);
+    if (e.media && !(e.media.kind === 'disc' || (e.media.kind === 'recording' && typeof e.media.file === 'string' && e.media.file))) {
+      bad(`prompt "${name}": media must be {kind: disc} or {kind: recording, file: "..."}`);
     }
     for (const t of e.tools ?? []) if (!t.name || typeof t.result !== 'string') bad(`prompt "${name}": each tool needs a name and a result`);
     if (e.tools?.length && e.judge !== 'grounded') bad(`prompt "${name}" offers tools, so its judge must be grounded`);
@@ -98,7 +98,7 @@ export function prompt(name: string): Prompt {
     judgePass: config.judges[e.judge!].pass,
     expect: e.expect,
     reject: e.reject ?? [],
-    media: e.media,
+    media: e.media?.kind === 'recording' ? { kind: 'recording', file: resolve(dirname(FILE), e.media.file) } : e.media,
     tools: e.tools ?? [],
   };
 }
