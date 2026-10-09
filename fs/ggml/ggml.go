@@ -708,6 +708,20 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				}
 			}
 		}
+
+		// gemma4 with audio projectors runs on llama.cpp (#568), whose sliding-window layers cache only the
+		// window, at their own head size.
+		if f.KV().Architecture() == "gemma4" {
+			slidingWindow := (uint64(numParallel) * uint64(f.KV().Uint("attention.sliding_window"))) + batch
+			swaK := uint64(f.KV().Uint("attention.key_length_swa"))
+			swaV := uint64(f.KV().Uint("attention.value_length_swa"))
+			pattern := f.KV().Bools("attention.sliding_window_pattern")
+			for i := range kv {
+				if i < len(pattern) && pattern[i] {
+					kv[i] = uint64(float64(slidingWindow*(swaK+swaV)*headsKVArr[i]) * bytesPerElement)
+				}
+			}
+		}
 	case "command-r":
 		fullOffload = max(
 			4*batch*(embedding+vocab),

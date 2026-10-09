@@ -281,11 +281,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
         GGML_ASSERT(vocab.get_type() == LLAMA_VOCAB_TYPE_BPE);
         switch (vocab.get_pre_type()) {
             case LLAMA_VOCAB_PRE_TYPE_GEMMA4:
-                // Gemma4 SPM-style BPE: spaces are ▁ via escape_whitespaces, merges
-                // run on the whole text; only split on newlines (BPE asserts no \n in tokens).
-                regex_exprs = {
-                    "[^\\n]+|[\\n]+",
-                };
+                // Gemma4 SPM-style BPE: no regex split; see llm_tokenizer_bpe_session::tokenize
                 break;
             case LLAMA_VOCAB_PRE_TYPE_LLAMA3:
                 regex_exprs = {
@@ -512,7 +508,17 @@ struct llm_tokenizer_bpe_session {
 
     void tokenize(const std::string & text, std::vector<llama_token> & output) {
         int final_prev_index = -1;
-        const auto word_collection = unicode_regex_split(text, tokenizer.regex_exprs);
+        // Gemma4 SPM-style BPE, as its tokenizer.json and the Ollama engine do: spaces become ▁ and
+        // merges run on the whole raw UTF-8 text, with no byte-level encoding or regex split.
+        const bool spm_style = vocab.get_pre_type() == LLAMA_VOCAB_PRE_TYPE_GEMMA4;
+        std::vector<std::string> word_collection;
+        if (spm_style) {
+            std::string escaped = text;
+            replace_all(escaped, " ", "\xe2\x96\x81");
+            word_collection.push_back(std::move(escaped));
+        } else {
+            word_collection = unicode_regex_split(text, tokenizer.regex_exprs);
+        }
 
         symbols_final.clear();
 
@@ -602,7 +608,8 @@ struct llm_tokenizer_bpe_session {
 
                 if (token == LLAMA_TOKEN_NULL) {
                     for (auto j = str.begin(); j != str.end(); ++j) {
-                        std::string byte_str(1, *j);
+                        // SPM-style byte fallback is <0xHH>
+                        const std::string byte_str = spm_style ? format("<0x%02X>", (uint8_t) *j) : std::string(1, *j);
                         auto token_multibyte = vocab.text_to_token(byte_str);
                         if (token_multibyte != LLAMA_TOKEN_NULL) {
                             output.push_back(token_multibyte);
@@ -3521,9 +3528,11 @@ int llama_vocab::max_token_len() const {
 
 int llama_vocab::find_bpe_rank(const std::string & token_left, const std::string & token_right) const {
     GGML_ASSERT(token_left.find(' ')   == std::string::npos);
-    GGML_ASSERT(token_left.find('\n')  == std::string::npos);
     GGML_ASSERT(token_right.find(' ')  == std::string::npos);
-    GGML_ASSERT(token_right.find('\n') == std::string::npos);
+    if (get_pre_type() != LLAMA_VOCAB_PRE_TYPE_GEMMA4) { // gemma4's SPM-style merges hold raw newlines
+        GGML_ASSERT(token_left.find('\n')  == std::string::npos);
+        GGML_ASSERT(token_right.find('\n') == std::string::npos);
+    }
 
     auto it = pimpl->bpe_ranks.find(std::make_pair(token_left, token_right));
     if (it == pimpl->bpe_ranks.end()) {
