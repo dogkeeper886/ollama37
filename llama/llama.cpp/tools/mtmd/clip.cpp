@@ -2549,6 +2549,9 @@ struct clip_model_loader {
                         // n_mel_bins is reused as the frame size, not a mel-bin count.
                         hparams.eps        = 1e-6f;
                         hparams.n_mel_bins = 640;
+                        // audio sets no patch size, but clip_graph divides by it; left unset it is
+                        // garbage, and the runner dies with SIGFPE whenever that garbage is 0 (#568)
+                        hparams.patch_size = 1;
                     } break;
                 default:
                     break;
