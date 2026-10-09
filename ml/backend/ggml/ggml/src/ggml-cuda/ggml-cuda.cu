@@ -2412,7 +2412,9 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
         if (ne2 == 1) {
-            if (ggml_is_quantized(src0->type)) {
+            if (ggml_cuda_should_use_mmvq_k80_id(src0, src1, ids, dst, cc)) {
+                ggml_cuda_mul_mat_vec_q_k80_id(ctx, src0, src1, ids, dst);
+            } else if (ggml_is_quantized(src0->type)) {
                 ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
             } else {
                 ggml_cuda_mul_mat_vec_f(ctx, src0, src1, ids, dst);
