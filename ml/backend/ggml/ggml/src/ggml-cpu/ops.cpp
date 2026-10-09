@@ -9904,6 +9904,87 @@ void ggml_compute_forward_gla(
     }
 }
 
+// ggml_compute_forward_gated_delta_step
+
+static void ggml_compute_forward_gated_delta_step_f32(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * q     = dst->src[0];
+    const ggml_tensor * k     = dst->src[1];
+    const ggml_tensor * v     = dst->src[2];
+    const ggml_tensor * g     = dst->src[3];
+    const ggml_tensor * beta  = dst->src[4];
+    const ggml_tensor * state = dst->src[5];
+
+    const int64_t D      = v->ne[0];
+    const int64_t H      = v->ne[1];
+    const int64_t n_seqs = v->ne[3];
+
+    float eps;
+    float scale;
+    memcpy(&eps,   (const float *) dst->op_params + 0, sizeof(float));
+    memcpy(&scale, (const float *) dst->op_params + 1, sizeof(float));
+
+    const float * qd = (const float *) q->data;
+    const float * kd = (const float *) k->data;
+    const float * vd = (const float *) v->data;
+    const float * gd = (const float *) g->data;
+    const float * bd = (const float *) beta->data;
+    const float * sd = (const float *) state->data;
+    float * out  = (float *) dst->data;
+    float * snew = out + D * H * n_seqs;
+
+    // one (sequence, head) per task; S[d1][d0] with d0 fastest
+    for (int64_t t = params->ith; t < H * n_seqs; t += params->nth) {
+        const float * qh = qd + t * D;
+        const float * kh = kd + t * D;
+        const float * vh = vd + t * D;
+        const float * S  = sd   + t * D * D;
+        float       * N  = snew + t * D * D;
+
+        ggml_float nq = 0.0;
+        ggml_float nk = 0.0;
+        for (int64_t i = 0; i < D; i++) {
+            nq += (ggml_float) (qh[i] * qh[i]);
+            nk += (ggml_float) (kh[i] * kh[i]);
+        }
+        const float sq = 1.0f/fmaxf(sqrtf(nq), eps) * scale;
+        const float sk = 1.0f/fmaxf(sqrtf(nk), eps);
+        const float gh = expf(gd[t]);
+        const float bh = 1.0f/(1.0f + expf(-bd[t]));
+
+        for (int64_t d0 = 0; d0 < D; d0++) {
+            float kv = 0.0f;
+            for (int64_t d1 = 0; d1 < D; d1++) {
+                kv += gh * S[d1 * D + d0] * (kh[d1] * sk);
+            }
+            const float delta = bh * (vh[d0] - kv);
+            float o = 0.0f;
+            for (int64_t d1 = 0; d1 < D; d1++) {
+                const float s = gh * S[d1 * D + d0] + delta * (kh[d1] * sk);
+                N[d1 * D + d0] = s;
+                o += s * (qh[d1] * sq);
+            }
+            out[t * D + d0] = o;
+        }
+    }
+}
+
+void ggml_compute_forward_gated_delta_step(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    switch (dst->src[0]->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_gated_delta_step_f32(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("fatal error");
+            }
+    }
+}
+
 // ggml_compute_forward_rwkv_wkv7
 
 static void ggml_compute_forward_rwkv_wkv7_f32(

@@ -196,6 +196,11 @@ type Tensor interface {
 	CumSum(ctx Context) Tensor
 	Conv1D(ctx Context, kernel Tensor, stride, padding, dilation int) Tensor
 	SSMConv(ctx Context, kernel Tensor) Tensor
+
+	// GatedDeltaStep runs one Gated DeltaNet decode step per sequence as a single op (#571), with t as q;
+	// see ggml_gated_delta_step for the math and shapes. It returns nil where the backend keeps the generic
+	// op chain: everywhere except a Kepler-only GPU set.
+	GatedDeltaStep(ctx Context, k, v, g, beta, state Tensor, eps, scale float32) Tensor
 	Fill(ctx Context, value float32) Tensor
 	Diag(ctx Context) Tensor
 	Tri(ctx Context, triType int) Tensor

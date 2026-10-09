@@ -282,13 +282,20 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	numVHeads := v.Dim(1)
 	headVDim := v.Dim(0)
 	nSeqs := q.Dim(3)
+	scale := 1.0 / math.Sqrt(float64(headVDim))
+
+	// Kepler: the whole step as one op that reads and writes the state once (#571)
+	if step := q.GatedDeltaStep(ctx, k, v, gate, beta, state, opts.eps, float32(scale)); step != nil {
+		n := headVDim * numVHeads * nSeqs
+		cache.UpdateDeltaState(ctx, layer, step.View(ctx, n*4, n*headVDim).Reshape(ctx, headVDim, headVDim*numVHeads, nSeqs))
+		return step.View(ctx, 0, n).Reshape(ctx, headVDim, numVHeads, 1, nSeqs)
+	}
 
 	// L2 normalize Q and K
 	q = q.L2Norm(ctx, opts.eps)
 	k = k.L2Norm(ctx, opts.eps)
 
 	// Scale Q
-	scale := 1.0 / math.Sqrt(float64(headVDim))
 	q = q.Scale(ctx, scale)
 
 	// Sigmoid beta
