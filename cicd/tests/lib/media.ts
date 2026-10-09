@@ -1,14 +1,9 @@
 /**
- * Media for the image and audio prompts (#542), built at run time rather than
- * committed as fixtures: the same picture and words TC-MODELS-016 generated.
- * prompts.yaml names which (media: disc, or media: speech with its words).
+ * The image for the image prompt (#542), built at run time rather than committed
+ * as a fixture: the same picture TC-MODELS-016 generated. The audio prompt sends a
+ * real recording beside prompts.yaml instead (#581).
  */
 import { crc32, deflateSync } from 'node:zlib';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 function pngChunk(type: string, data: Buffer): Buffer {
   const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
@@ -44,16 +39,4 @@ export function discPng(): string {
     pngChunk('IDAT', deflateSync(px)),
     pngChunk('IEND', Buffer.alloc(0)),
   ]).toString('base64');
-}
-
-/** `words` spoken by espeak-ng, as a base64 WAV. Needs espeak-ng on the host. */
-export async function spokenWav(words: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'ollama37-audio-'));
-  try {
-    const file = join(dir, 'speech.wav');
-    await promisify(execFile)('espeak-ng', ['-s', '130', '-w', file, words]);
-    return (await readFile(file)).toString('base64');
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
 }
