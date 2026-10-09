@@ -3,9 +3,27 @@
 static constexpr int MMVQ_K80_ROWS  = 4; // rows per warp: the warp loads src1 once for all of them
 static constexpr int MMVQ_K80_WARPS = 4;
 
+// Expert routing for MUL_MAT_ID (#572): block y is slot c; it reads expert ids[c] of src0, prepared input
+// c % ny, and writes dst block c. A plain mat-vec passes ids = nullptr and a single slot.
+struct mmvq_k80_channels {
+    const int32_t * ids;
+    size_t  x_stride;   // bytes between src0 experts
+    int     ny;         // prepared inputs; 1 when every slot shares one
+    int64_t y_stride;   // floats between prepared inputs
+    int64_t dst_stride; // floats between dst slots
+};
+
 // ys[i] = y[i] * {1, 2^-8, 2^-16, 1}[i % 4], undoing the bit position each nibble is decoded at.
 // ysum16[g] = sum of y over the 16 values of group g, for the q4_K min term; skipped when ysum16 is null.
-static __global__ void mmvq_k80_prep(const float * __restrict__ y, float * __restrict__ ys, float * __restrict__ ysum16, const int k) {
+// Block y prepares input c: y + c*y_stride into ys + c*k (and ysum16 + c*k/16).
+static __global__ void mmvq_k80_prep(const float * __restrict__ y, const int64_t y_stride, float * __restrict__ ys,
+        float * __restrict__ ysum16, const int k) {
+    const int c = blockIdx.y;
+    y  += c*y_stride;
+    ys += (int64_t) c*k;
+    if (ysum16) {
+        ysum16 += (int64_t) c*(k/16);
+    }
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     float v = i < k ? y[i] : 0.0f;
     if (i < k) {
@@ -30,7 +48,12 @@ static __device__ __forceinline__ float mmvq_k80_magic(const uint32_t bits) {
 // offset l = 16*(t%2). Low nibbles are values 64j+l.., sub-block 2j; high nibbles are 64j+32+l.., sub-block 2j+1.
 static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q4_K(
         const char * __restrict__ x, const float * __restrict__ ys, const float * __restrict__ ysum16,
-        float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes) {
+        float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes, const mmvq_k80_channels ch) {
+    const int c = blockIdx.y;
+    x      += (size_t) (ch.ids ? ch.ids[c] : 0) * ch.x_stride;
+    ys     += (c % ch.ny) * ch.y_stride;
+    ysum16 += (c % ch.ny) * (ch.y_stride / 16);
+    dst    += c * ch.dst_stride;
     const int lane = threadIdx.x;
     const int row0 = (blockIdx.x*MMVQ_K80_WARPS + threadIdx.y) * MMVQ_K80_ROWS;
     if (row0 >= nrows) {
@@ -120,7 +143,11 @@ static __device__ __forceinline__ uint32_t mmvq_k80_ld4(const char * p) {
 // mmvq_k80_prep scales ys by. The "- 32" of each value folds into its byte's decode constant.
 static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q6_K(
         const char * __restrict__ x, const float * __restrict__ ys,
-        float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes) {
+        float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes, const mmvq_k80_channels ch) {
+    const int c = blockIdx.y;
+    x   += (size_t) (ch.ids ? ch.ids[c] : 0) * ch.x_stride;
+    ys  += (c % ch.ny) * ch.y_stride;
+    dst += c * ch.dst_stride;
     const int lane = threadIdx.x;
     const int row0 = (blockIdx.x*MMVQ_K80_WARPS + threadIdx.y) * MMVQ_K80_Q6_K_ROWS;
     if (row0 >= nrows) {
@@ -194,28 +221,56 @@ bool ggml_cuda_should_use_mmvq_k80(const ggml_tensor * src0, const ggml_tensor *
         && (src0->type != GGML_TYPE_Q4_K || (uintptr_t) src0->data % 16 == 0); // the q4_K kernel reads src0 as uint4
 }
 
-void ggml_cuda_mul_mat_vec_q_k80(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+// Prepares the ny inputs (input c at src1 + c*src1_stride floats) and runs the q4_K or q6_K kernel over nslots.
+static void mmvq_k80_launch(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const float * src1,
+        const int64_t src1_stride, const int nslots, mmvq_k80_channels ch, float * dst) {
     const int ncols = src0->ne[0];
     const int nrows = src0->ne[1];
     cudaStream_t stream = ctx.stream();
 
     const bool q4_K = src0->type == GGML_TYPE_Q4_K;
-    ggml_cuda_pool_alloc<float> ys(ctx.pool(), ncols);
+    ggml_cuda_pool_alloc<float> ys(ctx.pool(), (size_t) ncols*ch.ny);
     ggml_cuda_pool_alloc<float> ysum16(ctx.pool()); // only q4_K's min term uses it
     if (q4_K) {
-        ysum16.alloc(ncols/16);
+        ysum16.alloc((size_t) ncols/16*ch.ny);
     }
-    mmvq_k80_prep<<<(ncols + 255)/256, 256, 0, stream>>>((const float *) src1->data, ys.get(), ysum16.get(), ncols);
+    mmvq_k80_prep<<<dim3((ncols + 255)/256, ch.ny), 256, 0, stream>>>(src1, src1_stride, ys.get(), ysum16.get(), ncols);
+    ch.y_stride = ncols;
 
     const dim3 block_dims(WARP_SIZE, MMVQ_K80_WARPS, 1);
     if (!q4_K) {
         const int rows_per_block = MMVQ_K80_Q6_K_ROWS*MMVQ_K80_WARPS;
-        mmvq_k80_q6_K<<<(nrows + rows_per_block - 1)/rows_per_block, block_dims, 0, stream>>>(
-            (const char *) src0->data, ys.get(), (float *) dst->data, ncols, nrows, src0->nb[1]);
+        mmvq_k80_q6_K<<<dim3((nrows + rows_per_block - 1)/rows_per_block, nslots), block_dims, 0, stream>>>(
+            (const char *) src0->data, ys.get(), dst, ncols, nrows, src0->nb[1], ch);
     } else {
         const int rows_per_block = MMVQ_K80_ROWS*MMVQ_K80_WARPS;
-        mmvq_k80_q4_K<<<(nrows + rows_per_block - 1)/rows_per_block, block_dims, 0, stream>>>(
-            (const char *) src0->data, ys.get(), ysum16.get(), (float *) dst->data, ncols, nrows, src0->nb[1]);
+        mmvq_k80_q4_K<<<dim3((nrows + rows_per_block - 1)/rows_per_block, nslots), block_dims, 0, stream>>>(
+            (const char *) src0->data, ys.get(), ysum16.get(), dst, ncols, nrows, src0->nb[1], ch);
     }
     CUDA_CHECK(cudaGetLastError());
+}
+
+void ggml_cuda_mul_mat_vec_q_k80(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    const mmvq_k80_channels ch = { nullptr, 0, 1, 0, 0 };
+    mmvq_k80_launch(ctx, src0, (const float *) src1->data, 0, 1, ch, (float *) dst->data);
+}
+
+bool ggml_cuda_should_use_mmvq_k80_id(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids,
+        const ggml_tensor * dst, int cc) {
+    const int64_t n_used = ids->ne[0];
+    return GGML_CUDA_CC_IS_NVIDIA(cc) && cc < 500 // Kepler
+        && (src0->type == GGML_TYPE_Q4_K || src0->type == GGML_TYPE_Q6_K)
+        && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ids->type == GGML_TYPE_I32
+        && dst->ne[2] == 1 && src1->ne[2] == 1 && ids->ne[1] == 1 // one token
+        && dst->ne[1] == n_used && (src1->ne[1] == 1 || src1->ne[1] == n_used)
+        && src0->ne[3] == 1 && src0->nb[1] == ggml_row_size(src0->type, src0->ne[0]) && src0->nb[2] == src0->nb[1]*src0->ne[1]
+        && src1->nb[0] == sizeof(float) && dst->nb[0] == sizeof(float) && ids->nb[0] == sizeof(int32_t)
+        && (src0->type != GGML_TYPE_Q4_K || ((uintptr_t) src0->data % 16 == 0 && src0->nb[2] % 16 == 0)); // q4_K reads uint4
+}
+
+void ggml_cuda_mul_mat_vec_q_k80_id(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1,
+        const ggml_tensor * ids, ggml_tensor * dst) {
+    const int n_used = ids->ne[0];
+    const mmvq_k80_channels ch = { (const int32_t *) ids->data, src0->nb[2], (int) src1->ne[1], 0, (int64_t) (dst->nb[1] / sizeof(float)) };
+    mmvq_k80_launch(ctx, src0, (const float *) src1->data, src1->nb[1] / sizeof(float), n_used, ch, (float *) dst->data);
 }
