@@ -3453,7 +3453,9 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
     bool cuda_graph_update_required = false;
 
     if (cuda_ctx->cuda_graph->graph == nullptr) {
-        if (ggml_cuda_info().devices[cuda_ctx->device].cc < GGML_CUDA_CC_AMPERE) {
+        const int cc = ggml_cuda_info().devices[cuda_ctx->device].cc;
+        // K80 (#573): Kepler keeps CUDA graphs, cutting its per-kernel launch cost
+        if (cc < GGML_CUDA_CC_AMPERE && !(GGML_CUDA_CC_IS_NVIDIA(cc) && cc < 500)) {
             cuda_ctx->cuda_graph->disable_due_to_gpu_arch = true;
 #ifndef NDEBUG
             GGML_LOG_DEBUG("%s: disabling CUDA graphs due to GPU architecture\n", __func__);
