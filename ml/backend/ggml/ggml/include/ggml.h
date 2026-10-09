@@ -541,6 +541,7 @@ extern "C" {
         GGML_OP_RWKV_WKV6,
         GGML_OP_GATED_LINEAR_ATTN,
         GGML_OP_RWKV_WKV7,
+        GGML_OP_GATED_DELTA_STEP,
 
         GGML_OP_UNARY,
 
@@ -2355,6 +2356,22 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b,
             struct ggml_tensor  * state);
+
+    // One Gated DeltaNet decode step per sequence (ollama37 #571). Per head, with q and k L2-normalized
+    // (eps), q scaled (scale), beta = sigmoid(beta) and g = exp(g):
+    //   S = g*S;  delta = beta*(v - S k);  S = S + delta k^T;  out = S q
+    // q, k, v: [D, H, 1, n_seqs]; g, beta: H*n_seqs values; state: D*D*H*n_seqs values, S[d1][d0] with
+    // d0 (the value index) fastest. Returns [D*H, n_seqs + D*n_seqs]: the outputs, then the new states.
+    GGML_API struct ggml_tensor * ggml_gated_delta_step(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * g,
+            struct ggml_tensor  * beta,
+            struct ggml_tensor  * state,
+            float                 eps,
+            float                 scale);
 
     // custom operators
 

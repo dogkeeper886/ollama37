@@ -32,6 +32,7 @@
 #include "ggml-cuda/mmvq.cuh"
 #include "ggml-cuda/mmvq-k80.cuh"
 #include "ggml-cuda/mmvf-k80.cuh"
+#include "ggml-cuda/gated-delta.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
 #include "ggml-cuda/opt-step-sgd.cuh"
@@ -2843,6 +2844,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_RWKV_WKV7:
             ggml_cuda_op_rwkv_wkv7(ctx, dst);
             break;
+        case GGML_OP_GATED_DELTA_STEP:
+            ggml_cuda_op_gated_delta_step(ctx, dst);
+            break;
         case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
             ggml_cuda_cross_entropy_loss_back(ctx, dst);
             break;
@@ -4145,6 +4149,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_FILL:
         case GGML_OP_DIAG:
             return true;
+        case GGML_OP_GATED_DELTA_STEP:
+            return ggml_cuda_gated_delta_step_supported(op);
         case GGML_OP_TRI:
         case GGML_OP_SOLVE_TRI:
             return true;

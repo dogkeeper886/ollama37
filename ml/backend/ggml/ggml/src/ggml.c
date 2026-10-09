@@ -1002,6 +1002,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "RWKV_WKV6",
     "GATED_LINEAR_ATTN",
     "RWKV_WKV7",
+    "GATED_DELTA_STEP",
 
     "UNARY",
 
@@ -1024,7 +1025,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "FILL",
 };
 
-static_assert(GGML_OP_COUNT == 94, "GGML_OP_COUNT != 94");
+static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1111,6 +1112,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "rwkv_wkv6(k, v, r, tf, td, s)",
     "gated_linear_attn(k, v, q, gate, s)",
     "rwkv_wkv7(r, w, k, v, a, b, s)",
+    "gated_delta_step(q, k, v, g, beta, s)",
 
     "unary(x)",
 
@@ -1133,7 +1135,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "fill(x, v)",
 };
 
-static_assert(GGML_OP_COUNT == 94, "GGML_OP_COUNT != 94");
+static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -5546,6 +5548,53 @@ struct ggml_tensor * ggml_gated_linear_attn(
     result->src[2] = q;
     result->src[3] = g;
     result->src[4] = state;
+
+    return result;
+}
+
+// ggml_gated_delta_step
+
+struct ggml_tensor * ggml_gated_delta_step(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * g,
+        struct ggml_tensor  * beta,
+        struct ggml_tensor  * state,
+        float                 eps,
+        float                 scale) {
+    GGML_ASSERT(ggml_is_contiguous(q));
+    GGML_ASSERT(ggml_is_contiguous(k));
+    GGML_ASSERT(ggml_is_contiguous(v));
+    GGML_ASSERT(ggml_is_contiguous(g));
+    GGML_ASSERT(ggml_is_contiguous(beta));
+    GGML_ASSERT(ggml_is_contiguous(state));
+
+    const int64_t D      = v->ne[0];
+    const int64_t H      = v->ne[1];
+    const int64_t n_seqs = v->ne[3];
+    GGML_ASSERT(v->ne[2] == 1); // one token per sequence
+    GGML_ASSERT(ggml_are_same_shape(q, v) && ggml_are_same_shape(k, v));
+    GGML_ASSERT(ggml_nelements(g) == H * n_seqs && ggml_nelements(beta) == H * n_seqs);
+    GGML_ASSERT(ggml_nelements(state) == D * D * H * n_seqs);
+    GGML_ASSERT(q->type == GGML_TYPE_F32 && k->type == GGML_TYPE_F32 && v->type == GGML_TYPE_F32);
+    GGML_ASSERT(g->type == GGML_TYPE_F32 && beta->type == GGML_TYPE_F32 && state->type == GGML_TYPE_F32);
+
+    // concat output and new state
+    const int64_t ne[4] = { D * H, n_seqs + D * n_seqs, 1, 1 };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    float params[2] = { eps, scale };
+    ggml_set_op_params(result, params, sizeof(params));
+
+    result->op     = GGML_OP_GATED_DELTA_STEP;
+    result->src[0] = q;
+    result->src[1] = k;
+    result->src[2] = v;
+    result->src[3] = g;
+    result->src[4] = beta;
+    result->src[5] = state;
 
     return result;
 }

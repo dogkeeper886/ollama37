@@ -121,6 +121,9 @@ type Backend struct {
 
 	flashAttention bool
 
+	// gatedDeltaStep enables the fused Gated DeltaNet decode op (#571): every GPU is CUDA below cc 5.0 (Kepler)
+	gatedDeltaStep bool
+
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
 
@@ -228,6 +231,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// create list of buffer types for each gpu
 	var gpuDeviceBufferTypes []deviceBufferType
 	requiredMemory.GPUs = make([]ml.DeviceMemory, len(gpus))
+	keplerOnly := len(gpus) > 0
 	for i, d := range gpus {
 		bt := C.ggml_backend_dev_buffer_type(d)
 		gpuDeviceBufferTypes = append(gpuDeviceBufferTypes, deviceBufferType{
@@ -241,6 +245,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		C.ggml_backend_dev_get_props(d, &props)
 		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Library = C.GoString(props.library)
+		if requiredMemory.GPUs[i].Library != "CUDA" || props.compute_major >= 5 {
+			keplerOnly = false
+		}
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
@@ -473,6 +480,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		tensorSources:     sources,
 		allocMemory:       params.AllocMemory,
 		flashAttention:    params.FlashAttention,
+		gatedDeltaStep:    keplerOnly,
 		meta:              meta,
 		tensorLoadTargets: targets,
 		tensors:           tensors,
@@ -1613,6 +1621,17 @@ func (t *Tensor) SSMConv(ctx ml.Context, kernel ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_ssm_conv(ctx.(*Context).ctx, t.t, kernel.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) GatedDeltaStep(ctx ml.Context, k, v, g, beta, state ml.Tensor, eps, scale float32) ml.Tensor {
+	if !t.b.gatedDeltaStep {
+		return nil
+	}
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gated_delta_step(ctx.(*Context).ctx, t.t, k.(*Tensor).t, v.(*Tensor).t, g.(*Tensor).t,
+			beta.(*Tensor).t, state.(*Tensor).t, C.float(eps), C.float(scale)),
 	}
 }
 
