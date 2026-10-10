@@ -13,8 +13,8 @@ struct mmvq_k80_channels {
     int64_t dst_stride; // floats between dst slots
 };
 
-// ys[i] = y[i] * {1, 2^-8, 2^-16, 1}[i % 4], undoing the bit position each nibble is decoded at.
-// ysum16[g] = sum of y over the 16 values of group g, for the q4_K min term; skipped when ysum16 is null.
+// ys[i] = y[i]. ysum16[g] = sum of y over the 16 values of group g, for the q4_K min term; skipped when
+// ysum16 is null.
 // Block y prepares input c: y + c*y_stride into ys + c*k (and ysum16 + c*k/16).
 static __global__ void mmvq_k80_prep(const float * __restrict__ y, const int64_t y_stride, float * __restrict__ ys,
         float * __restrict__ ysum16, const int k) {
@@ -27,8 +27,7 @@ static __global__ void mmvq_k80_prep(const float * __restrict__ y, const int64_t
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     float v = i < k ? y[i] : 0.0f;
     if (i < k) {
-        const int p = i & 3;
-        ys[i] = v * (p == 1 ? 1.0f/256.0f : p == 2 ? 1.0f/65536.0f : 1.0f);
+        ys[i] = v;
     }
 #pragma unroll
     for (int o = 8; o > 0; o >>= 1) {
@@ -42,6 +41,13 @@ static __global__ void mmvq_k80_prep(const float * __restrict__ y, const int64_t
 // An integer below 2^23 placed in the mantissa of 2^23, minus 2^23: exact, with no int-to-float conversion.
 static __device__ __forceinline__ float mmvq_k80_magic(const uint32_t bits) {
     return __int_as_float(0x4B000000u | bits) - 8388608.0f;
+}
+
+// Byte k of q placed in the mantissa of 2^23 by one PRMT (bytes: q.k, 0, 0, 0x4B), as a float: 2^23 + byte (#584).
+// It replaces a mask and an OR per value.
+template <int k>
+static __device__ __forceinline__ float mmvq_k80_byte(const uint32_t q) {
+    return __int_as_float(__byte_perm(q, 0x4B000000u, 0x7440 + k));
 }
 
 // One warp computes MMVQ_K80_ROWS rows. Lane t reads 16 qs bytes of block (b0 + t/8): chunk j = (t%8)/2,
@@ -105,14 +111,14 @@ static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q4_K
 #pragma unroll
             for (int w = 0; w < 4; ++w) {
                 const uint32_t lo = q[w] & 0x0F0F0F0Fu, hi = (q[w] >> 4) & 0x0F0F0F0Fu;
-                al = fmaf(mmvq_k80_magic(lo & 0xFFu),     yl[w].x, al);
-                al = fmaf(mmvq_k80_magic(lo & 0xFF00u),   yl[w].y, al);
-                al = fmaf(mmvq_k80_magic(lo & 0xFF0000u), yl[w].z, al);
-                al = fmaf(mmvq_k80_magic(lo >> 24),       yl[w].w, al);
-                ah = fmaf(mmvq_k80_magic(hi & 0xFFu),     yh[w].x, ah);
-                ah = fmaf(mmvq_k80_magic(hi & 0xFF00u),   yh[w].y, ah);
-                ah = fmaf(mmvq_k80_magic(hi & 0xFF0000u), yh[w].z, ah);
-                ah = fmaf(mmvq_k80_magic(hi >> 24),       yh[w].w, ah);
+                al = fmaf(mmvq_k80_byte<0>(lo) - 8388608.0f, yl[w].x, al);
+                al = fmaf(mmvq_k80_byte<1>(lo) - 8388608.0f, yl[w].y, al);
+                al = fmaf(mmvq_k80_byte<2>(lo) - 8388608.0f, yl[w].z, al);
+                al = fmaf(mmvq_k80_byte<3>(lo) - 8388608.0f, yl[w].w, al);
+                ah = fmaf(mmvq_k80_byte<0>(hi) - 8388608.0f, yh[w].x, ah);
+                ah = fmaf(mmvq_k80_byte<1>(hi) - 8388608.0f, yh[w].y, ah);
+                ah = fmaf(mmvq_k80_byte<2>(hi) - 8388608.0f, yh[w].z, ah);
+                ah = fmaf(mmvq_k80_byte<3>(hi) - 8388608.0f, yh[w].w, ah);
             }
             const float dot  = mmvq_k80_magic(scw & 0xFFu)*al + mmvq_k80_magic(scw >> 8)*ah;
             const float mins = mmvq_k80_magic(mw  & 0xFFu)*sl + mmvq_k80_magic(mw  >> 8)*sh_sum;
@@ -139,8 +145,8 @@ static __device__ __forceinline__ uint32_t mmvq_k80_ld4(const char * p) {
 
 // One warp computes MMVQ_K80_Q6_K_ROWS rows, 2 blocks per step. Lane t decodes, in block (b0 + t/16) and
 // half h = (t/8)%2, the values h*128 + g*32 + l0 + k for g, k in 0..3 with l0 = 4*(t%8): their low 4 bits
-// come from ql and their high 2 bits from qh, and the bytes rebuilt from them keep the bit positions that
-// mmvq_k80_prep scales ys by. The "- 32" of each value folds into its byte's decode constant.
+// come from ql and their high 2 bits from qh, rebuilt as the four bytes of q[g]. The "- 32" of each value
+// folds into its byte's decode constant.
 static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q6_K(
         const char * __restrict__ x, const float * __restrict__ ys,
         float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes, const mmvq_k80_channels ch) {
@@ -190,11 +196,11 @@ static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q6_K
             float s = 0.0f;
 #pragma unroll
             for (int g = 0; g < 4; ++g) {
-                // (2^23 + v*2^s) - (2^23 + 32*2^s) = (v - 32)*2^s, exact
-                float dot = (__int_as_float(0x4B000000u | (q[g] & 0xFFu))     - (8388608.0f + 32.0f))     *yv[g].x;
-                dot = fmaf(__int_as_float(0x4B000000u | (q[g] & 0xFF00u))     - (8388608.0f + 8192.0f),    yv[g].y, dot);
-                dot = fmaf(__int_as_float(0x4B000000u | (q[g] & 0xFF0000u))   - (8388608.0f + 2097152.0f), yv[g].z, dot);
-                dot = fmaf(__int_as_float(0x4B000000u | (q[g] >> 24))         - (8388608.0f + 32.0f),      yv[g].w, dot);
+                // (2^23 + v) - (2^23 + 32) = v - 32, exact
+                float dot = (mmvq_k80_byte<0>(q[g]) - (8388608.0f + 32.0f))*yv[g].x;
+                dot = fmaf(mmvq_k80_byte<1>(q[g]) - (8388608.0f + 32.0f), yv[g].y, dot);
+                dot = fmaf(mmvq_k80_byte<2>(q[g]) - (8388608.0f + 32.0f), yv[g].z, dot);
+                dot = fmaf(mmvq_k80_byte<3>(q[g]) - (8388608.0f + 32.0f), yv[g].w, dot);
                 // int8 scale: flip the sign bit, decode as unsigned, subtract the bias
                 const float sc = mmvq_k80_magic((uint32_t) (uint8_t) __ldg(bp + sc_off + 2*g) ^ 0x80u) - 128.0f;
                 s = fmaf(sc, dot, s);
