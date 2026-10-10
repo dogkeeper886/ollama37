@@ -32,6 +32,7 @@
 #include "ggml-cuda/mmvq.cuh"
 #include "ggml-cuda/mmvq-k80.cuh"
 #include "ggml-cuda/mmvf-k80.cuh"
+#include "ggml-cuda/mmid-k80.cuh"
 #include "ggml-cuda/gated-delta.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
@@ -2419,6 +2420,11 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
             } else {
                 ggml_cuda_mul_mat_vec_f(ctx, src0, src1, ids, dst);
             }
+            return;
+        }
+
+        if (ggml_cuda_should_use_mmid_k80(src0, src1, ids, dst, cc)) {
+            ggml_cuda_mul_mat_id_k80(ctx, src0, src1, ids, dst);
             return;
         }
 
