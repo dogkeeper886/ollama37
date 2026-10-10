@@ -1555,7 +1555,9 @@ static void ggml_cuda_op_mul_mat_cublas(
         ggml_cuda_pool_alloc<float> src1_ddq_as_f32(ctx.pool(id));
 
         if (src0->type != GGML_TYPE_F32) {
-            const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
+            // K80 (#585): ggml's q4_K dequantize reads at under half the K80's ceiling
+            const to_fp32_cuda_t to_fp32_cuda = GGML_CUDA_CC_IS_NVIDIA(cc) && cc < 500 && src0->type == GGML_TYPE_Q4_K ?
+                dequantize_row_q4_K_k80_cuda : ggml_get_to_fp32_cuda(src0->type);
             GGML_ASSERT(to_fp32_cuda != nullptr);
             src0_ddq_as_f32.alloc(row_diff*ne00);
             to_fp32_cuda(src0_dd_i, src0_ddq_as_f32.get(), row_diff*ne00, stream);

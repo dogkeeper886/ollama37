@@ -15,6 +15,9 @@ to_bf16_cuda_t ggml_get_to_bf16_cuda(ggml_type type);
 
 to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type);
 
+// K80 (#585): q4_K to FP32 at the read ceiling, for the cuBLAS SGEMM path
+void dequantize_row_q4_K_k80_cuda(const void * vx, float * y, int64_t k, cudaStream_t stream);
+
 // TODO more general support for non-contiguous inputs
 
 template<typename T>
