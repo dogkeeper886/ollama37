@@ -73,20 +73,20 @@ purpose.
 
 ## Cache reuse depends on the model
 
-Some models cannot reuse a cached prompt at all, so every request pays full price. Observed
-on a K80:
+How much of a cached prompt a request reuses depends on the model family. Observed on a K80:
 
 | Model family | Reuses a cached prompt? |
 |---|---|
 | `gpt-oss` | Yes — a 25k conversation read only the 1–1500 new tokens each turn |
 | `deepseek-r1` | Yes |
 | `gemma3`, `gemma4` | Yes — a repeated 865-token prompt took 0.19s on `gemma3:27b`, against 27.4s the first time; `gemma4:31b` took 0.23s against 32.1s |
-| `qwen3.5`, `qwen3.6`, `ornith` | No — a repeated 2475-token prompt took 26.3s again, against 26.5s the first time |
+| `qwen3.5`, `qwen3.6`, `qwen3.8`, `ornith` | From a checkpoint — a 3184-token second turn took 8.7s on `ornith:35b`, against 40.0s for the first; `qwen3.8:27b` took 24.8s against 106.8s |
 
-For the families that cannot reuse, a long conversation re-reads its whole history every
-turn. At the ~50 tokens/s a 20B model manages on a K80, a 25k-token history costs about
-**eight minutes per turn**. If a run feels far slower than the generation rate suggests, this
-is the first thing to check: watch whether `prefill_tokens` stays large turn after turn.
+The `qwen3.5` family keeps a state it cannot roll back token by token, so it saves a
+checkpoint about every 2,000 tokens and resumes from the last one before the first changed
+token. Each turn re-reads up to that much history, not only the new tokens. And a cache only
+helps while the prompt's start stays byte for byte the same: if a run feels far slower than
+the generation rate suggests, watch whether `prefill_tokens` stays large turn after turn.
 
 ## The two engines measure prefill differently
 
