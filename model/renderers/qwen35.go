@@ -3,6 +3,8 @@ package renderers
 import (
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -309,9 +311,10 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 					}
 
 					sb.WriteString("<tool_call>\n<function=" + toolCall.Function.Name + ">\n")
-					for name, value := range toolCall.Function.Arguments {
+					// sorted keys: an identical prompt across turns keeps the KV cache prefix reusable
+					for _, name := range slices.Sorted(maps.Keys(toolCall.Function.Arguments)) {
 						sb.WriteString("<parameter=" + name + ">\n")
-						sb.WriteString(formatToolCallArgument(value))
+						sb.WriteString(formatToolCallArgument(toolCall.Function.Arguments[name]))
 						sb.WriteString("\n</parameter>\n")
 					}
 					sb.WriteString("</function>\n</tool_call>")

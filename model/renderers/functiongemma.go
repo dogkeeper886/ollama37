@@ -3,6 +3,8 @@ package renderers
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -44,7 +46,8 @@ func (r *FunctionGemmaRenderer) Render(messages []api.Message, tools []api.Tool,
 			sb.WriteString("<escape>,parameters:{properties:{")
 
 			first := true
-			for name, prop := range tool.Function.Parameters.Properties {
+			for _, name := range slices.Sorted(maps.Keys(tool.Function.Parameters.Properties)) {
+				prop := tool.Function.Parameters.Properties[name]
 				if !first {
 					sb.WriteString(",")
 				}
