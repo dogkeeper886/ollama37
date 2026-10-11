@@ -1011,6 +1011,12 @@ struct ggml_backend_cuda_context {
     std::string name;
     cudaEvent_t copy_event = nullptr;
 
+    // K80 decode filler (clock-k80.cu)
+    int * k80_fill_flag = nullptr;      // the filler kernel runs while this keeps its value
+    cudaEvent_t k80_fill_event = nullptr;
+    int64_t k80_fill_t_us = 0;          // start of this die's last graph compute
+    int64_t k80_fill_period_us = 0;     // time between its last two
+
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };
     cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
 
