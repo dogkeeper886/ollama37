@@ -6052,7 +6052,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     // lfm2.5 models (e.g. LFM2.5-1.2B-Thinking) have no embedding norm — their
                     // config ships no token_embd_norm — so make it optional and skip the norm in
                     // llm_build_lfm2 when absent. (lfm2 2.0 ships it; the guard keeps those intact.)
-                    tok_norm = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD_NORM, "weight"), {n_embd}, TENSOR_NOT_REQUIRED);
+                    // #578: loaded as an output-layer tensor, so it sits on the GPU with lm_head. As an
+                    // input-layer tensor it stayed on the CPU and cut each token into three GPU graphs.
+                    tok_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM_LFM2, "weight"), {n_embd}, TENSOR_NOT_REQUIRED);
                     // The ollama-library lfm2.5 GGUF ships the final embedding norm as
                     // output_norm.weight (no token_embd_norm). In llm_build_lfm2 this is the SAME
                     // weight (model.tok_norm, applied right before model.output), so fall back to
@@ -19746,6 +19748,9 @@ struct llm_build_lfm2 : public llm_graph_context {
 
         ggml_tensor * cur = build_inp_embd(model.tok_embd);
         cb(cur, "model.embed_tokens", -1);
+        // #578: the token lookup runs on the CPU; put it first, ahead of the recurrent-state copies
+        // build_inp_mem_hybrid adds, so the GPU work of a token stays in one split
+        ggml_build_forward_expand(gf, cur);
 
         ggml_tensor * inp_pos     = build_inp_pos();
         auto        * inp_hybrid  = build_inp_mem_hybrid();
