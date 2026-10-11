@@ -72,7 +72,7 @@ canary pass; the models test judges all 29 replies across 22 models, 0 failed.
 
 - **All 25 replies pass the check and the judge, and all 25 are word for word identical.**
 - **lfm2.5:8b decode +11.0 %** (61.19 → 67.90 tok/s), **lfm2.5-thinking:1.2b +9.4 %** (97.67 → 106.88).
-- **The other 23 models run no changed code:** decode moves −3.9 % to +4.4 % (mean −0.2 %), prefill −3.8 %
+- **The other 23 models run no changed code:** decode moves −3.9 % to +4.4 % (mean −0.3 %), prefill −3.8 %
   to +2.5 %. The extremes are gemma3:27b −3.9 % and muse-glimmer:30b +4.4 %, which is this run's noise.
 
 ## Decision
