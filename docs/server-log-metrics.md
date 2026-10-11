@@ -80,7 +80,7 @@ on a K80:
 |---|---|
 | `gpt-oss` | Yes — a 25k conversation read only the 1–1500 new tokens each turn |
 | `deepseek-r1` | Yes |
-| `gemma3`, `gemma4` | No — a repeated 2417-token prompt was re-read in full |
+| `gemma3`, `gemma4` | Yes — a repeated 865-token prompt took 0.19s on `gemma3:27b`, against 27.4s the first time; `gemma4:31b` took 0.23s against 32.1s |
 | `qwen3.5`, `qwen3.6`, `ornith` | No — a repeated 2475-token prompt took 26.3s again, against 26.5s the first time |
 
 For the families that cannot reuse, a long conversation re-reads its whole history every
