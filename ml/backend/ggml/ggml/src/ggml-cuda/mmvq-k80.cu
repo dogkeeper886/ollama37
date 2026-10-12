@@ -218,16 +218,233 @@ static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q6_K
     }
 }
 
+static constexpr int MMVQ_K80_Q8_0_ROWS = 4;
+
+// One warp computes MMVQ_K80_Q8_0_ROWS rows, 16 blocks per step. Lane t decodes values 16h..16h+15 of block
+// (b0 + t/2), with h = t%2. A q8_0 block is 34 bytes, so its qs is only 2-byte aligned. The int8 values decode
+// as q6_K's scales do: flip the sign bit, decode as unsigned, subtract the bias.
+static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q8_0(
+        const char * __restrict__ x, const float * __restrict__ ys,
+        float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes, const mmvq_k80_channels ch) {
+    const int c = blockIdx.y;
+    x   += (size_t) (ch.ids ? ch.ids[c] : 0) * ch.x_stride;
+    ys  += (c % ch.ny) * ch.y_stride;
+    dst += c * ch.dst_stride;
+    const int lane = threadIdx.x;
+    const int row0 = (blockIdx.x*MMVQ_K80_WARPS + threadIdx.y) * MMVQ_K80_Q8_0_ROWS;
+    if (row0 >= nrows) {
+        return;
+    }
+    const int nb   = ncols / QK8_0;
+    const int bo   = lane >> 1;
+    const int l    = (lane & 1) * 16;
+    const int qoff = offsetof(block_q8_0, qs) + l;
+
+    float acc[MMVQ_K80_Q8_0_ROWS] = {0.0f};
+
+    for (int b0 = 0; b0 < nb; b0 += 16) {
+        const int b = b0 + bo;
+        if (b >= nb) {
+            break;
+        }
+        float4 yv[4];
+#pragma unroll
+        for (int w = 0; w < 4; ++w) {
+            yv[w] = __ldg((const float4 *) (ys + b*QK8_0 + l) + w);
+        }
+
+#pragma unroll
+        for (int r = 0; r < MMVQ_K80_Q8_0_ROWS; ++r) {
+            const char * bp = x + (size_t) min(row0 + r, nrows - 1)*row_bytes + (size_t) b*sizeof(block_q8_0);
+            const float d = __half2float(__ushort_as_half(__ldg((const uint16_t *) bp)));
+            float s = 0.0f;
+#pragma unroll
+            for (int w = 0; w < 4; ++w) {
+                const uint32_t q = mmvq_k80_ld4(bp + qoff + 4*w) ^ 0x80808080u;
+                // (2^23 + v + 128) - (2^23 + 128) = v, exact
+                s = fmaf(mmvq_k80_byte<0>(q) - (8388608.0f + 128.0f), yv[w].x, s);
+                s = fmaf(mmvq_k80_byte<1>(q) - (8388608.0f + 128.0f), yv[w].y, s);
+                s = fmaf(mmvq_k80_byte<2>(q) - (8388608.0f + 128.0f), yv[w].z, s);
+                s = fmaf(mmvq_k80_byte<3>(q) - (8388608.0f + 128.0f), yv[w].w, s);
+            }
+            acc[r] = fmaf(d, s, acc[r]);
+        }
+    }
+
+#pragma unroll
+    for (int r = 0; r < MMVQ_K80_Q8_0_ROWS; ++r) {
+        const float v = warp_reduce_sum(acc[r]);
+        if (lane == 0 && row0 + r < nrows) {
+            dst[row0 + r] = v;
+        }
+    }
+}
+
+static constexpr int MMVQ_K80_Q5_1_ROWS = 4;
+
+// 4 bits spread to bit 4 of 4 bytes: the 5th bit of 4 q5_1 values, placed above their nibbles.
+static __device__ __forceinline__ uint32_t mmvq_k80_q5_1_high(const uint32_t bits) {
+    return (bits * 0x02040810u) & 0x10101010u;
+}
+
+// One warp computes MMVQ_K80_Q5_1_ROWS rows, 8 blocks per step. Lane t reads qs bytes 4h..4h+3 of block
+// (b0 + t/4), with h = t%4: their low nibbles are values 4h.., their high nibbles values 16+4h.., and qh holds
+// each value's 5th bit. The block's min multiplies the sum of the lane's 8 inputs, taken once per step.
+static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_q5_1(
+        const char * __restrict__ x, const float * __restrict__ ys,
+        float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes, const mmvq_k80_channels ch) {
+    const int c = blockIdx.y;
+    x   += (size_t) (ch.ids ? ch.ids[c] : 0) * ch.x_stride;
+    ys  += (c % ch.ny) * ch.y_stride;
+    dst += c * ch.dst_stride;
+    const int lane = threadIdx.x;
+    const int row0 = (blockIdx.x*MMVQ_K80_WARPS + threadIdx.y) * MMVQ_K80_Q5_1_ROWS;
+    if (row0 >= nrows) {
+        return;
+    }
+    const int nb   = ncols / QK5_1;
+    const int bo   = lane >> 2;
+    const int l    = (lane & 3) * 4;
+    const int qoff = offsetof(block_q5_1, qs) + l;
+
+    float acc[MMVQ_K80_Q5_1_ROWS] = {0.0f};
+
+    for (int b0 = 0; b0 < nb; b0 += 8) {
+        const int b = b0 + bo;
+        if (b >= nb) {
+            break;
+        }
+        const float4 yl = __ldg((const float4 *) (ys + b*QK5_1 + l));
+        const float4 yh = __ldg((const float4 *) (ys + b*QK5_1 + QK5_1/2 + l));
+        const float ysum = ((yl.x + yl.y) + (yl.z + yl.w)) + ((yh.x + yh.y) + (yh.z + yh.w));
+
+#pragma unroll
+        for (int r = 0; r < MMVQ_K80_Q5_1_ROWS; ++r) {
+            const char * bp = x + (size_t) min(row0 + r, nrows - 1)*row_bytes + (size_t) b*sizeof(block_q5_1);
+            const uint2 hd = __ldg((const uint2 *) bp); // d, m; qh
+            const uint32_t q = __ldg((const uint32_t *) (bp + qoff));
+            const float d = __half2float(__ushort_as_half((unsigned short) (hd.x & 0xFFFF)));
+            const float m = __half2float(__ushort_as_half((unsigned short) (hd.x >> 16)));
+            const uint32_t lo = ( q       & 0x0F0F0F0Fu) | mmvq_k80_q5_1_high((hd.y >> l) & 0xFu);
+            const uint32_t hi = ((q >> 4) & 0x0F0F0F0Fu) | mmvq_k80_q5_1_high((hd.y >> (QK5_1/2 + l)) & 0xFu);
+            float s = (mmvq_k80_byte<0>(lo) - 8388608.0f)*yl.x;
+            s = fmaf(mmvq_k80_byte<1>(lo) - 8388608.0f, yl.y, s);
+            s = fmaf(mmvq_k80_byte<2>(lo) - 8388608.0f, yl.z, s);
+            s = fmaf(mmvq_k80_byte<3>(lo) - 8388608.0f, yl.w, s);
+            s = fmaf(mmvq_k80_byte<0>(hi) - 8388608.0f, yh.x, s);
+            s = fmaf(mmvq_k80_byte<1>(hi) - 8388608.0f, yh.y, s);
+            s = fmaf(mmvq_k80_byte<2>(hi) - 8388608.0f, yh.z, s);
+            s = fmaf(mmvq_k80_byte<3>(hi) - 8388608.0f, yh.w, s);
+            acc[r] += d*s + m*ysum;
+        }
+    }
+
+#pragma unroll
+    for (int r = 0; r < MMVQ_K80_Q5_1_ROWS; ++r) {
+        const float v = warp_reduce_sum(acc[r]);
+        if (lane == 0 && row0 + r < nrows) {
+            dst[row0 + r] = v;
+        }
+    }
+}
+
+static constexpr int MMVQ_K80_MXFP4_ROWS = 4;
+
+// 48 + v for the 4 MXFP4 values in the low 16 bits of q, as floats, each times its input, added to s.
+// A value's low 3 bits index its magnitude {0, 1, 2, 3, 4, 6, 8, 12} and bit 3 is its sign, so one PRMT, which
+// selects bytes by 3-bit indices, looks up 4 magnitudes at once, as m = 64 + 4*magnitude, and a second, on the
+// bits one place up, gives 0x7F for each negative value: (m ^ 0x7F) + 1 = 64 - 4*magnitude. That byte placed in
+// bits 16..23 of 0x42000000 is the float 48 + v, exactly; the caller starts s at -48 times the sum of the inputs.
+static __device__ __forceinline__ float mmvq_k80_mxfp4_dot4(const uint32_t q, const float y0, const float y1,
+        const float y2, const float y3, float s) {
+    const uint32_t m    = __byte_perm(0x4C484440u, 0x70605850u, q);
+    const uint32_t neg  = __byte_perm(0x00000000u, 0x7F7F7F7Fu, q >> 1);
+    const uint32_t code = (m ^ neg) + (neg & 0x01010101u);
+    s = fmaf(__int_as_float(__byte_perm(code, 0x42000000u, 0x7044)), y0, s);
+    s = fmaf(__int_as_float(__byte_perm(code, 0x42000000u, 0x7144)), y1, s);
+    s = fmaf(__int_as_float(__byte_perm(code, 0x42000000u, 0x7244)), y2, s);
+    s = fmaf(__int_as_float(__byte_perm(code, 0x42000000u, 0x7344)), y3, s);
+    return s;
+}
+
+// One warp computes MMVQ_K80_MXFP4_ROWS rows, 32 blocks per step, one block per lane. A block is 17 bytes, so
+// its 16 qs bytes are read as the 5 whole words that hold them and shifted into place. Byte j of qs holds
+// value j in its low nibble and value 16 + j in its high nibble.
+static __global__ void __launch_bounds__(WARP_SIZE*MMVQ_K80_WARPS) mmvq_k80_mxfp4(
+        const char * __restrict__ x, const float * __restrict__ ys, const float * __restrict__ ysum16,
+        float * __restrict__ dst, const int ncols, const int nrows, const size_t row_bytes, const mmvq_k80_channels ch) {
+    const int c = blockIdx.y;
+    x      += (size_t) (ch.ids ? ch.ids[c] : 0) * ch.x_stride;
+    ys     += (c % ch.ny) * ch.y_stride;
+    ysum16 += (c % ch.ny) * (ch.y_stride / 16);
+    dst    += c * ch.dst_stride;
+    const int lane = threadIdx.x;
+    const int row0 = (blockIdx.x*MMVQ_K80_WARPS + threadIdx.y) * MMVQ_K80_MXFP4_ROWS;
+    if (row0 >= nrows) {
+        return;
+    }
+    const int nb = ncols / QK_MXFP4;
+
+    float acc[MMVQ_K80_MXFP4_ROWS] = {0.0f};
+
+    for (int b = lane; b < nb; b += WARP_SIZE) {
+        float4 yl[4], yh[4];
+#pragma unroll
+        for (int w = 0; w < 4; ++w) {
+            yl[w] = __ldg((const float4 *) (ys + b*QK_MXFP4) + w);
+            yh[w] = __ldg((const float4 *) (ys + b*QK_MXFP4 + QK_MXFP4/2) + w);
+        }
+        const float bias = -48.0f*(__ldg(ysum16 + 2*b) + __ldg(ysum16 + 2*b + 1));
+
+#pragma unroll
+        for (int r = 0; r < MMVQ_K80_MXFP4_ROWS; ++r) {
+            const uint8_t * bp = (const uint8_t *) x + (size_t) min(row0 + r, nrows - 1)*row_bytes + (size_t) b*sizeof(block_mxfp4);
+            const float d = ggml_cuda_e8m0_to_fp32(__ldg(bp)) * 0.5f;
+            const uintptr_t   qs = (uintptr_t) bp + offsetof(block_mxfp4, qs);
+            const uint32_t *  wp = (const uint32_t *) (qs & ~(uintptr_t) 3);
+            const int         sh = ((int) qs & 3) * 8;
+            uint32_t w[5];
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+                w[i] = __ldg(wp + i);
+            }
+            w[4] = __ldg(wp + (sh ? 4 : 3)); // an aligned qs ends with w[3]: do not read past it
+
+            float s = bias;
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+                const uint32_t q = __funnelshift_r(w[i], w[i + 1], sh);
+                s = mmvq_k80_mxfp4_dot4(q,       yl[i].x, yh[i].x, yl[i].y, yh[i].y, s);
+                s = mmvq_k80_mxfp4_dot4(q >> 16, yl[i].z, yh[i].z, yl[i].w, yh[i].w, s);
+            }
+            acc[r] = fmaf(d, s, acc[r]);
+        }
+    }
+
+#pragma unroll
+    for (int r = 0; r < MMVQ_K80_MXFP4_ROWS; ++r) {
+        const float v = warp_reduce_sum(acc[r]);
+        if (lane == 0 && row0 + r < nrows) {
+            dst[row0 + r] = v;
+        }
+    }
+}
+
+static bool mmvq_k80_type(const ggml_type type) {
+    return type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q6_K || type == GGML_TYPE_Q5_1 || type == GGML_TYPE_Q8_0 || type == GGML_TYPE_MXFP4;
+}
+
 bool ggml_cuda_should_use_mmvq_k80(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst, int cc) {
     return GGML_CUDA_CC_IS_NVIDIA(cc) && cc < 500 // Kepler
-        && (src0->type == GGML_TYPE_Q4_K || src0->type == GGML_TYPE_Q6_K)
+        && mmvq_k80_type(src0->type)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
         && src1->ne[1] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1 && src0->ne[2] == 1 && src0->ne[3] == 1
         && ggml_is_contiguous(src0) && ggml_is_contiguous(src1) && ggml_is_contiguous(dst)
-        && (src0->type != GGML_TYPE_Q4_K || (uintptr_t) src0->data % 16 == 0); // the q4_K kernel reads src0 as uint4
+        && (src0->type != GGML_TYPE_Q4_K || (uintptr_t) src0->data % 16 == 0) // the q4_K kernel reads src0 as uint4
+        && (src0->type != GGML_TYPE_Q5_1 || (uintptr_t) src0->data % 8 == 0);  // and the q5_1 kernel as uint2
 }
 
-// Prepares the ny inputs (input c at src1 + c*src1_stride floats) and runs the q4_K or q6_K kernel over nslots.
+// Prepares the ny inputs (input c at src1 + c*src1_stride floats) and runs src0's kernel over nslots.
 static void mmvq_k80_launch(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const float * src1,
         const int64_t src1_stride, const int nslots, mmvq_k80_channels ch, float * dst) {
     const int ncols = src0->ne[0];
@@ -236,15 +453,27 @@ static void mmvq_k80_launch(ggml_backend_cuda_context & ctx, const ggml_tensor *
 
     const bool q4_K = src0->type == GGML_TYPE_Q4_K;
     ggml_cuda_pool_alloc<float> ys(ctx.pool(), (size_t) ncols*ch.ny);
-    ggml_cuda_pool_alloc<float> ysum16(ctx.pool()); // only q4_K's min term uses it
-    if (q4_K) {
+    ggml_cuda_pool_alloc<float> ysum16(ctx.pool()); // q4_K's min term and MXFP4's bias use it
+    if (q4_K || src0->type == GGML_TYPE_MXFP4) {
         ysum16.alloc((size_t) ncols/16*ch.ny);
     }
     mmvq_k80_prep<<<dim3((ncols + 255)/256, ch.ny), 256, 0, stream>>>(src1, src1_stride, ys.get(), ysum16.get(), ncols);
     ch.y_stride = ncols;
 
     const dim3 block_dims(WARP_SIZE, MMVQ_K80_WARPS, 1);
-    if (!q4_K) {
+    if (src0->type == GGML_TYPE_MXFP4) {
+        const int rows_per_block = MMVQ_K80_MXFP4_ROWS*MMVQ_K80_WARPS;
+        mmvq_k80_mxfp4<<<dim3((nrows + rows_per_block - 1)/rows_per_block, nslots), block_dims, 0, stream>>>(
+            (const char *) src0->data, ys.get(), ysum16.get(), dst, ncols, nrows, src0->nb[1], ch);
+    } else if (src0->type == GGML_TYPE_Q5_1) {
+        const int rows_per_block = MMVQ_K80_Q5_1_ROWS*MMVQ_K80_WARPS;
+        mmvq_k80_q5_1<<<dim3((nrows + rows_per_block - 1)/rows_per_block, nslots), block_dims, 0, stream>>>(
+            (const char *) src0->data, ys.get(), dst, ncols, nrows, src0->nb[1], ch);
+    } else if (src0->type == GGML_TYPE_Q8_0) {
+        const int rows_per_block = MMVQ_K80_Q8_0_ROWS*MMVQ_K80_WARPS;
+        mmvq_k80_q8_0<<<dim3((nrows + rows_per_block - 1)/rows_per_block, nslots), block_dims, 0, stream>>>(
+            (const char *) src0->data, ys.get(), dst, ncols, nrows, src0->nb[1], ch);
+    } else if (src0->type == GGML_TYPE_Q6_K) {
         const int rows_per_block = MMVQ_K80_Q6_K_ROWS*MMVQ_K80_WARPS;
         mmvq_k80_q6_K<<<dim3((nrows + rows_per_block - 1)/rows_per_block, nslots), block_dims, 0, stream>>>(
             (const char *) src0->data, ys.get(), dst, ncols, nrows, src0->nb[1], ch);
@@ -265,13 +494,14 @@ bool ggml_cuda_should_use_mmvq_k80_id(const ggml_tensor * src0, const ggml_tenso
         const ggml_tensor * dst, int cc) {
     const int64_t n_used = ids->ne[0];
     return GGML_CUDA_CC_IS_NVIDIA(cc) && cc < 500 // Kepler
-        && (src0->type == GGML_TYPE_Q4_K || src0->type == GGML_TYPE_Q6_K)
+        && mmvq_k80_type(src0->type)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32 && ids->type == GGML_TYPE_I32
         && dst->ne[2] == 1 && src1->ne[2] == 1 && ids->ne[1] == 1 // one token
         && dst->ne[1] == n_used && (src1->ne[1] == 1 || src1->ne[1] == n_used)
         && src0->ne[3] == 1 && src0->nb[1] == ggml_row_size(src0->type, src0->ne[0]) && src0->nb[2] == src0->nb[1]*src0->ne[1]
         && src1->nb[0] == sizeof(float) && dst->nb[0] == sizeof(float) && ids->nb[0] == sizeof(int32_t)
-        && (src0->type != GGML_TYPE_Q4_K || ((uintptr_t) src0->data % 16 == 0 && src0->nb[2] % 16 == 0)); // q4_K reads uint4
+        && (src0->type != GGML_TYPE_Q4_K || ((uintptr_t) src0->data % 16 == 0 && src0->nb[2] % 16 == 0)) // q4_K reads uint4
+        && (src0->type != GGML_TYPE_Q5_1 || (uintptr_t) src0->data % 8 == 0);                             // q5_1 reads uint2
 }
 
 void ggml_cuda_mul_mat_vec_q_k80_id(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1,
