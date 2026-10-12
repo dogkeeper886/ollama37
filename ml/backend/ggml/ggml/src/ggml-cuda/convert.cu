@@ -226,6 +226,36 @@ static __global__ void dequantize_block_q4_K(const void * __restrict__ vx, dst_t
     }
 }
 
+// K80 (#585): one warp per block, lane t decoding qs word t with one PRMT per value and storing two float4,
+// so q4_K dequantizes at the read ceiling. The values are bit-identical to dequantize_block_q4_K's.
+static __global__ void __launch_bounds__(256) dequantize_block_q4_K_k80(const void * __restrict__ vx, float4 * __restrict__ yy, const int64_t nb) {
+    const int64_t i = blockIdx.x*8 + threadIdx.x/WARP_SIZE;
+    if (i >= nb) {
+        return;
+    }
+    const int t = threadIdx.x % WARP_SIZE;
+    const int j = t/8;
+    const block_q4_K * x = (const block_q4_K *) vx + i;
+
+    const uint32_t q = __ldg((const uint32_t *) x->qs + t);
+    const float dall = __low2half(x->dm);
+    const float dmin = __high2half(x->dm);
+
+    uint8_t sc, m;
+    get_scale_min_k4(2*j + 0, x->scales, sc, m);
+    const float d1 = dall * sc; const float m1 = dmin * m;
+    get_scale_min_k4(2*j + 1, x->scales, sc, m);
+    const float d2 = dall * sc; const float m2 = dmin * m;
+
+    // byte k of a word placed in the mantissa of 2^23 by one PRMT: 2^23 + byte, so subtracting 2^23 gives the byte
+    const uint32_t lo = q & 0x0F0F0F0Fu, hi = (q >> 4) & 0x0F0F0F0Fu;
+#define Q4_K_K80_V(w, k) (__int_as_float(__byte_perm(w, 0x4B000000u, 0x7440 + k)) - 8388608.0f)
+    float4 * y = yy + i*(QK_K/4) + 16*j + t%8;
+    y[0] = make_float4(d1*Q4_K_K80_V(lo, 0) - m1, d1*Q4_K_K80_V(lo, 1) - m1, d1*Q4_K_K80_V(lo, 2) - m1, d1*Q4_K_K80_V(lo, 3) - m1);
+    y[8] = make_float4(d2*Q4_K_K80_V(hi, 0) - m2, d2*Q4_K_K80_V(hi, 1) - m2, d2*Q4_K_K80_V(hi, 2) - m2, d2*Q4_K_K80_V(hi, 3) - m2);
+#undef Q4_K_K80_V
+}
+
 template<typename dst_t>
 static __global__ void dequantize_block_q5_K(const void * __restrict__ vx, dst_t * __restrict__ yy) {
     const block_q5_K * x = (const block_q5_K *) vx;
@@ -536,6 +566,11 @@ template<typename dst_t>
 static void dequantize_row_q4_K_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
     const int nb = k / QK_K;
     dequantize_block_q4_K<<<nb, 32, 0, stream>>>(vx, y);
+}
+
+void dequantize_row_q4_K_k80_cuda(const void * vx, float * y, const int64_t k, cudaStream_t stream) {
+    const int64_t nb = k / QK_K;
+    dequantize_block_q4_K_k80<<<(nb + 7)/8, 256, 0, stream>>>(vx, (float4 *) y, nb);
 }
 
 template<typename dst_t>
