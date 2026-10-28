@@ -23,15 +23,27 @@ const (
 // every turn, not only after the last user query.
 const ornithChatTemplate = `reasoning_content=reasoning_content|trim%}{{-'<|im_start|>'+message.role+'\n<think>\n'+reasoning_content+'\n</think>\n\n'+content}}`
 
+// lfm25ChatTemplate is the line of the LFM2.5-24B-A2B chat template, whitespace
+// removed, that sets it apart from qwen3.5/3.6 and ornith: its generation prompt
+// opens the assistant's <think> block in one double-quoted string.
+const lfm25ChatTemplate = `{{-"<|im_start|>assistant\n<think>"-}}`
+
 // rendererForChatTemplate names the built-in renderer and parser that reproduce
 // a GGUF tokenizer.chat_template, or "" for none. Library models such as
-// ornith-1.5 ship no renderer or parser, since upstream renders the GGUF chat
-// template natively; this fork has no template engine for it.
-func rendererForChatTemplate(chatTemplate string) string {
-	if strings.Contains(strings.Join(strings.Fields(chatTemplate), ""), ornithChatTemplate) {
-		return "ornith"
+// ornith-1.5 and lfm2.5:24b ship no renderer or parser, since upstream renders
+// the GGUF chat template natively; this fork has no template engine for it.
+func rendererForChatTemplate(chatTemplate string) (renderer, parser string) {
+	flat := strings.Join(strings.Fields(chatTemplate), "")
+	switch {
+	case strings.Contains(flat, ornithChatTemplate):
+		return "ornith", "ornith"
+	case strings.Contains(flat, lfm25ChatTemplate):
+		// The pair lfm2.5:8b's manifest names (#595). The lfm2 renderer ends the
+		// prompt at "<|im_start|>assistant\n"; the model then opens <think> itself,
+		// which the lfm2-thinking parser waits for.
+		return "lfm2", "lfm2-thinking"
 	}
-	return ""
+	return "", ""
 }
 
 func resolveRendererName(m *Model) string {
