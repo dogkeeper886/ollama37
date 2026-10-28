@@ -442,8 +442,8 @@ func GetModel(name string) (*Model, error) {
 			// A model that names no renderer, parser or template gets the built-in
 			// pair that matches its GGUF chat template.
 			if model.Config.Renderer == "" && model.Config.Parser == "" && model.Template == template.DefaultTemplate {
-				if name := rendererForChatTemplate(f.KeyValue("tokenizer.chat_template").String()); name != "" {
-					model.Config.Renderer, model.Config.Parser = name, name
+				if renderer, parser := rendererForChatTemplate(f.KeyValue("tokenizer.chat_template").String()); renderer != "" {
+					model.Config.Renderer, model.Config.Parser = renderer, parser
 				}
 			}
 			f.Close()
