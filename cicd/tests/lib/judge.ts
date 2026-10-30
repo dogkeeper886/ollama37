@@ -4,8 +4,8 @@
  * One job: put a question from prompts.yaml to an agent and read back yes or no.
  * The agent is an ACP agent (default: the bundled Claude one) spawned over stdio,
  * with one fresh session per question so no verdict can see another. With
- * JUDGE_BASE_URL set, the agent talks to that ollama server and JUDGE_MODEL on it,
- * so the judge runs off the box under test; unset, it uses Claude on
+ * JUDGE_BASE_URL set, the agent talks to that ollama server and JUDGE_MODEL on it
+ * -- in CI the pinned v2.3.4 server judge-up.sh starts (#597); unset, it uses Claude on
  * CLAUDE_CODE_OAUTH_TOKEN or ~/.claude.
  *
  * Anything short of a clear yes or no -- the agent will not start, times out,

@@ -4,12 +4,15 @@
  *   runTest('models', body)
  *     ├─ yield GPU          cicd/scripts/gpu-yield.sh
  *     ├─ body: generate(model, name) → reply → check → recorded
- *     ├─ restore GPU        cicd/scripts/gpu-restore.sh
+ *     ├─ start the judge    cicd/scripts/judge-up.sh
  *     ├─ judge every recorded reply
+ *     ├─ remove the judge   cicd/scripts/judge-down.sh
+ *     ├─ restore GPU        cicd/scripts/gpu-restore.sh
  *     └─ report + exit      "N models, N judged, K failed"
  *
- * The judge runs after the GPU is back because on a shared host its server is the
- * one the test borrowed the card from. A test cannot skip it: generate() records
+ * The judge runs on its own server, ollama37 v2.3.4 pinned by digest in
+ * judge-up.sh, so no build moves it; the GPU goes back to the host's own server
+ * only after the last verdict (#597). A test cannot skip it: generate() records
  * into the run, and runTest judges every record before it reports. The run fails
  * on a failed check, a "no", an abstain, a model that errored, or a run that
  * recorded no reply at all -- "0 failed" means every reply was checked and judged.
@@ -98,20 +101,57 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
   current = { test, results: [], templates: new Map(), errors: [] };
   const run = current;
   let bodyError: string | undefined;
+  let judgeError: string | undefined;
   let restoreError: string | undefined;
 
   // The yield is inside the try: it stops the host's own server before it starts
-  // the one under test, so a yield that fails halfway must still be restored.
+  // the one under test, so a yield that fails halfway must still be restored --
+  // which the finally below does, after the judge.
   try {
     shell('gpu-yield.sh');
     await body();
   } catch (e) {
     bodyError = e instanceof Error ? e.message : String(e);
     process.stderr.write(`RUN ERROR: ${bodyError}\n`);
+  }
+
+  try {
+    // A judge that will not start abstains on every reply, so the run fails at once
+    // instead of waiting out a timeout per question.
+    try {
+      shell('judge-up.sh');
+    } catch (e) {
+      judgeError = e instanceof Error ? e.message : String(e);
+      process.stderr.write(`JUDGE ERROR: ${judgeError}\n`);
+    }
+
+    // Judge every reply the run recorded. A reply the script check failed is not
+    // sent -- it fails anyway, and a judge asked to quote a loop loops with it.
+    for (const r of run.results) {
+      if (!r.checks.content.pass) {
+        r.judge = { verdict: 'not-judged', reason: `not judged: ${r.checks.content.reason}` };
+      } else if (judgeError) {
+        r.judge = { verdict: 'abstain', reason: `the judge did not start: ${judgeError}` };
+      } else if (r.judgeName === 'grounded' && !r.groundedOn) {
+        r.judge = { verdict: 'abstain', reason: 'grounded judge has no tool result to check against' };
+      } else {
+        process.stderr.write(`  [judge] ${r.model} (${r.prompt})...\n`);
+        r.judge = await judge(run.templates.get(r)!, readable(r.reply), r.groundedOn);
+      }
+      r.pass = Object.values(r.checks).every((c) => c.pass) && r.judge.verdict === r.judgePass;
+    }
   } finally {
-    // A failed restore must not throw away a run's replies: record it, judge and
-    // report as usual, and fail the run. The workflows restore again in an
+    closeJudge();
+    // A failed judge-down or restore must not throw away a run's verdicts: record
+    // it, report as usual, and fail the run. The workflows run both again in an
     // always() step, which also covers a job that was cancelled or timed out.
+    try {
+      shell('judge-down.sh');
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      judgeError ??= error;
+      process.stderr.write(`JUDGE ERROR: ${error}\n`);
+    }
     try {
       shell('gpu-restore.sh');
     } catch (e) {
@@ -119,21 +159,6 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
       process.stderr.write(`RESTORE ERROR: ${restoreError}\n`);
     }
   }
-
-  // Judge every reply the run recorded. A reply the script check failed is not
-  // sent -- it fails anyway, and a judge asked to quote a loop loops with it.
-  for (const r of run.results) {
-    if (!r.checks.content.pass) {
-      r.judge = { verdict: 'not-judged', reason: `not judged: ${r.checks.content.reason}` };
-    } else if (r.judgeName === 'grounded' && !r.groundedOn) {
-      r.judge = { verdict: 'abstain', reason: 'grounded judge has no tool result to check against' };
-    } else {
-      process.stderr.write(`  [judge] ${r.model} (${r.prompt})...\n`);
-      r.judge = await judge(run.templates.get(r)!, readable(r.reply), r.groundedOn);
-    }
-    r.pass = Object.values(r.checks).every((c) => c.pass) && r.judge.verdict === r.judgePass;
-  }
-  closeJudge();
 
   const failed = run.results.filter((r) => !r.pass).length + run.errors.length;
   const judged = run.results.filter((r) => r.judge.verdict === 'yes' || r.judge.verdict === 'no').length;
@@ -159,6 +184,7 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
     }),
     ...run.errors.map((e) => `| ${e.model} | — | error: ${e.error.replace(/\|/g, '\\|').slice(0, 120)} | — | FAIL | — | — | — | — | — |`),
     ...(bodyError ? ['', `Run error: ${bodyError}`] : []),
+    ...(judgeError ? ['', `Judge server failed: ${judgeError}`] : []),
     ...(restoreError ? ['', `GPU restore failed: ${restoreError}`] : []),
     '',
   ];
@@ -169,7 +195,7 @@ export async function runTest(test: string, body: () => Promise<void>): Promise<
   const out = arg('output');
   if (out) {
     mkdirSync(dirname(resolve(out)), { recursive: true });
-    writeFileSync(out, JSON.stringify({ test, models, judged, abstained, notJudged, failed, results: run.results, errors: run.errors, bodyError, restoreError }, null, 2));
+    writeFileSync(out, JSON.stringify({ test, models, judged, abstained, notJudged, failed, results: run.results, errors: run.errors, bodyError, judgeError, restoreError }, null, 2));
   }
-  process.exit(failed > 0 || empty || bodyError || restoreError ? 1 : 0);
+  process.exit(failed > 0 || empty || bodyError || judgeError || restoreError ? 1 : 0);
 }

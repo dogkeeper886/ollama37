@@ -6,7 +6,7 @@ Before an image ships, CI answers one question: does this build still produce la
 
 | Layer | Tool | Holds |
 |---|---|---|
-| Shell | bash, `cicd/scripts/` | build the image, deploy the container and health-check it, hand the GPU over and back, the canary, the structure check |
+| Shell | bash, `cicd/scripts/` | build the image, deploy the container and health-check it, hand the GPU over and back, start and remove the judge's server, the canary, the structure check |
 | Library | TypeScript, `cicd/tests/lib/` | the only call to the model, the script check, the judge, the prompt loader, the run wrapper |
 | Tests | three scripts, `cicd/tests/` | a prompt name × a model list, nothing else |
 | Workflow | GitHub Actions, `.github/workflows/` | wiring only |
@@ -19,15 +19,17 @@ Setup is shell, not tests: it leaves a usable image and a healthy server, or fai
 runTest('models', body)
   ├─ yield GPU          cicd/scripts/gpu-yield.sh
   ├─ body: generate(model, name) → reply → check → recorded
-  ├─ restore GPU        cicd/scripts/gpu-restore.sh
+  ├─ start the judge    cicd/scripts/judge-up.sh
   ├─ judge every recorded reply
+  ├─ remove the judge   cicd/scripts/judge-down.sh
+  ├─ restore GPU        cicd/scripts/gpu-restore.sh
   └─ report + exit      "N models, N replies, N judged, K failed"
 ```
 
 - `lib/ollama.ts` is the only code that talks to Ollama. `generate` (and `converse`, the same with a tool menu) is the only way to get model text, and it refuses outside `runTest`.
 - `lib/check.ts`: the reply has text, is not a loop, holds what the prompt planted, and is not a refusal.
 - `lib/judge.ts`: Claude Code on Ollama (`JUDGE_BASE_URL`, `JUDGE_MODEL`), in an empty working directory, one fresh session per question. The answer must open with yes or no; anything else is an abstain, and an abstain fails.
-- The judge runs after the GPU is back, because on a shared host its server is the one the test borrowed the card from.
+- The judge has its own server, so no build moves it (#597). `judge-up.sh` runs `dogkeeper886/ollama37:v2.3.4`, pinned by digest, as `ollama37-judge` on `:11435`, with the host's model store mounted read-only and pruning off, and fails unless `ornith-1.5:9b` is the pinned digest. The host's own server, a systemd unit or a bare binary, never judges, and it gets the GPU back after the last verdict.
 
 ## One file for every prompt and judge question
 
@@ -52,7 +54,7 @@ npx tsx mcp.ts --models "qwen3.8:27b"
 ../scripts/check-structure.sh                           # the structure still holds
 ```
 
-Each prints a markdown report and takes `--output <file>` for JSON.
+Each prints a markdown report and takes `--output <file>` for JSON. The judge needs Docker with the NVIDIA runtime, and the same environment the workflows set: `OLLAMA37_MODELS_DIR`, `JUDGE_BASE_URL=http://localhost:11435`, `JUDGE_MODEL=ornith-1.5:9b`.
 
 In CI:
 
@@ -74,6 +76,7 @@ Each runner's `.env` (in the runner's folder, e.g. `~/actions-runner/.env`; temp
 |---|---|
 | `OLLAMA37_SERVICE`, `OLLAMA37_YIELD_SERVICE` | the GPU hand-over; unset = test whatever serves `OLLAMA_HOST` |
 | `OLLAMA37_CONTAINER` (default `ollama37`) | `deploy.sh`, VRAM attribution |
+| `OLLAMA37_MODELS_DIR` | the model store the CI container and the judge mount |
 | `OLLAMA_HOST` (default `http://localhost:11434`) | everything |
 | `OLLAMA37_MODELS`, `OLLAMA37_THROUGHPUT_MODELS`, `OLLAMA37_MCP_MODELS` | the model list when `--models` is not given |
 | `MCP_COMMAND`, `MCP_ARGS`, `MCP_ENV` | the MCP server under test (default testlink-mcp) |

@@ -3,9 +3,8 @@
 #
 # Stops OLLAMA37_SERVICE and starts OLLAMA37_YIELD_SERVICE again, but only where
 # the host named both and left the yielded one enabled -- so a job killed mid-run
-# heals on the next one. A host that names neither is untouched. The agent judge
-# runs after this, because on a shared host its server is the one the test
-# borrowed the card from.
+# heals on the next one. A host that names neither is untouched. runTest runs
+# this after the agent judge, which has its own server (judge-up.sh, #597).
 #
 # Knobs: as gpu-yield.sh.
 set -euo pipefail
