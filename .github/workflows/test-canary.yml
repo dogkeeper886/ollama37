@@ -23,11 +23,17 @@ jobs:
     environment: cicd-1
     timeout-minutes: 30
     env:
-      JUDGE_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
-      JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
+      # The judge: the pinned v2.3.4 server cicd/scripts/judge-up.sh starts (#597).
+      JUDGE_BASE_URL: http://localhost:11435
+      JUDGE_MODEL: ornith-1.5:9b
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-tests
       - name: Canary
         run: cicd/scripts/canary.sh
+      # Each run removes its judge itself, but a cancelled or timed-out job kills it
+      # first; this cleans up whatever happened above.
+      - name: Stop judge
+        if: always()
+        run: cicd/scripts/judge-down.sh

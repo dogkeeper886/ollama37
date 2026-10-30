@@ -1,8 +1,8 @@
 name: MCP tool use
 
 # each model drives a real MCP server: right tool, valid arguments, an answer grounded in the result (#542).
-# Wiring only: the test is cicd/tests/mcp.ts, which yields the GPU, runs, gives it
-# back, judges every reply and fails on anything unjudged.
+# Wiring only: the test is cicd/tests/mcp.ts, which yields the GPU, runs, judges
+# every reply on the pinned judge, gives the GPU back and fails on anything unjudged.
 
 on:
   workflow_dispatch:
@@ -49,8 +49,9 @@ jobs:
       TESTLINK_API_KEY: ${{ secrets.TESTLINK_API_KEY }}
       MCP_DISTRACTOR_COMMAND: ${{ inputs.distractor && 'npx' || '' }}
       MCP_DISTRACTOR_ARGS: ${{ inputs.distractor && '@playwright/mcp@latest' || '' }}
-      JUDGE_BASE_URL: ${{ vars.JUDGE_BASE_URL }}
-      JUDGE_MODEL: ${{ vars.JUDGE_MODEL }}
+      # The judge: the pinned v2.3.4 server cicd/scripts/judge-up.sh starts (#597).
+      JUDGE_BASE_URL: http://localhost:11435
+      JUDGE_MODEL: ornith-1.5:9b
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -59,8 +60,11 @@ jobs:
       - name: Run
         working-directory: cicd/tests
         run: npx tsx mcp.ts ${MODELS:+--models "$MODELS"} ${NUM_CTX:+--num-ctx "$NUM_CTX"} --output results/mcp.json
-      # runTest restores the GPU itself, but a cancelled or timed-out job kills it
-      # first; this gives the card back whatever happened above.
+      # runTest removes the judge and restores the GPU itself, but a cancelled or
+      # timed-out job kills it first; these two clean up whatever happened above.
+      - name: Stop judge
+        if: always()
+        run: cicd/scripts/judge-down.sh
       - name: Restore GPU
         if: always()
         run: cicd/scripts/gpu-restore.sh
