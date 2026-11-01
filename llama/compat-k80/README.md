@@ -19,6 +19,7 @@ CMake-gated off and filed as an issue, keeping the K80 build green.
 | 1002 | `1002-kepler-cuda-graphs.patch` | #573 | Keep CUDA graphs on Kepler (upstream gates them to Ampere+) |
 | 1003 | `1003-fa-guard-cuda11.patch` | #385 | Disable MMA_F16 FA under CUDA 11.4 for cc >= 7.5 (NaN); Volta keeps a working path |
 | 1004 | `1004-cpu-variant-toolchain-guards.patch` | sync | Guard cooperlake/zen4/alderlake/sapphirerapids CPU backends behind compiler/assembler feature checks (need GCC 11 + binutils 2.36); the CUDA 11.4 pin's GCC 10 skips them like upstream's POWER11/z17 pattern |
+| 1005 | `1005-cublas-bf16-pre-volta.patch` | sync | Pin the cuBLAS compute type to F32 on pre-Volta NVIDIA: the BF16 branch keeps `GGML_TYPE_BF16` for small matrices, and `cublasGemmEx(CUDA_R_16BF)` needs cc >= 8.0 → `CUBLAS_STATUS_ARCH_MISMATCH` (repro: `gemma4:e4b` on K80 aborted llama-server) |
 
 ## Deferred (follow-up commits, same numbering)
 
@@ -85,3 +86,12 @@ Status: 1000–1003 compile-verified together (b11963 + llama/compat + all four)
 under nvcc 11.4.3 / sm_37 — `ggml-cuda` target green. 1004 compile-verified
 with the CPU preset (`GGML_CPU_ALL_VARIANTS`, llama-server + llama-quantize)
 under GCC 10.3 — the four guarded variants are skipped, all others build.
+1005 runtime-verified on a Tesla K80 (driver 470.256.02): `gemma4:e4b` failed
+with `CUBLAS_STATUS_ARCH_MISMATCH` before the patch and answers correctly
+after, using the rebuilt `libggml-cuda.so` over the shipped image.
+
+Audit of every cuBLAS call site against pre-Volta (cc 3.7): `mul_mat_cublas`
+covered by 1000 + 1005; `conv2d`/`conv3d` never take the cuBLAS path on K80
+(`use_blas` requires fast FP16); `ssm-scan`'s `GemmStridedBatchedEx` calls sit
+behind upstream's `cc >= TURING` SSD gate, so the pre-Volta build uses the
+cuBLAS-free scan path; `out-prod` already uses legacy `cublasSgemm*`.
