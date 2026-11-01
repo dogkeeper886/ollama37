@@ -1362,3 +1362,211 @@ func TestFindArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertEscapeArgs(t *testing.T) {
+	tests := []struct {
+		name   string
+		buffer []byte
+		want   map[string]any
+	}{
+		{
+			name:   "no escape tokens",
+			buffer: []byte(`{"location": "London"}`),
+			want:   nil,
+		},
+		{
+			name:   "single string arg",
+			buffer: []byte(`{location:<escape>London<escape>}`),
+			want: map[string]any{
+				"location": "London",
+			},
+		},
+		{
+			name:   "multiple string args",
+			buffer: []byte(`{location:<escape>San Francisco<escape>,format:<escape>celsius<escape>}`),
+			want: map[string]any{
+				"location": "San Francisco",
+				"format":   "celsius",
+			},
+		},
+		{
+			name:   "boolean arg",
+			buffer: []byte(`{verbose:true,location:<escape>Tokyo<escape>}`),
+			want: map[string]any{
+				"verbose":  true,
+				"location": "Tokyo",
+			},
+		},
+		{
+			name:   "numeric arg",
+			buffer: []byte(`{count:42,location:<escape>Paris<escape>}`),
+			want: map[string]any{
+				"count":    float64(42),
+				"location": "Paris",
+			},
+		},
+		{
+			name:   "with surrounding context",
+			buffer: []byte(`call:get_weather{location:<escape>London<escape>}<end_function_call>`),
+			want: map[string]any{
+				"location": "London",
+			},
+		},
+		{
+			name:   "value with colon",
+			buffer: []byte(`{url:<escape>http://example.com<escape>}`),
+			want: map[string]any{
+				"url": "http://example.com",
+			},
+		},
+		{
+			name:   "empty args",
+			buffer: []byte(`{}<escape>ignored<escape>`),
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := convertEscapeArgs(tt.buffer)
+			if diff := cmp.Diff(got, tt.want); diff != "" {
+				t.Errorf("convertEscapeArgs() mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestFunctionGemmaParser(t *testing.T) {
+	functiongemma, err := template.New("functiongemma").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}
+<start_function_call>call:{{ .Function.Name }}{{ .Function.Arguments }}<end_function_call>{{end}}{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather for a location",
+				Parameters: api.ToolFunctionParameters{
+					Type:     "object",
+					Required: []string{"location"},
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"location": {
+							Type:        api.PropertyType{"string"},
+							Description: "The city name",
+						},
+					}),
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "search",
+				Description: "Search the web",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"query": {
+							Type:        api.PropertyType{"string"},
+							Description: "Search query",
+						},
+					}),
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		inputs  []string
+		content string
+		calls   []api.ToolCall
+	}{
+		{
+			name:    "single function call",
+			inputs:  []string{"<start_function_call>call:get_weather{location:<escape>London<escape>}<end_function_call>"},
+			content: "",
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "London"}),
+					},
+				},
+			},
+		},
+		{
+			name:    "text before function call",
+			inputs:  []string{"Let me check. <start_function_call>call:get_weather{location:<escape>Tokyo<escape>}<end_function_call>"},
+			content: "Let me check. ",
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "Tokyo"}),
+					},
+				},
+			},
+		},
+		{
+			name: "incremental streaming",
+			inputs: []string{
+				"<start_function_call>",
+				"call:get_weather",
+				"{location:<escape>",
+				"San Francisco",
+				"<escape>}",
+				"<end_function_call>",
+			},
+			content: "",
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "San Francisco"}),
+					},
+				},
+			},
+		},
+		{
+			name:    "no tool call - just text",
+			inputs:  []string{"Hello, how can I help?"},
+			content: "Hello, how can I help?",
+			calls:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(functiongemma, tools)
+
+			var calls []api.ToolCall
+			var content string
+			for _, input := range tt.inputs {
+				tcs, c := parser.Add(input)
+				calls = append(calls, tcs...)
+				content += c
+			}
+
+			if content != tt.content {
+				t.Errorf("Expected content %q, got %q", tt.content, content)
+			}
+
+			if len(calls) != len(tt.calls) {
+				t.Fatalf("Expected %d tool calls, got %d", len(tt.calls), len(calls))
+			}
+
+			for i, want := range tt.calls {
+				if diff := cmp.Diff(calls[i], want, argsComparer); diff != "" {
+					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
+				}
+			}
+		})
+	}
+}

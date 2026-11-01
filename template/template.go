@@ -122,6 +122,7 @@ var funcs = template.FuncMap{
 		b, _ := json.Marshal(v)
 		return string(b)
 	},
+	"upper": strings.ToUpper,
 	"currentDate": func(args ...string) string {
 		// Currently ignoring the format argument, but accepting it for future use
 		// Default format is YYYY-MM-DD

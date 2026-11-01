@@ -1,0 +1,46 @@
+{{- $system := "" }}
+{{- range .Messages }}
+{{- if eq .Role "system" }}
+{{- if not $system }}{{ $system = .Content }}
+{{- else }}{{ $system = printf "%s\n\n%s" $system .Content }}
+{{- end }}
+{{- continue }}
+{{- end }}
+{{- end }}
+{{- /* Developer turn: system message + tool declarations */ -}}
+{{- if or .Tools $system }}<start_of_turn>developer
+{{- if $system }}
+{{ $system }}
+{{- end }}
+{{- range .Tools }}
+<start_function_declaration>declaration:{{ .Function.Name }}{description:<escape>{{ .Function.Description }}<escape>,parameters:{properties:{
+{{- $first := true }}
+{{- range $name, $prop := .Function.Parameters.Properties }}
+{{- if not $first }},{{ end }}{{ $first = false }}{{ $name }}:{description:<escape>{{ $prop.Description }}<escape>,type:<escape>{{ index $prop.Type 0 | upper }}<escape>
+{{- if $prop.Enum }},enum:[{{ range $i, $e := $prop.Enum }}{{ if $i }},{{ end }}<escape>{{ $e }}<escape>{{ end }}]{{ end }}
+}
+{{- end }}},required:[
+{{- range $i, $r := .Function.Parameters.Required }}{{ if $i }},{{ end }}<escape>{{ $r }}<escape>{{ end }}],type:<escape>OBJECT<escape>}}<end_function_declaration>
+{{- end }}
+<end_of_turn>
+{{- end }}
+{{- range .Messages }}
+{{- if eq .Role "system" }}
+{{- continue }}
+{{- else if eq .Role "user" }}
+<start_of_turn>user
+{{ .Content }}<end_of_turn>
+{{- else if eq .Role "assistant" }}
+<start_of_turn>model
+{{- if .ToolCalls }}
+{{- range .ToolCalls }}
+<start_function_call>call:{{ .Function.Name }}{{ json .Function.Arguments }}<end_function_call>
+{{- end }}
+{{- else }}
+{{ .Content }}
+{{- end }}<end_of_turn>
+{{- else if eq .Role "tool" }}
+<start_function_response>response:{{ .ToolName }}{{ json .Content }}<end_function_response>
+{{- end }}
+{{- end }}
+<start_of_turn>model
