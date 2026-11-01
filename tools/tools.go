@@ -3,7 +3,6 @@ package tools
 import (
 	"bytes"
 	"encoding/json"
-	"strconv"
 	"strings"
 	"text/template"
 
@@ -31,6 +30,12 @@ func (p *Parser) GetBuffer() []byte {
 	return p.buffer
 }
 
+// Tag returns the tool-call tag string the parser looks for in the output
+// stream.
+func (p *Parser) Tag() string {
+	return p.tag
+}
+
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
@@ -55,6 +60,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 
 	if p.state == toolsState_LookingForTag {
 		i, found := p.findTag()
+
 		if i == -1 {
 			content = string(p.buffer)
 			p.buffer = []byte{}
@@ -125,14 +131,19 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 		return nil
 	}
 
-	var args map[string]any
+	var argsMap map[string]any
 	if found, i := findArguments(tool, p.buffer); found == nil {
 		return nil
 	} else {
-		args = found
+		argsMap = found
 		if i > end {
 			end = i
 		}
+	}
+
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range argsMap {
+		args.Set(k, v)
 	}
 
 	tc := &api.ToolCall{
@@ -328,145 +339,7 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 		}
 	}
 
-	// Fallback: try FunctionGemma <escape>-delimited format
-	if bytes.Contains(buffer, []byte("<escape>")) {
-		return convertEscapeArgs(buffer)
-	}
-
 	return nil, 0
-}
-
-// convertEscapeArgs parses FunctionGemma's <escape>-delimited argument format.
-// Format: {key:<escape>value<escape>,key2:true,key3:123}
-// Returns nil if the buffer doesn't contain the <escape> token.
-func convertEscapeArgs(buffer []byte) (map[string]any, int) {
-	s := string(buffer)
-	if !strings.Contains(s, "<escape>") {
-		return nil, 0
-	}
-
-	// Find the first { that starts the arguments block
-	start := -1
-	for i := 0; i < len(s); i++ {
-		if s[i] == '{' {
-			start = i
-			break
-		}
-	}
-	if start == -1 {
-		return nil, 0
-	}
-
-	// Find the matching closing brace, accounting for <escape> tokens
-	depth := 0
-	inEscape := false
-	end := -1
-	for i := start; i < len(s); i++ {
-		if i+8 <= len(s) && s[i:i+8] == "<escape>" {
-			inEscape = !inEscape
-			i += 7 // loop will increment by 1
-			continue
-		}
-		if inEscape {
-			continue
-		}
-		switch s[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				end = i
-				goto found
-			}
-		}
-	}
-	return nil, 0
-
-found:
-	inner := s[start+1 : end]
-	args := make(map[string]any)
-
-	for len(inner) > 0 {
-		inner = strings.TrimSpace(inner)
-		if len(inner) == 0 {
-			break
-		}
-
-		// Read key (up to first ':' that isn't inside <escape>)
-		colonIdx := -1
-		esc := false
-		for i := 0; i < len(inner); i++ {
-			if i+8 <= len(inner) && inner[i:i+8] == "<escape>" {
-				esc = !esc
-				i += 7
-				continue
-			}
-			if !esc && inner[i] == ':' {
-				colonIdx = i
-				break
-			}
-		}
-		if colonIdx == -1 {
-			break
-		}
-
-		key := strings.TrimSpace(inner[:colonIdx])
-		inner = inner[colonIdx+1:]
-
-		// Read value
-		inner = strings.TrimSpace(inner)
-		if strings.HasPrefix(inner, "<escape>") {
-			// String value delimited by <escape>...<escape>
-			inner = inner[8:] // skip opening <escape>
-			endEsc := strings.Index(inner, "<escape>")
-			if endEsc == -1 {
-				break
-			}
-			args[key] = inner[:endEsc]
-			inner = inner[endEsc+8:] // skip closing <escape>
-		} else if strings.HasPrefix(inner, "true") {
-			args[key] = true
-			inner = inner[4:]
-		} else if strings.HasPrefix(inner, "false") {
-			args[key] = false
-			inner = inner[5:]
-		} else {
-			// Read until comma or end of args
-			endVal := len(inner)
-			esc = false
-			for i := 0; i < len(inner); i++ {
-				if i+8 <= len(inner) && inner[i:i+8] == "<escape>" {
-					esc = !esc
-					i += 7
-					continue
-				}
-				if !esc && (inner[i] == ',' || inner[i] == '}') {
-					endVal = i
-					break
-				}
-			}
-			val := strings.TrimSpace(inner[:endVal])
-			if n, err := strconv.ParseFloat(val, 64); err == nil {
-				args[key] = n
-			} else {
-				args[key] = val
-			}
-			inner = inner[endVal:]
-		}
-
-		// Skip comma separator
-		inner = strings.TrimSpace(inner)
-		if len(inner) > 0 && inner[0] == ',' {
-			inner = inner[1:]
-		}
-	}
-
-	if len(args) == 0 {
-		return nil, 0
-	}
-
-	return args, end
 }
 
 // done checks if the parser is done parsing by looking
@@ -485,7 +358,23 @@ func (p *Parser) done() bool {
 	}
 
 	var count int
+	var inString, escaped bool
 	for _, c := range p.buffer {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
 		if c == byte(open) {
 			count++
 		} else if c == byte(close) {

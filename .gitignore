@@ -18,5 +18,6 @@ llama/vendor
 /ollama
 docker/output/
 tests/node_modules/
+integration/testdata/models/
 
 # Vitest reporter output (junit.xml), written per run.

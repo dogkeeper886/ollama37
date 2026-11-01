@@ -36,11 +36,7 @@ Now say bye.<|im_end|>
 	}
 }
 
-// ornith forces thinking on even when the request sets think:false, because the
-// fork's parser cannot be told think:false and always collects a <think> span.
-// So a think:false request renders identically to a thinking request (an open
-// <think> prefill), never a closed empty block — keeping renderer and parser in sync.
-func TestOrnithRendererForcesThinkingWhenDisabled(t *testing.T) {
+func TestOrnithRendererKeepsAssistantThinkBlocksWhenThinkingDisabled(t *testing.T) {
 	msgs := []api.Message{
 		{Role: "user", Content: "Say hello."},
 		{
@@ -68,8 +64,11 @@ Hello.<|im_end|>
 Now say bye.<|im_end|>
 <|im_start|>assistant
 <think>
+
+</think>
+
 `
 	if got != want {
-		t.Fatalf("unexpected Ornith render with think:false\n--- got ---\n%q\n--- want ---\n%q", got, want)
+		t.Fatalf("unexpected Ornith render with thinking disabled\n--- got ---\n%q\n--- want ---\n%q", got, want)
 	}
 }

@@ -16,16 +16,6 @@ type memInfo struct {
 	FreeSwap    uint64 `json:"free_swap,omitempty"` // TODO split this out for system only
 }
 
-// CPU type represents a CPU Package occupying a socket
-type CPU struct {
-	ID                  string `cpuinfo:"processor"`
-	VendorID            string `cpuinfo:"vendor_id"`
-	ModelName           string `cpuinfo:"model name"`
-	CoreCount           int
-	EfficiencyCoreCount int // Performance = CoreCount - Efficiency
-	ThreadCount         int
-}
-
 func LogDetails(devices []ml.DeviceInfo) {
 	sort.Sort(sort.Reverse(ml.ByFreeMemory(devices))) // Report devices in order of scheduling preference
 	for _, dev := range devices {
@@ -41,7 +31,7 @@ func LogDetails(devices []ml.DeviceInfo) {
 		}
 		slog.Info("inference compute",
 			"id", dev.ID,
-			"filtered_id", dev.FilteredID,
+			"filter_id", dev.FilterID,
 			"library", dev.Library,
 			"compute", dev.Compute(),
 			"name", dev.Name,

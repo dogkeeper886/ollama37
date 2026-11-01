@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type LFM2Renderer struct {
@@ -26,6 +27,10 @@ const (
 	lfm2ToolResponseStartTag = "<|tool_response_start|>"
 	lfm2ToolResponseEndTag   = "<|tool_response_end|>"
 )
+
+func (r *LFM2Renderer) LeadingBOS() string {
+	return lfm2BOSToken
+}
 
 func lfm2RenderSystemContent(content any) string {
 	switch v := content.(type) {
@@ -144,42 +149,13 @@ func lfm2RenderContent(content any, useImgTags bool) string {
 	}
 }
 
-// lfm2ToolParameters / lfm2ToolFunction mirror api.ToolFunction for rendering, but
-// with `omitempty` on `required` so an empty required list is dropped rather than
-// emitted as `"required": null`. The fork's api.ToolFunctionParameters lacks that
-// tag; rendering through these keeps the tool schema byte-identical to upstream's
-// (proven) LFM2 template, which is what the model was trained to read.
-type lfm2ToolParameters struct {
-	Type       string                      `json:"type"`
-	Defs       any                         `json:"$defs,omitempty"`
-	Items      any                         `json:"items,omitempty"`
-	Required   []string                    `json:"required,omitempty"`
-	Properties map[string]api.ToolProperty `json:"properties"`
-}
-
-type lfm2ToolFunction struct {
-	Name        string             `json:"name"`
-	Description string             `json:"description,omitempty"`
-	Parameters  lfm2ToolParameters `json:"parameters"`
-}
-
 func lfm2ToolSchema(tool api.Tool) any {
 	if tool.Function.Name == "" {
 		return tool
 	}
 
 	// LFM2 templates are typically fed function-schema objects (name/description/parameters).
-	return lfm2ToolFunction{
-		Name:        tool.Function.Name,
-		Description: tool.Function.Description,
-		Parameters: lfm2ToolParameters{
-			Type:       tool.Function.Parameters.Type,
-			Defs:       tool.Function.Parameters.Defs,
-			Items:      tool.Function.Parameters.Items,
-			Required:   tool.Function.Parameters.Required,
-			Properties: tool.Function.Parameters.Properties,
-		},
-	}
+	return tool.Function
 }
 
 func lfm2ToolCallArgument(v any) string {
@@ -199,8 +175,8 @@ func lfm2RenderToolCalls(calls []api.ToolCall) string {
 		sb.WriteString(tc.Function.Name)
 		sb.WriteString("(")
 
-		keys := make([]string, 0, len(tc.Function.Arguments))
-		for key := range tc.Function.Arguments {
+		keys := make([]string, 0, tc.Function.Arguments.Len())
+		for key := range tc.Function.Arguments.All() {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
@@ -209,7 +185,7 @@ func lfm2RenderToolCalls(calls []api.ToolCall) string {
 			if j > 0 {
 				sb.WriteString(",")
 			}
-			value := tc.Function.Arguments[key]
+			value, _ := tc.Function.Arguments.Get(key)
 			sb.WriteString(key)
 			sb.WriteString("=")
 			sb.WriteString(lfm2ToolCallArgument(value))
@@ -358,4 +334,8 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 	}
 
 	return sb.String(), nil
+}
+
+func (r *LFM2Renderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{r.IsThinking}, Default: r.IsThinking}
 }

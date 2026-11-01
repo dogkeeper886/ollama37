@@ -3,12 +3,11 @@ package renderers
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 var (
@@ -16,9 +15,13 @@ var (
 	imEndTag   = "<|im_end|>"
 )
 
-// renderAdditionalKeys renders all JSON fields except the ones in handledKeys,
-// in sorted key order: an identical prompt across turns keeps the KV cache
-// prefix reusable.
+func (r *Qwen3CoderRenderer) LeadingBOS() string {
+	return ""
+}
+
+// renderAdditionalKeys renders all JSON fields except the ones in handledKeys
+// This follows the same approach from the reference implementation, which gives
+// a particular key ordering
 func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 	data, err := json.Marshal(obj)
 	if err != nil {
@@ -31,8 +34,7 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 	}
 
 	var sb strings.Builder
-	for _, key := range slices.Sorted(maps.Keys(m)) {
-		value := m[key]
+	for key, value := range m {
 		if handledKeys[key] {
 			continue
 		}
@@ -99,8 +101,7 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 				}
 				sb.WriteString("\n<parameters>")
 
-				for _, name := range slices.Sorted(maps.Keys(tool.Function.Parameters.Properties)) {
-					prop := tool.Function.Parameters.Properties[name]
+				for name, prop := range tool.Function.Parameters.Properties.All() {
 					sb.WriteString("\n<parameter>")
 					sb.WriteString("\n<name>" + name + "</name>")
 
@@ -151,8 +152,8 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 				}
 				for _, toolCall := range message.ToolCalls {
 					sb.WriteString("\n<tool_call>\n<function=" + toolCall.Function.Name + ">")
-					for _, name := range slices.Sorted(maps.Keys(toolCall.Function.Arguments)) {
-						valueStr := formatToolCallArgument(toolCall.Function.Arguments[name])
+					for name, value := range toolCall.Function.Arguments.All() {
+						valueStr := formatToolCallArgument(value)
 						sb.WriteString("\n<parameter=" + name + ">\n" + valueStr + "\n</parameter>")
 					}
 					sb.WriteString("\n</function>\n</tool_call>")
@@ -171,12 +172,12 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 
 			// only start a new user block if this is the first tool response
 			if i == 0 || filteredMessages[i-1].Role != "tool" {
-				sb.WriteString(imStartTag + "user\n")
+				sb.WriteString(imStartTag + "user")
 			}
 
-			sb.WriteString("<tool_response>\n")
+			sb.WriteString("\n<tool_response>\n")
 			sb.WriteString(message.Content)
-			sb.WriteString("\n</tool_response>\n")
+			sb.WriteString("\n</tool_response>")
 
 			// close the user block only if this is the last tool response
 			if i == len(filteredMessages)-1 || filteredMessages[i+1].Role != "tool" {
@@ -239,4 +240,8 @@ func formatToolDefinitionType(tp api.PropertyType) string {
 	}
 
 	return string(jsonBytes)
+}
+
+func (r *Qwen3CoderRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false}, Default: false}
 }

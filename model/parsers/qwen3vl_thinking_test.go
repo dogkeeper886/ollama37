@@ -98,8 +98,12 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 			desc: "nested thinking and tool call (outside thinking, inside tool call)",
 			steps: []step{
 				{
-					input:      "I'm thinking<tool_call>I'm nested tool call</tool_call></think>",
-					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm nested tool call</tool_call>"}},
+					input: "I'm thinking<tool_call>I'm nested tool call</tool_call></think>",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "I'm thinking"},
+						qwenEventRawToolCall{raw: "I'm nested tool call"},
+						qwenEventContent{content: "</think>"},
+					},
 				},
 			},
 		},
@@ -109,8 +113,7 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 				{
 					input: "<tool_call>I'm nested tool call<think>I'm thinking</think></tool_call>",
 					wantEvents: []qwenEvent{
-						qwenEventThinkingContent{content: "<tool_call>I'm nested tool call<think>I'm thinking"},
-						qwenEventContent{content: "</tool_call>"},
+						qwenEventRawToolCall{raw: "I'm nested tool call<think>I'm thinking</think>"},
 					},
 				},
 			},
@@ -121,8 +124,8 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 				{
 					input: "I'm thinking<tool_call>I'm NOT a nested tool call</think></tool_call><tool_call>I'm nested tool call 2<think></tool_call></think>",
 					wantEvents: []qwenEvent{
-						qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm NOT a nested tool call"},
-						qwenEventContent{content: "</tool_call>"},
+						qwenEventThinkingContent{content: "I'm thinking"},
+						qwenEventRawToolCall{raw: "I'm NOT a nested tool call</think>"},
 						qwenEventRawToolCall{raw: "I'm nested tool call 2<think>"},
 						qwenEventContent{content: "</think>"},
 					},
@@ -146,7 +149,7 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 			desc: "partial thinking incomplete",
 			steps: []step{
 				{
-					input:      "abc<think>unfinished</think", // when something is ambiguious, we dont emit anything
+					input:      "abc<think>unfinished</think", // when something is ambiguous, we dont emit anything
 					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc<think>unfinished"}},
 				},
 			},
@@ -155,7 +158,7 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 			desc: "test with split thinking and content",
 			steps: []step{
 				{
-					input:      "abc<think>unfinished</th", // when something is ambiguious, we dont emit anything
+					input:      "abc<think>unfinished</th", // when something is ambiguous, we dont emit anything
 					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "abc<think>unfinished"}},
 				},
 				{
@@ -205,7 +208,7 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, nil)
+			parser.Init([]api.Tool{}, nil, nil)
 			// parser.state = CollectingThinkingContent
 
 			for i, step := range tc.steps {
@@ -241,10 +244,10 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get-current-weather",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"location": "San Francisco, CA",
 						"unit":     "fahrenheit",
-					},
+					}),
 				},
 			},
 		},
@@ -255,10 +258,10 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get current temperature",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"location with spaces": "San Francisco",
 						"unit with spaces":     "celsius",
-					},
+					}),
 				},
 			},
 		},
@@ -269,10 +272,10 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "\"get current temperature\"",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"\"location with spaces\"": "San Francisco",
 						"\"unit with spaces\"":     "\"celsius\"",
-					},
+					}),
 				},
 			},
 		},
@@ -283,12 +286,12 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "calculate",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"x":       3.14,
 						"y":       float64(42),
 						"enabled": true,
 						"items":   []any{"a", "b", "c"},
-					},
+					}),
 				},
 			},
 		},
@@ -299,9 +302,9 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"command": "ls && echo \"done\"",
-					},
+					}),
 				},
 			},
 		},
@@ -312,9 +315,9 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "exec",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"command": "ls && echo \"a > b and a < b\"",
-					},
+					}),
 				},
 			},
 		},
@@ -325,10 +328,10 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 			wantToolCall: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "获取天气",
-					Arguments: map[string]any{
+					Arguments: testArgs(map[string]any{
 						"城市":      "北京",
 						"message": "Hello! 你好! 🌟 مرحبا",
-					},
+					}),
 				},
 			},
 		},
@@ -339,7 +342,7 @@ func TestQwen3VLThinkingToolParser(t *testing.T) {
 		if err != nil {
 			t.Errorf("step %d (%s): %v", i, step.name, err)
 		}
-		if !reflect.DeepEqual(gotToolCall, step.wantToolCall) {
+		if !toolCallEqual(gotToolCall, step.wantToolCall) {
 			t.Errorf("step %d (%s): got tool call %#v, want %#v", i, step.name, gotToolCall, step.wantToolCall)
 		}
 	}
@@ -386,7 +389,7 @@ func TestQwen3VLParserState(t *testing.T) {
 
 	for _, tc := range cases {
 		parser := Qwen3VLParser{hasThinkingSupport: tc.hasThinking}
-		parser.Init(nil, tc.last)
+		parser.Init(nil, tc.last, nil)
 		if parser.state != tc.wantState {
 			t.Errorf("%s: got state %v, want %v", tc.desc, parser.state, tc.wantState)
 		}
@@ -437,7 +440,7 @@ func TestQwen3VLThinkingParserWithThinkingPrefill(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, last)
+			parser.Init([]api.Tool{}, last, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -500,7 +503,7 @@ func TestQwen3VLThinkingParserWithNonThinkingPrefill(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, last)
+			parser.Init([]api.Tool{}, last, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -523,7 +526,7 @@ func TestQwen3VLThinkingParserStreamingAssistantPrefillContent(t *testing.T) {
 	// last message is assistant with content ⇒ start in CollectingContent
 	last := &api.Message{Role: "assistant", Content: "has content"}
 	parser := Qwen3VLParser{hasThinkingSupport: true}
-	parser.Init([]api.Tool{}, last)
+	parser.Init([]api.Tool{}, last, nil)
 
 	type step struct {
 		input      string
@@ -750,7 +753,7 @@ func TestQwen3VLThinkingWhitespaceHandling(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, nil)
+			parser.Init([]api.Tool{}, nil, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)
@@ -859,7 +862,7 @@ func TestQwen3VLToolCallWhitespaceHandling(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3VLParser{hasThinkingSupport: true}
-			parser.Init([]api.Tool{}, tc.prefillMsg)
+			parser.Init([]api.Tool{}, tc.prefillMsg, nil)
 
 			for i, step := range tc.steps {
 				parser.buffer.WriteString(step.input)

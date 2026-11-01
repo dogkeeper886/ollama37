@@ -40,7 +40,6 @@ type GlimmerParser struct {
 	tools        map[string]api.Tool
 	callIndex    int
 	emitThinking bool
-	think        *api.ThinkValue
 
 	// contentStreamed records whether any of the current message's body has
 	// already been emitted as content. The fumbled-recipient tool-call
@@ -52,19 +51,30 @@ type GlimmerParser struct {
 func (p *GlimmerParser) HasToolSupport() bool     { return true }
 func (p *GlimmerParser) HasThinkingSupport() bool { return true }
 
-// SetThinkValue carries the per-request think flag, which the fork's Parser
-// interface does not pass to Init.
-func (p *GlimmerParser) SetThinkValue(think *api.ThinkValue) {
-	p.think = think
+// The model opens the message to the user, with or without naming the
+// recipient, before any content; its self message may end implicitly, so
+// the header alone marks the boundary.
+func (p *GlimmerParser) ThinkingClose() []string {
+	if p.emitThinking {
+		return []string{
+			glimmerStartTag + "assistant to=user" + glimmerMessageTag,
+			glimmerStartTag + "assistant" + glimmerMessageTag,
+		}
+	}
+	return nil
 }
 
-func (p *GlimmerParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *GlimmerParser) PreservedTokens() []string {
+	return []string{glimmerStartTag, glimmerMessageTag, glimmerEndMessageTag, glimmerEndTurnTag}
+}
+
+func (p *GlimmerParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.state = glimmerParserHeader
 	p.buffer.Reset()
 	p.recipient = ""
 	p.tools = glimmerToolsByName(tools)
 	p.callIndex = 0
-	p.emitThinking = p.think == nil || p.think.Bool()
+	p.emitThinking = thinkValue == nil || thinkValue.Bool()
 	p.contentStreamed = false
 	return tools
 }
@@ -497,7 +507,7 @@ func parseGlimmerATEM(body string, tool api.Tool) (string, api.ToolCallFunctionA
 	params = strings.TrimPrefix(params, "\n")
 	params = strings.TrimSuffix(params, "\n")
 
-	args := api.ToolCallFunctionArguments{}
+	args := api.NewToolCallFunctionArguments()
 	for params != "" {
 		if !strings.HasPrefix(params, glimmerATEMParamOpen) {
 			return "", api.ToolCallFunctionArguments{}, fmt.Errorf("malformed ATEM parameter")
@@ -519,7 +529,7 @@ func parseGlimmerATEM(body string, tool api.Tool) (string, api.ToolCallFunctionA
 
 		var paramType api.PropertyType
 		if tool.Function.Parameters.Properties != nil {
-			if property, ok := tool.Function.Parameters.Properties[paramName]; ok {
+			if property, ok := tool.Function.Parameters.Properties.Get(paramName); ok {
 				if len(property.AnyOf) > 0 {
 					for _, option := range property.AnyOf {
 						paramType = append(paramType, option.Type...)
@@ -529,7 +539,7 @@ func parseGlimmerATEM(body string, tool api.Tool) (string, api.ToolCallFunctionA
 				}
 			}
 		}
-		args[paramName] = parseValue(value, paramType)
+		args.Set(paramName, parseTypedToolValue(value, paramType))
 	}
 
 	return name, args, nil

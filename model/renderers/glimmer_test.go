@@ -51,14 +51,13 @@ func TestGlimmerRenderImages(t *testing.T) {
 }
 
 func TestGlimmerRenderATEMValues(t *testing.T) {
-	arguments := api.ToolCallFunctionArguments{
-		"text":     "keep  spaces",
-		"count":    3,
-		"enabled":  true,
-		"fallback": nil,
-		"items":    []any{"one", "two"},
-		"config":   map[string]any{"mode": "fast"},
-	}
+	arguments := api.NewToolCallFunctionArguments()
+	arguments.Set("text", "keep  spaces")
+	arguments.Set("count", 3)
+	arguments.Set("enabled", true)
+	arguments.Set("fallback", nil)
+	arguments.Set("items", []any{"one", "two"})
+	arguments.Set("config", map[string]any{"mode": "fast"})
 
 	got, err := (&GlimmerRenderer{}).Render([]api.Message{
 		{Role: "user", Content: "Run it."},
@@ -72,12 +71,12 @@ func TestGlimmerRenderATEMValues(t *testing.T) {
 
 	want := `<atem:function_calls>
 <atem:invoke name="tools.run">
-<atem:parameter name="config">{"mode": "fast"}</atem:parameter>
+<atem:parameter name="text">keep  spaces</atem:parameter>
 <atem:parameter name="count">3</atem:parameter>
 <atem:parameter name="enabled">true</atem:parameter>
 <atem:parameter name="fallback">null</atem:parameter>
 <atem:parameter name="items">["one", "two"]</atem:parameter>
-<atem:parameter name="text">keep  spaces</atem:parameter>
+<atem:parameter name="config">{"mode": "fast"}</atem:parameter>
 </atem:invoke>
 </atem:function_calls>`
 	if !strings.Contains(got, want) {
@@ -111,7 +110,7 @@ func TestGlimmerRenderReasoningStrength(t *testing.T) {
 }
 
 func TestGlimmerRenderToolResultName(t *testing.T) {
-	arguments := api.ToolCallFunctionArguments{}
+	arguments := api.NewToolCallFunctionArguments()
 	got, err := (&GlimmerRenderer{}).Render([]api.Message{
 		{Role: "assistant", ToolCalls: []api.ToolCall{{
 			ID:       "call_1",
@@ -138,7 +137,7 @@ func TestGlimmerRendererRegistered(t *testing.T) {
 	if rendererForName("glimmer") == nil {
 		t.Fatal("glimmer renderer is not registered")
 	}
-	if got := (&GlimmerRenderer{}).LeadingBOS(); got != glimmerBOS {
-		t.Fatalf("LeadingBOS() = %q, want %q", got, glimmerBOS)
+	if got := LeadingBOSForRenderer("glimmer"); got != glimmerBOS {
+		t.Fatalf("LeadingBOSForRenderer(glimmer) = %q, want %q", got, glimmerBOS)
 	}
 }

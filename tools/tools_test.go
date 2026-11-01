@@ -9,6 +9,29 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value (order-insensitive)
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests, order not preserved)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests, order not preserved)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
 func TestParser(t *testing.T) {
 	qwen, err := template.New("qwen").Parse(`{{if .ToolCalls}}<tool_call>{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}</tool_call>{{end}}`)
 	if err != nil {
@@ -44,7 +67,7 @@ func TestParser(t *testing.T) {
 				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"city"},
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"format": {
 							Type:        api.PropertyType{"string"},
 							Description: "The format to return the temperature in",
@@ -54,7 +77,7 @@ func TestParser(t *testing.T) {
 							Type:        api.PropertyType{"string"},
 							Description: "The city to get the temperature for",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -65,12 +88,12 @@ func TestParser(t *testing.T) {
 				Description: "Retrieve the current weather conditions for a given location",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the weather conditions for",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -95,12 +118,12 @@ func TestParser(t *testing.T) {
 				Description: "Get the address of a given location",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the address for",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -111,7 +134,7 @@ func TestParser(t *testing.T) {
 				Description: "Add two numbers",
 				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"a": {
 							Type:        api.PropertyType{"string"},
 							Description: "The first number to add",
@@ -120,7 +143,7 @@ func TestParser(t *testing.T) {
 							Type:        api.PropertyType{"string"},
 							Description: "The second number to add",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -157,9 +180,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "San Francisco",
-						},
+						}),
 					},
 				},
 			},
@@ -174,7 +197,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -189,9 +212,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "New York",
-						},
+						}),
 					},
 				},
 			},
@@ -213,19 +236,19 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city":   "London",
 							"format": "fahrenheit",
-						},
+						}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -240,19 +263,19 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city":   "London",
 							"format": "fahrenheit",
-						},
+						}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -267,17 +290,17 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city":   "London",
 							"format": "fahrenheit",
-						},
+						}),
 					},
 				},
 			},
@@ -292,16 +315,16 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -316,9 +339,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -347,9 +370,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -371,9 +394,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -453,18 +476,18 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "London",
-						},
+						}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -486,9 +509,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -528,9 +551,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -563,7 +586,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -591,14 +614,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index:     1,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -624,14 +647,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index:     1,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -648,7 +671,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -665,7 +688,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -687,9 +710,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_address",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "London",
-						},
+						}),
 					},
 				},
 			},
@@ -706,9 +729,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_address",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "London",
-						},
+						}),
 					},
 				},
 			},
@@ -725,10 +748,10 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "add",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"a": "5",
 							"b": "10",
-						},
+						}),
 					},
 				},
 			},
@@ -756,7 +779,7 @@ func TestParser(t *testing.T) {
 			}
 
 			for i, want := range tt.calls {
-				if diff := cmp.Diff(calls[i], want); diff != "" {
+				if diff := cmp.Diff(calls[i], want, argsComparer); diff != "" {
 					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
 				}
 			}
@@ -818,6 +841,24 @@ func TestDone(t *testing.T) {
 			tag:    "[",
 			buffer: []byte("[]"),
 			want:   true,
+		},
+		{
+			name:   "json close brace inside string",
+			tag:    "{",
+			buffer: []byte("{\"note\": \"a}b\""),
+			want:   false,
+		},
+		{
+			name:   "json complete with brace inside string",
+			tag:    "{",
+			buffer: []byte("{\"note\": \"a}b\"}"),
+			want:   true,
+		},
+		{
+			name:   "list close bracket inside string",
+			tag:    "[",
+			buffer: []byte("[{\"note\": \"x]y\"}"),
+			want:   false,
 		},
 	}
 
@@ -1316,221 +1357,7 @@ func TestFindArguments(t *testing.T) {
 			got, _ := findArguments(&api.Tool{Function: api.ToolFunction{Name: tt.tool}}, tt.buffer)
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
-				t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)
-			}
-		})
-	}
-}
-
-func TestConvertEscapeArgs(t *testing.T) {
-	tests := []struct {
-		name   string
-		buffer []byte
-		want   map[string]any
-	}{
-		{
-			name:   "no escape tokens",
-			buffer: []byte(`{"location": "London"}`),
-			want:   nil,
-		},
-		{
-			name:   "single string arg",
-			buffer: []byte(`{location:<escape>London<escape>}`),
-			want: map[string]any{
-				"location": "London",
-			},
-		},
-		{
-			name:   "multiple string args",
-			buffer: []byte(`{location:<escape>San Francisco<escape>,format:<escape>celsius<escape>}`),
-			want: map[string]any{
-				"location": "San Francisco",
-				"format":   "celsius",
-			},
-		},
-		{
-			name:   "boolean arg",
-			buffer: []byte(`{verbose:true,location:<escape>Tokyo<escape>}`),
-			want: map[string]any{
-				"verbose":  true,
-				"location": "Tokyo",
-			},
-		},
-		{
-			name:   "numeric arg",
-			buffer: []byte(`{count:42,location:<escape>Paris<escape>}`),
-			want: map[string]any{
-				"count":    float64(42),
-				"location": "Paris",
-			},
-		},
-		{
-			name:   "with surrounding context",
-			buffer: []byte(`call:get_weather{location:<escape>London<escape>}<end_function_call>`),
-			want: map[string]any{
-				"location": "London",
-			},
-		},
-		{
-			name:   "value with colon",
-			buffer: []byte(`{url:<escape>http://example.com<escape>}`),
-			want: map[string]any{
-				"url": "http://example.com",
-			},
-		},
-		{
-			name:   "empty args",
-			buffer: []byte(`{}<escape>ignored<escape>`),
-			want:   nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, _ := convertEscapeArgs(tt.buffer)
-			if diff := cmp.Diff(got, tt.want); diff != "" {
-				t.Errorf("convertEscapeArgs() mismatch (-got +want):\n%s", diff)
-			}
-		})
-	}
-}
-
-func TestFunctionGemmaParser(t *testing.T) {
-	functiongemma, err := template.New("functiongemma").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}
-<start_function_call>call:{{ .Function.Name }}{{ .Function.Arguments }}<end_function_call>{{end}}{{end}}`)
-	if err != nil {
-		t.Fatalf("Failed to parse template: %v", err)
-	}
-
-	tools := []api.Tool{
-		{
-			Type: "function",
-			Function: api.ToolFunction{
-				Name:        "get_weather",
-				Description: "Get weather for a location",
-				Parameters: api.ToolFunctionParameters{
-					Type:     "object",
-					Required: []string{"location"},
-					Properties: map[string]api.ToolProperty{
-						"location": {
-							Type:        api.PropertyType{"string"},
-							Description: "The city name",
-						},
-					},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: api.ToolFunction{
-				Name:        "search",
-				Description: "Search the web",
-				Parameters: api.ToolFunctionParameters{
-					Type: "object",
-					Properties: map[string]api.ToolProperty{
-						"query": {
-							Type:        api.PropertyType{"string"},
-							Description: "Search query",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	tests := []struct {
-		name    string
-		inputs  []string
-		content string
-		calls   []api.ToolCall
-	}{
-		{
-			name:    "single function call",
-			inputs:  []string{"<start_function_call>call:get_weather{location:<escape>London<escape>}<end_function_call>"},
-			content: "",
-			calls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_weather",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "London",
-						},
-					},
-				},
-			},
-		},
-		{
-			name:    "text before function call",
-			inputs:  []string{"Let me check. <start_function_call>call:get_weather{location:<escape>Tokyo<escape>}<end_function_call>"},
-			content: "Let me check. ",
-			calls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_weather",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "Tokyo",
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "incremental streaming",
-			inputs: []string{
-				"<start_function_call>",
-				"call:get_weather",
-				"{location:<escape>",
-				"San Francisco",
-				"<escape>}",
-				"<end_function_call>",
-			},
-			content: "",
-			calls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "get_weather",
-						Arguments: api.ToolCallFunctionArguments{
-							"location": "San Francisco",
-						},
-					},
-				},
-			},
-		},
-		{
-			name:    "no tool call - just text",
-			inputs:  []string{"Hello, how can I help?"},
-			content: "Hello, how can I help?",
-			calls:   nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(functiongemma, tools)
-
-			var calls []api.ToolCall
-			var content string
-			for _, input := range tt.inputs {
-				tcs, c := parser.Add(input)
-				calls = append(calls, tcs...)
-				content += c
-			}
-
-			if content != tt.content {
-				t.Errorf("Expected content %q, got %q", tt.content, content)
-			}
-
-			if len(calls) != len(tt.calls) {
-				t.Fatalf("Expected %d tool calls, got %d", len(tt.calls), len(calls))
-			}
-
-			for i, want := range tt.calls {
-				if diff := cmp.Diff(calls[i], want); diff != "" {
-					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
-				}
+				t.Errorf("findArguments() args mismatch (-got +want):\n%s", diff)
 			}
 		})
 	}

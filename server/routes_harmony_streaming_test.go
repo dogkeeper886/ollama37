@@ -14,7 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
@@ -26,21 +26,15 @@ func getTestTools() []api.Tool {
 			Function: api.ToolFunction{
 				Name:        "get_weather",
 				Description: "Get the current weather in a given location",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"location"},
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The city and state, e.g. San Francisco, CA",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -49,21 +43,15 @@ func getTestTools() []api.Tool {
 			Function: api.ToolFunction{
 				Name:        "calculate",
 				Description: "Calculate a mathematical expression",
-				Parameters: struct {
-					Type       string                      `json:"type"`
-					Defs       any                         `json:"$defs,omitempty"`
-					Items      any                         `json:"items,omitempty"`
-					Required   []string                    `json:"required"`
-					Properties map[string]api.ToolProperty `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"expression"},
-					Properties: map[string]api.ToolProperty{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"expression": {
 							Type:        api.PropertyType{"string"},
 							Description: "The mathematical expression to calculate",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -73,7 +61,7 @@ func getTestTools() []api.Tool {
 func createHarmonyTestModel(t *testing.T) (string, string) {
 	t.Helper()
 
-	return createBinFile(t, ggml.KV{
+	return createBinFile(t, gguftest.KV{
 		"general.architecture":          "gptoss",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -83,7 +71,7 @@ func createHarmonyTestModel(t *testing.T) (string, string) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -197,9 +185,9 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "San Francisco",
-								},
+								}),
 							},
 						},
 					},
@@ -223,9 +211,9 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name: "calculate",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"expression": "2+2",
-								},
+								}),
 							},
 						},
 					},
@@ -277,7 +265,7 @@ func TestChatHarmonyParserStreamingRealtime(t *testing.T) {
 					getGpuFn:        getGpuFn,
 					getSystemInfoFn: getSystemInfoFn,
 					waitForRecovery: 100 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+					loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}
@@ -428,7 +416,7 @@ func TestChatHarmonyParserStreamingSimple(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 100 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
@@ -610,7 +598,7 @@ func TestChatHarmonyParserStreaming(t *testing.T) {
 					getGpuFn:        getGpuFn,
 					getSystemInfoFn: getSystemInfoFn,
 					waitForRecovery: 250 * time.Millisecond,
-					loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+					loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 						req.successCh <- &runnerRef{
 							llama: &mock,
 						}

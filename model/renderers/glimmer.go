@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"reflect"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -120,7 +119,7 @@ func glimmerJSON(v any) (string, error) {
 	if err := encoder.Encode(v); err != nil {
 		return "", err
 	}
-	return string(addJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
+	return string(AddJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
 }
 
 func writeGlimmerToolDefinitions(sb *strings.Builder, tools []api.Tool) error {
@@ -256,10 +255,7 @@ func writeGlimmerATEM(sb *strings.Builder, call api.ToolCall) error {
 	sb.WriteString("<atem:function_calls>\n<atem:invoke name=\"")
 	sb.WriteString(call.Function.Name)
 	sb.WriteString("\">\n")
-	// The fork's arguments are a plain map; sorted keys keep the rendered prompt
-	// identical across turns, so the KV cache prefix stays reusable.
-	for _, name := range slices.Sorted(maps.Keys(call.Function.Arguments)) {
-		value := call.Function.Arguments[name]
+	for name, value := range call.Function.Arguments.All() {
 		sb.WriteString("<atem:parameter name=\"")
 		sb.WriteString(name)
 		sb.WriteString("\">")
@@ -370,4 +366,8 @@ func (r *GlimmerRenderer) Render(messages []api.Message, tools []api.Tool, think
 	sb.WriteString(glimmerStart)
 	sb.WriteString("assistant")
 	return sb.String(), nil
+}
+
+func (r *GlimmerRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, "low", "medium", "high", "max"}, Default: "high"}
 }

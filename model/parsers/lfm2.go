@@ -50,13 +50,27 @@ func (p *LFM2Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
-func (p *LFM2Parser) setInitialState(lastMessage *api.Message) {
+func (p *LFM2Parser) ThinkingClose() []string {
+	if p.state == LFM2LookingForThinking || p.state == LFM2CollectingThinking {
+		return []string{lfm2ThinkingCloseTag}
+	}
+	return nil
+}
+
+func (p *LFM2Parser) PreservedTokens() []string {
+	return []string{
+		lfm2ThinkingOpenTag,
+		lfm2ThinkingCloseTag,
+		lfm2ToolCallStartTag,
+		lfm2ToolCallEndTag,
+	}
+}
+
+func (p *LFM2Parser) setInitialState(lastMessage *api.Message, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
-	// Thinking is selected by parser name ("lfm2" vs "lfm2-thinking") at
-	// construction, matching the gemma4 pattern — the fork's Parser.Init carries
-	// no per-request think value.
-	thinkingEnabled := p.HasThinkingSupport()
+	// Check both model capability AND request preference
+	thinkingEnabled := p.HasThinkingSupport() && (thinkValue != nil && thinkValue.Bool())
 
 	if !thinkingEnabled {
 		p.state = LFM2CollectingContent
@@ -74,7 +88,7 @@ func (p *LFM2Parser) setInitialState(lastMessage *api.Message) {
 	p.state = LFM2LookingForThinking
 }
 
-func (p *LFM2Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *LFM2Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.toolNames = make(map[string]struct{}, len(tools))
 	p.callIndex = 0
 	p.hasTools = len(tools) > 0
@@ -83,7 +97,7 @@ func (p *LFM2Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool
 			p.toolNames[tool.Function.Name] = struct{}{}
 		}
 	}
-	p.setInitialState(lastMessage)
+	p.setInitialState(lastMessage, thinkValue)
 	return tools
 }
 
@@ -410,7 +424,7 @@ func (p *LFM2Parser) parsePythonStyleToolCalls(content string) ([]api.ToolCall, 
 		}
 
 		argsStr := content[parenIdx+1 : closeIdx]
-		args := api.ToolCallFunctionArguments{}
+		args := api.NewToolCallFunctionArguments()
 
 		if argsStr != "" {
 			if err := parsePythonArgs(argsStr, &args); err != nil {
@@ -515,7 +529,7 @@ func parsePythonArgs(argsStr string, args *api.ToolCallFunctionArguments) error 
 		if err != nil {
 			return err
 		}
-		(*args)[key] = value
+		args.Set(key, value)
 		i = next
 
 		// Optional trailing comma before next key/value.

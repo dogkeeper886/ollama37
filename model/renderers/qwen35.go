@@ -3,11 +3,10 @@ package renderers
 import (
 	"fmt"
 	"log/slog"
-	"maps"
-	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -182,10 +181,21 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 		return fmt.Errorf("system message cannot contain images")
 	}
 
-	// Upstream also rejects transcripts with no user query, as the Jinja
-	// template does. The fork's chatPrompt fits the context window by rendering
-	// trailing message suffixes and fails on the first render error, so a
-	// suffix like [assistant(tool_calls), tool] must render.
+	foundUserQuery := false
+	for _, message := range messages {
+		if message.Role != "user" {
+			continue
+		}
+		content, _ := r.renderContent(message, 0)
+		content = strings.TrimSpace(content)
+		if !(strings.HasPrefix(content, "<tool_response>") && strings.HasSuffix(content, "</tool_response>")) {
+			foundUserQuery = true
+			break
+		}
+	}
+	if !foundUserQuery {
+		return fmt.Errorf("no user query found in messages")
+	}
 
 	return nil
 }
@@ -311,10 +321,9 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 					}
 
 					sb.WriteString("<tool_call>\n<function=" + toolCall.Function.Name + ">\n")
-					// sorted keys: an identical prompt across turns keeps the KV cache prefix reusable
-					for _, name := range slices.Sorted(maps.Keys(toolCall.Function.Arguments)) {
+					for name, value := range toolCall.Function.Arguments.All() {
 						sb.WriteString("<parameter=" + name + ">\n")
-						sb.WriteString(formatToolCallArgument(toolCall.Function.Arguments[name]))
+						sb.WriteString(formatToolCallArgument(value))
 						sb.WriteString("\n</parameter>\n")
 					}
 					sb.WriteString("</function>\n</tool_call>")
@@ -349,4 +358,11 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 	}
 
 	return sb.String(), nil
+}
+
+func (r *Qwen35Renderer) Thinking() *model.Thinking {
+	if r.variant == qwen35Renderer38 {
+		return &model.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "xhigh"}
+	}
+	return &model.Thinking{Values: []any{false, true}, Default: r.isThinking}
 }

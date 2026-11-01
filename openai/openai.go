@@ -3,13 +3,13 @@ package openai
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"slices"
 	"strings"
@@ -18,8 +18,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
 )
-
-var finishReasonToolCalls = "tool_calls"
 
 type Error struct {
 	Message string  `json:"message"`
@@ -41,28 +39,49 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
+// Delta is used in streaming chunk responses. All fields use omitempty so
+// that a finish chunk produces a truly empty delta `{}` matching the OpenAI spec.
+type Delta struct {
+	Role      string     `json:"role,omitempty"`
+	Content   any        `json:"content,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+type ChoiceLogprobs struct {
+	Content []api.Logprob `json:"content"`
+}
+
 type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason *string `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Message      Message         `json:"message"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type ChunkChoice struct {
-	Index        int     `json:"index"`
-	Delta        Message `json:"delta"`
-	FinishReason *string `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Delta        Delta           `json:"delta"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
 type CompleteChunkChoice struct {
-	Text         string  `json:"text"`
-	Index        int     `json:"index"`
-	FinishReason *string `json:"finish_reason"`
+	Text         string          `json:"text"`
+	Index        int             `json:"index"`
+	FinishReason *string         `json:"finish_reason"`
+	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
+}
+
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
 }
 
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int                  `json:"prompt_tokens"`
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	CompletionTokens    int                  `json:"completion_tokens"`
+	TotalTokens         int                  `json:"total_tokens"`
 }
 
 type ResponseFormat struct {
@@ -105,7 +124,23 @@ type ChatCompletionRequest struct {
 	Tools            []api.Tool      `json:"tools"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
+	Logprobs         *bool           `json:"logprobs"`
+	TopLogprobs      int             `json:"top_logprobs"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	// Ollama extension: without it an OpenAI-API client cannot release a model.
+	KeepAlive *api.Duration `json:"keep_alive,omitempty"`
+}
+
+// Timings reports server-side inference performance metrics.
+type Timings struct {
+	PromptN             int     `json:"prompt_n"`
+	PromptMS            float64 `json:"prompt_ms"`
+	PromptPerTokenMS    float64 `json:"prompt_per_token_ms"`
+	PromptPerSecond     float64 `json:"prompt_per_second"`
+	PredictedN          int     `json:"predicted_n"`
+	PredictedMS         float64 `json:"predicted_ms"`
+	PredictedPerTokenMS float64 `json:"predicted_per_token_ms"`
+	PredictedPerSecond  float64 `json:"predicted_per_second"`
 }
 
 type ChatCompletion struct {
@@ -116,6 +151,7 @@ type ChatCompletion struct {
 	SystemFingerprint string         `json:"system_fingerprint"`
 	Choices           []Choice       `json:"choices"`
 	Usage             Usage          `json:"usage,omitempty"`
+	Timings           *Timings       `json:"timings,omitempty"`
 	DebugInfo         *api.DebugInfo `json:"_debug_info,omitempty"`
 }
 
@@ -127,6 +163,7 @@ type ChatCompletionChunk struct {
 	SystemFingerprint string        `json:"system_fingerprint"`
 	Choices           []ChunkChoice `json:"choices"`
 	Usage             *Usage        `json:"usage,omitempty"`
+	Timings           *Timings      `json:"timings,omitempty"`
 }
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
@@ -143,6 +180,7 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
+	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
 }
 
@@ -154,6 +192,7 @@ type Completion struct {
 	SystemFingerprint string                `json:"system_fingerprint"`
 	Choices           []CompleteChunkChoice `json:"choices"`
 	Usage             Usage                 `json:"usage,omitempty"`
+	Timings           *Timings              `json:"timings,omitempty"`
 }
 
 type CompletionChunk struct {
@@ -164,6 +203,7 @@ type CompletionChunk struct {
 	Model             string                `json:"model"`
 	SystemFingerprint string                `json:"system_fingerprint"`
 	Usage             *Usage                `json:"usage,omitempty"`
+	Timings           *Timings              `json:"timings,omitempty"`
 }
 
 type ToolCall struct {
@@ -222,27 +262,49 @@ func NewError(code int, message string) ErrorResponse {
 
 // ToUsage converts an api.ChatResponse to Usage
 func ToUsage(r api.ChatResponse) Usage {
-	return Usage{
+	usage := Usage{
 		PromptTokens:     r.Metrics.PromptEvalCount,
 		CompletionTokens: r.Metrics.EvalCount,
 		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
+	if r.Metrics.PromptEvalCachedCount != nil {
+		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
+	}
+	return usage
 }
 
-func toolCallId() string {
-	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+// ToTimings converts api.Metrics to Timings
+func ToTimings(m api.Metrics) *Timings {
+	if m.PromptEvalCount == 0 && m.PromptEvalDuration == 0 && m.EvalCount == 0 && m.EvalDuration == 0 {
+		return nil
 	}
-	return "call_" + strings.ToLower(string(b))
+
+	promptMS := float64(m.PromptEvalDuration.Milliseconds())
+	predictedMS := float64(m.EvalDuration.Milliseconds())
+	return &Timings{
+		PromptN:             m.PromptEvalCount,
+		PromptMS:            promptMS,
+		PromptPerTokenMS:    safeDiv(promptMS, float64(m.PromptEvalCount)),
+		PromptPerSecond:     safeDiv(float64(m.PromptEvalCount)*1000, promptMS),
+		PredictedN:          m.EvalCount,
+		PredictedMS:         predictedMS,
+		PredictedPerTokenMS: safeDiv(predictedMS, float64(m.EvalCount)),
+		PredictedPerSecond:  safeDiv(float64(m.EvalCount)*1000, predictedMS),
+	}
+}
+
+func safeDiv(a, b float64) float64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
 }
 
 // ToToolCalls converts api.ToolCall to OpenAI ToolCall format
 func ToToolCalls(tc []api.ToolCall) []ToolCall {
 	toolCalls := make([]ToolCall, len(tc))
 	for i, tc := range tc {
-		toolCalls[i].ID = toolCallId()
+		toolCalls[i].ID = tc.ID
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
 		toolCalls[i].Index = tc.Function.Index
@@ -261,6 +323,12 @@ func ToToolCalls(tc []api.ToolCall) []ToolCall {
 // ToChatCompletion converts an api.ChatResponse to ChatCompletion
 func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
+
+	var logprobs *ChoiceLogprobs
+	if len(r.Logprobs) > 0 {
+		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
+	}
+
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -271,7 +339,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			Index:   0,
 			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
-				if len(toolCalls) > 0 {
+				if reason == "stop" && len(toolCalls) > 0 {
 					reason = "tool_calls"
 				}
 				if len(reason) > 0 {
@@ -279,43 +347,119 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 				}
 				return nil
 			}(r.DoneReason),
+			Logprobs: logprobs,
 		}}, Usage: ToUsage(r),
 		DebugInfo: r.DebugInfo,
 	}
 }
 
-// ToChunk converts an api.ChatResponse to ChatCompletionChunk
-func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, includeRole bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
+
+	var logprobs *ChoiceLogprobs
+	if len(r.Logprobs) > 0 {
+		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
+	}
+
+	var role string
+	if includeRole {
+		role = "assistant"
+	}
+
+	// Content is typed as any with omitempty: nil is omitted, "" is kept.
+	// Use the string value from the response so empty-string content (e.g. first
+	// chunk or reasoning-only) is explicitly serialized as "content":"".
+	var content any = r.Message.Content
+
+	// Stamp the chunk with the response's timestamp; OpenAI reuses one created
+	// value across a stream. Fall back to now when the response carries none
+	// (e.g. synthetic responses).
+	created := r.CreatedAt.Unix()
+	if r.CreatedAt.IsZero() {
+		created = time.Now().Unix()
+	}
+
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
-		Created:           time.Now().Unix(),
+		Created:           created,
 		Model:             r.Model,
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
-			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
-			FinishReason: func(reason string) *string {
-				if len(reason) > 0 {
-					if toolCallSent || len(toolCalls) > 0 {
-						return &finishReasonToolCalls
-					}
-					return &reason
-				}
-				return nil
-			}(r.DoneReason),
+			Index:    0,
+			Delta:    Delta{Role: role, Content: content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
+			Logprobs: logprobs,
+		}},
+	}
+}
+
+// ToStreamChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
+// includeRole controls whether the "role" field appears in the delta (should be true
+// only for the first chunk in a stream, matching the OpenAI spec).
+func ToStreamChunks(id string, r api.ChatResponse, includeRole bool) []ChatCompletionChunk {
+	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
+	if !hasMixedResponse {
+		return []ChatCompletionChunk{toChunk(id, r, includeRole)}
+	}
+
+	reasoningChunk := toChunk(id, r, includeRole)
+	// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
+	reasoningChunk.Choices[0].Delta.Content = nil
+	reasoningChunk.Choices[0].Delta.ToolCalls = nil
+
+	contentOrToolCallsChunk := toChunk(id, r, false)
+	// Keep both split chunks on the same timestamp since they represent one logical emission.
+	contentOrToolCallsChunk.Created = reasoningChunk.Created
+	contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
+	contentOrToolCallsChunk.Choices[0].Logprobs = nil
+
+	return []ChatCompletionChunk{
+		reasoningChunk,
+		contentOrToolCallsChunk,
+	}
+}
+
+// FinishChunk creates a dedicated finish-reason chunk with an empty delta,
+// matching the OpenAI spec where finish_reason is sent on its own chunk.
+func FinishChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+	// Only remap known terminal reasons; pass anything else through untouched.
+	// tool_calls only overrides stop — an unfinished or unknown done reason
+	// must not be relabeled tool_calls.
+	reason := cmp.Or(r.DoneReason, "stop")
+	if reason == "stop" && toolCallSent {
+		reason = "tool_calls"
+	}
+	// Stamp the chunk with the completion's timestamp like OpenAI does; fall
+	// back to now when the response carries none (e.g. synthetic responses).
+	created := r.CreatedAt.Unix()
+	if r.CreatedAt.IsZero() {
+		created = time.Now().Unix()
+	}
+	return ChatCompletionChunk{
+		Id:                id,
+		Object:            "chat.completion.chunk",
+		Created:           created,
+		Model:             r.Model,
+		SystemFingerprint: "fp_ollama",
+		Choices: []ChunkChoice{{
+			Index:        0,
+			Delta:        Delta{},
+			FinishReason: &reason,
 		}},
 	}
 }
 
 // ToUsageGenerate converts an api.GenerateResponse to Usage
 func ToUsageGenerate(r api.GenerateResponse) Usage {
-	return Usage{
+	usage := Usage{
 		PromptTokens:     r.Metrics.PromptEvalCount,
 		CompletionTokens: r.Metrics.EvalCount,
 		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
+	if r.Metrics.PromptEvalCachedCount != nil {
+		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
+	}
+	return usage
 }
 
 // ToCompletion converts an api.GenerateResponse to Completion
@@ -365,11 +509,16 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 func ToListCompletion(r api.ListResponse) ListCompletion {
 	var data []Model
 	for _, m := range r.Models {
+		id := m.Model
+		if id == "" {
+			id = m.Name
+		}
+
 		data = append(data, Model{
-			Id:      m.Name,
+			Id:      id,
 			Object:  "model",
 			Created: m.ModifiedAt.Unix(),
-			OwnedBy: model.ParseName(m.Name).Namespace,
+			OwnedBy: model.ParseName(id).Namespace,
 		})
 	}
 
@@ -430,8 +579,45 @@ func ToModel(r api.ShowResponse, m string) Model {
 	}
 }
 
-// FromChatRequest converts a ChatCompletionRequest to api.ChatRequest
-func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
+// ThinkingFromReasoningEffort preserves model-defined names when metadata is present.
+// Boolean-only models retain the OpenAI on/off controls; models without metadata
+// retain the legacy effort aliases.
+func ThinkingFromReasoningEffort(effort string, thinking ...*model.Thinking) (*api.ThinkValue, error) {
+	switch effort {
+	case "":
+		return nil, nil
+	case "none":
+		return &api.ThinkValue{Value: false}, nil
+	}
+	requestedEffort := effort
+	switch effort {
+	case "minimal":
+		effort = "low"
+	case "xhigh", "ultra":
+		effort = "max"
+	}
+	think := &api.ThinkValue{Value: effort}
+	err := api.ValidateLegacyThinking(think)
+	if len(thinking) > 0 && thinking[0].Valid() {
+		if err == nil && thinking[0].Supports(true) {
+			for _, value := range thinking[0].Values {
+				if _, named := value.(string); named {
+					return &api.ThinkValue{Value: requestedEffort}, nil
+				}
+			}
+			return &api.ThinkValue{Value: true}, nil
+		}
+		return &api.ThinkValue{Value: requestedEffort}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("invalid reasoning value: %q (must be \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\", \"ultra\", \"max\", or \"none\")", requestedEffort)
+	}
+	return think, nil
+}
+
+// FromChatRequest converts a ChatCompletionRequest to api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		toolName := ""
@@ -441,14 +627,19 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
 			}
 		}
-		switch content := msg.Content.(type) {
+		content := msg.Content
+		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
+			content = ""
+		}
+		switch content := content.(type) {
 		case string:
 			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
+			start := len(messages)
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -473,34 +664,47 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					types := []string{"jpeg", "jpg", "png", "webp"}
-					valid := false
-					// support blank mime type to match api/chat taking just unadorned base64
-					if strings.HasPrefix(url, "data:;base64,") {
-						url = strings.TrimPrefix(url, "data:;base64,")
-						valid = true
-					}
-					for _, t := range types {
-						prefix := "data:image/" + t + ";base64,"
-						if strings.HasPrefix(url, prefix) {
-							url = strings.TrimPrefix(url, prefix)
-							valid = true
-							break
-						}
-					}
-
-					if !valid {
-						return nil, errors.New("invalid image input")
-					}
-
-					img, err := base64.StdEncoding.DecodeString(url)
+					img, err := decodeImageURL(url)
 					if err != nil {
-						return nil, errors.New("invalid message format")
+						return nil, err
 					}
 
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+				case "input_audio":
+					audioMap, ok := data["input_audio"].(map[string]any)
+					if !ok {
+						return nil, errors.New("invalid input_audio format")
+					}
+					b64Data, ok := audioMap["data"].(string)
+					if !ok {
+						return nil, errors.New("invalid input_audio format: missing data")
+					}
+					audioBytes, err := base64.StdEncoding.DecodeString(b64Data)
+					if err != nil {
+						return nil, fmt.Errorf("invalid input_audio base64 data: %w", err)
+					}
+					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{audioBytes}})
 				default:
 					return nil, errors.New("invalid message format")
+				}
+			}
+			// a tool message is a single result, so every message built from it
+			// keeps the tool call it answers. text parts are merged into one
+			// message; parts with images stay split so each image keeps its
+			// position among the text
+			if strings.ToLower(msg.Role) == "tool" {
+				parts := messages[start:]
+				if slices.ContainsFunc(parts, func(m api.Message) bool { return len(m.Images) > 0 }) {
+					for i := range parts {
+						parts[i].ToolName = toolName
+						parts[i].ToolCallID = msg.ToolCallID
+					}
+				} else if len(parts) > 0 || toolName != "" || msg.ToolCallID != "" {
+					var sb strings.Builder
+					for _, part := range parts {
+						sb.WriteString(part.Content)
+					}
+					messages = append(messages[:start], api.Message{Role: msg.Role, Content: sb.String(), ToolName: toolName, ToolCallID: msg.ToolCallID})
 				}
 			}
 			// since we might have added multiple messages above, if we have tools
@@ -511,9 +715,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, err
 				}
 				messages[len(messages)-1].ToolCalls = toolCalls
-				if toolName != "" {
-					messages[len(messages)-1].ToolName = toolName
-				}
+				messages[len(messages)-1].ToolName = toolName
+				messages[len(messages)-1].ToolCallID = msg.ToolCallID
 				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:
@@ -522,15 +725,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				return nil, fmt.Errorf("invalid message content type: %T", content)
 			}
 
-			toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
-			for i, tc := range msg.ToolCalls {
-				toolCalls[i].Function.Name = tc.Function.Name
-				err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
-				if err != nil {
-					return nil, errors.New("invalid tool call arguments")
-				}
+			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
+			if err != nil {
+				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls})
+			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
 		}
 	}
 
@@ -590,7 +789,6 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	var think *api.ThinkValue
 	var effort string
 
 	if r.Reasoning != nil {
@@ -599,16 +797,9 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		effort = *r.ReasoningEffort
 	}
 
-	if effort != "" {
-		if !slices.Contains([]string{"high", "medium", "low", "none"}, effort) {
-			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", or \"none\")", effort)
-		}
-
-		if effort == "none" {
-			think = &api.ThinkValue{Value: false}
-		} else {
-			think = &api.ThinkValue{Value: effort}
-		}
+	think, err := ThinkingFromReasoningEffort(effort, thinking...)
+	if err != nil {
+		return nil, err
 	}
 
 	return &api.ChatRequest{
@@ -619,7 +810,10 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Stream:          &r.Stream,
 		Tools:           r.Tools,
 		Think:           think,
+		Logprobs:        r.Logprobs != nil && *r.Logprobs,
+		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
+		KeepAlive:       r.KeepAlive,
 	}, nil
 }
 
@@ -637,10 +831,44 @@ func nameFromToolCallID(messages []Message, toolCallID string) string {
 	return ""
 }
 
+// decodeImageURL decodes a base64 data URI into raw image bytes.
+func decodeImageURL(url string) (api.ImageData, error) {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return nil, errors.New("image URLs are not currently supported, please use base64 encoded data instead")
+	}
+
+	types := []string{"jpeg", "jpg", "png", "webp"}
+
+	// Support blank mime type to match /api/chat's behavior of taking just unadorned base64
+	if strings.HasPrefix(url, "data:;base64,") {
+		url = strings.TrimPrefix(url, "data:;base64,")
+	} else {
+		valid := false
+		for _, t := range types {
+			prefix := "data:image/" + t + ";base64,"
+			if strings.HasPrefix(url, prefix) {
+				url = strings.TrimPrefix(url, prefix)
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, errors.New("invalid image input")
+		}
+	}
+
+	img, err := base64.StdEncoding.DecodeString(url)
+	if err != nil {
+		return nil, errors.New("invalid image input")
+	}
+	return img, nil
+}
+
 // FromCompletionToolCall converts OpenAI ToolCall format to api.ToolCall
 func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 	apiToolCalls := make([]api.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
+		apiToolCalls[i].ID = tc.ID
 		apiToolCalls[i].Function.Name = tc.Function.Name
 		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
 		if err != nil {
@@ -694,12 +922,44 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["top_p"] = 1.0
 	}
 
+	var logprobs bool
+	var topLogprobs int
+	if r.Logprobs != nil && *r.Logprobs > 0 {
+		logprobs = true
+		topLogprobs = *r.Logprobs
+	}
+
 	return api.GenerateRequest{
 		Model:           r.Model,
 		Prompt:          r.Prompt,
 		Options:         options,
 		Stream:          &r.Stream,
 		Suffix:          r.Suffix,
+		Logprobs:        logprobs,
+		TopLogprobs:     topLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
+}
+
+// TranscriptionResponse is the response format for /v1/audio/transcriptions
+// and /v1/audio/translations.
+type TranscriptionResponse struct {
+	Text string `json:"text"`
+}
+
+// TranscriptionVerboseResponse is the verbose_json response format, with one
+// segment per transcribed clip.
+type TranscriptionVerboseResponse struct {
+	Task     string                 `json:"task"`
+	Language string                 `json:"language,omitempty"`
+	Duration float64                `json:"duration"`
+	Text     string                 `json:"text"`
+	Segments []TranscriptionSegment `json:"segments"`
+}
+
+type TranscriptionSegment struct {
+	ID    int     `json:"id"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Text  string  `json:"text"`
 }
