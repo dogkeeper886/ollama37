@@ -18,6 +18,7 @@ CMake-gated off and filed as an issue, keeping the K80 build green.
 | 1001 | `1001-k80-clock-pinning.patch` | #587 | Autoboost clock filler for multi-die K80 decode (`clock-k80.cu`) |
 | 1002 | `1002-kepler-cuda-graphs.patch` | #573 | Keep CUDA graphs on Kepler (upstream gates them to Ampere+) |
 | 1003 | `1003-fa-guard-cuda11.patch` | #385 | Disable MMA_F16 FA under CUDA 11.4 for cc >= 7.5 (NaN); Volta keeps a working path |
+| 1004 | `1004-cpu-variant-toolchain-guards.patch` | sync | Guard cooperlake/zen4/alderlake/sapphirerapids CPU backends behind compiler/assembler feature checks (need GCC 11 + binutils 2.36); the CUDA 11.4 pin's GCC 10 skips them like upstream's POWER11/z17 pattern |
 
 ## Deferred (follow-up commits, same numbering)
 
@@ -67,10 +68,20 @@ cmake -DPATCH_DIR=$PWD/../llama/compat-k80 -DPATCH_LABEL=compat-k80 -P ../cmake/
 # compile-check CUDA 11.4 + sm_37:
 docker run --rm -v $PWD:/work -w /work kilo-compilecheck:cuda11.4 sh -c \
   'cmake -B b -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=37 -DGGML_CCACHE=OFF . && cmake --build b --target ggml-cuda -j 8'
+
+# compile-check the CPU preset under GCC 10 (patch 1004). llama/compat side
+# sources are wired by ollama's llama/server/CMakeLists.txt, not by the
+# patches, so replicate that here (copy llama-ollama-compat*.{cpp,h} into
+# src/, target_sources(llama ...) after add_library(llama), and add src/ to
+# mtmd's includes) before building target llama-server:
+docker run --rm -v $PWD:/work -w /work kilo-compilecheck:gcc10 sh -c \
+  'cmake -B bc -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DBUILD_SHARED_LIBS=ON -DGGML_CCACHE=OFF . && cmake --build bc --target llama-server -j 8'
 ```
 
 Regenerating a patch after editing the scratch tree:
 `git add -N <new files> && git diff <base-commit> > ../llama/compat-k80/NNNN-*.patch`
 
 Status: 1000–1003 compile-verified together (b11963 + llama/compat + all four)
-under nvcc 11.4.3 / sm_37 — `ggml-cuda` target green.
+under nvcc 11.4.3 / sm_37 — `ggml-cuda` target green. 1004 compile-verified
+with the CPU preset (`GGML_CPU_ALL_VARIANTS`, llama-server + llama-quantize)
+under GCC 10.3 — the four guarded variants are skipped, all others build.
