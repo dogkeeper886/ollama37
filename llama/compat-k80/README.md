@@ -20,6 +20,7 @@ CMake-gated off and filed as an issue, keeping the K80 build green.
 | 1003 | `1003-fa-guard-cuda11.patch` | #385 | Disable MMA_F16 FA under CUDA 11.4 for cc >= 7.5 (NaN); Volta keeps a working path |
 | 1004 | `1004-cpu-variant-toolchain-guards.patch` | sync | Guard cooperlake/zen4/alderlake/sapphirerapids CPU backends behind compiler/assembler feature checks (need GCC 11 + binutils 2.36); the CUDA 11.4 pin's GCC 10 skips them like upstream's POWER11/z17 pattern |
 | 1005 | `1005-cublas-bf16-pre-volta.patch` | sync | Pin the cuBLAS compute type to F32 on pre-Volta NVIDIA: the BF16 branch keeps `GGML_TYPE_BF16` for small matrices, and `cublasGemmEx(CUDA_R_16BF)` needs cc >= 8.0 → `CUBLAS_STATUS_ARCH_MISMATCH` (repro: `gemma4:e4b` on K80 aborted llama-server) |
+| 1006 | `1006-cuda-arch-list-from-cmake.patch` | sync | nvcc < 11.5 never defines `__CUDA_ARCH_LIST__`, so `system_info` carried no `CUDA : ARCHS` and ollama disabled GPU/arch filtering (startup WARN, unmatched GPUs not filtered). Emit the list from `CMAKE_CUDA_ARCHITECTURES` in the same 3-digit form |
 
 ## Deferred (follow-up commits, same numbering)
 
