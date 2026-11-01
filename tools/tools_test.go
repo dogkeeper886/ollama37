@@ -1424,6 +1424,37 @@ func TestConvertEscapeArgs(t *testing.T) {
 			buffer: []byte(`{}<escape>ignored<escape>`),
 			want:   nil,
 		},
+		{
+			// Model output is untrusted: an unterminated escape must terminate
+			// the scan without panicking and without inventing arguments.
+			name:   "unterminated escape",
+			buffer: []byte(`{location:<escape>London`),
+			want:   nil,
+		},
+		{
+			name:   "unterminated escape with closing brace",
+			buffer: []byte(`{location:<escape>London}`),
+			want:   nil,
+		},
+		{
+			name:   "brace inside escape does not close the block",
+			buffer: []byte(`{tmpl:<escape>{a:{b}}<escape>}`),
+			want: map[string]any{
+				"tmpl": "{a:{b}}",
+			},
+		},
+		{
+			name:   "key without colon stops parsing",
+			buffer: []byte(`{location<escape>x<escape>}`),
+			want:   nil,
+		},
+		{
+			name:   "large value does not panic",
+			buffer: []byte(`{text:<escape>` + strings.Repeat("x", 64*1024) + `<escape>}`),
+			want: map[string]any{
+				"text": strings.Repeat("x", 64*1024),
+			},
+		},
 	}
 
 	for _, tt := range tests {
