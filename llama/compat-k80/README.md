@@ -33,15 +33,18 @@ CMake-gated off and filed as an issue, keeping the K80 build green.
 
 ## Absorbed by b11963 / obsolete under the llama-server engine (do NOT port)
 
-- BF16 cc >= 8.0 gate → `fast_bf16_hardware_available()` upstream.
+- BF16 cc >= 8.0 gate for the **kernels** → `fast_bf16_hardware_available()` upstream.
+  This does not cover the cuBLAS compute type, where BF16 GEMM also needs cc >= 8.0 —
+  that layer is patch 1005.
 - VMM granularity alignment → upstream aligns `reserve_size` to
   `vmm_granularity`.
 - Patch 0028 CUDA spin scheduling → upstream (SM121 spin).
 - Patches 0033/0034 lfm2 → b11963 native lfm2/lfm2moe.
 - Patch 0024 device reset + #509 + 04028f51 ghost pruning → the ghost came
   from the Go ggml engine touching unused devices; that engine is gone.
-  Re-verify via `/api/metrics` `ghost` flag on sm37 (Phase 5); reintroduce
-  here only if ghosts reappear.
+  The new engine still opens a CUDA context (~112 MB on a K80) per device for
+  discovery, so `/api/metrics` only flags `ghost` while a model is loaded
+  (server/metrics.go); reintroduce the reset only if a real ghost reappears.
 - Patches 0016/0019/0021/0022/0029 → embedded-runner/Windows infra, gone
   with the old engine.
 - Model architectures (qwen3.5/DeltaNet, gemma4, lfm2) → native in b11963.
@@ -49,6 +52,18 @@ CMake-gated off and filed as an issue, keeping the K80 build green.
   (`ampere_mma_available` false on cc 370) and falls through to the pure-FP32
   `gated_delta_net_cuda` step kernel (no wmma/ldmatrix/cp.async/bf16) — no
   patch needed. Re-confirm at Phase 5/6 on sm37.
+
+## Known limitations (accepted)
+
+- **1001 host flag across two devices.** `k80_fill_prev` is a plain static
+  pointer read/written from `graph_compute`; two K80 dies computing at the
+  same time race on it. Benign in practice (one store per launch, the value
+  is a context that outlives the call) and inherited from the fork-era patch;
+  an atomic would remove the formal UB but is not worth re-generating a
+  runtime-verified patch for. Revisit if a TSan-style audit lands here.
+- **1005 ignores `GGML_CUDA_CUBLAS_COMPUTE_TYPE` on pre-Volta.** The pin is a
+  hardware-safety guard (BF16 GEMM needs cc >= 8.0), so it deliberately wins
+  over the debug override. Set `GGML_CUDA_CUBLAS_COMPUTE_TYPE` on Volta+ only.
 
 ## Scratch verification (no CUDA 11.4 on the workstation)
 

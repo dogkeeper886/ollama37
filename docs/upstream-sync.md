@@ -91,12 +91,15 @@ Rules:
 Adding a patch:
 
 ```sh
-# scratch tree at the pinned ref
+# scratch tree at the pinned ref, sibling of llama/
 git clone --depth 1 --branch "$(cat LLAMA_CPP_VERSION)" https://github.com/ggml-org/llama.cpp wc
 cd wc
+# The loop is one-shot: plain `git apply` fails on a tree where the patches
+# are already applied. Start from a fresh clone (or use --3way) when re-running.
 for p in ../llama/compat/*.patch ../llama/compat-k80/1*.patch; do git apply "$p"; done
 git commit -am base            # freeze the chain as the diff base
 # ... edit the source ...
+# The diff base is this scratch repo, so run git from inside wc/:
 git diff > ../llama/compat-k80/1NNN-<slug>.patch
 ```
 
@@ -140,8 +143,11 @@ exist because of them.
 - The payload is **two builds**, as upstream's root Dockerfile does: the `cpu` preset
   installs `llama-server` and the core libraries to `dist/lib/ollama/`, the CUDA preset
   installs the backend and bundled CUDA runtime to `dist/lib/ollama/cuda_v11/`.
-- `cmake --build <dir> --preset <name>` resolves build presets from the *repository root*
-  `CMakePresets.json`; pass targets instead (`--target llama-server --target ggml-cuda`).
+- `cmake --build <dir> --preset <name>` resolves presets from the **current working
+  directory**, not from `<dir>`. From the repo root only the root presets exist
+  (`Default`, `MLX Metal`), so the build fails; the Dockerfiles pass targets instead
+  (`--target llama-server --target llama-quantize` for `cpu`, `--target ggml-cuda` for
+  `llama_cuda_v11_linux`).
 - Builder pins stay: CUDA 11.4, GCC 10, CMake 4. Only Go tracks upstream's `go.mod`.
 
 ## 7. Validation gates

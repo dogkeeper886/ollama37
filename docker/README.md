@@ -11,7 +11,7 @@ This Docker build system uses a multi-stage architecture to build and run Ollama
    - CUDA 11.4 toolkit (required for Tesla K80)
    - GCC 10 (built from source, required by CUDA 11.4)
    - CMake 4.0 (built from source)
-   - Go 1.25.3
+   - Go 1.26.10
 
 2. **Runtime Image** (`runtime/Dockerfile`) - Multi-stage build
    - **Build stage**: Compile C/C++/CUDA libraries and Go binary in builder image
@@ -115,7 +115,7 @@ docker exec ollama37 ollama run gemma3:4b "Hello!"
 ```
 docker/
 ├── builder/
-│   └── Dockerfile          # Base image: CUDA 11.4, GCC 10, CMake 4, Go 1.25.3
+│   └── Dockerfile          # Base image: CUDA 11.4, GCC 10, CMake 4, Go 1.26.10
 ├── runtime/
 │   ├── Dockerfile          # Multi-stage: build in builder, ship slim runtime (GitHub source)
 │   └── Dockerfile.local    # Multi-stage: same as above but uses local source code
@@ -134,7 +134,7 @@ docker/
 - CUDA 11.4 toolkit (compilation only, no driver)
 - GCC 10 from source (~60 min build time)
 - CMake 4.0 from source (~8 min build time)
-- Go 1.25.3 binary
+- Go 1.26.10 binary
 - All build dependencies
 
 **Build time:** ~90 minutes (first time), cached thereafter

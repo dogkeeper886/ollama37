@@ -6,9 +6,9 @@ index fe001a0..27218b2 100644
          ggml_add_cpu_backend_variant(cannonlake         SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI)
          ggml_add_cpu_backend_variant(cascadelake        SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VNNI)
          ggml_add_cpu_backend_variant(icelake            SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI)
-+        # ollama37: alderlake/sapphirerapids need -mavxvnni/-mamx-* (GCC 11+),
-+        # and AVX512_BF16 variants need an assembler that knows vdpbf16ps
-+        # (binutils 2.36+). Guard like the POWER11/z17 variants below so older
++        # ollama37: alderlake/sapphirerapids need -mavxvnni/-mamx-* (GCC 11+);
++        # AVX512_BF16 variants need GCC 11 intrinsics and binutils 2.36
++        # (vdpbf16ps). Guard like the POWER11/z17 variants below so older
 +        # toolchains (the CUDA 11.4 pin's GCC 10) skip them instead of failing.
 +        include(CheckCXXSourceCompiles)
 +        set(_bf16_test "#include <immintrin.h>\nint main() { __m512 a = _mm512_set1_ps(1.0f); __m256i b = _mm256_set1_epi16(2); return (int)_mm512_reduce_add_ps(_mm512_dfp32_bf16_ps(a, b)) ; }")
