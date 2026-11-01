@@ -126,8 +126,10 @@ Ollama37 is split into two Docker images so the thing you run stays small:
 
 - **`ollama37-builder` (~15 GB)** — the build environment only: CUDA 11.4 toolkit, GCC 10
   and CMake 4 (compiled from source, ~90 min the first time), and Go. It is never shipped.
-- **`ollama37` (~1 GB)** — a multi-stage build. The code is compiled *inside* the builder
-  with the `CUDA 11 K80` preset (native CUBIN for `sm_37`–`sm_86`, the 470 datacenter sweep), then only the
+- **`ollama37` (~1 GB)** — a multi-stage build. Two CMake builds run *inside* the builder
+  (upstream's split: the `cpu` preset installs `llama-server` and the core libraries, the
+  `llama_cuda_v11_linux` preset installs the GPU backend with native CUBIN for `sm_37`–`sm_86`,
+  the 470 datacenter sweep), then only the
   artifacts — the `ollama` binary, the GGML/CUDA libraries, the bundled CUDA runtime libs
   (cuBLAS, cuBLASLt, cudart), and the GCC 10 runtime libs — are copied onto a slim
   `rockylinux:8-minimal` base. This is the image published to Docker Hub.

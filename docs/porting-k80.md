@@ -7,10 +7,12 @@ easily skipped — is about *confirming it's actually faster*.
 
 ## 1. Port the source; don't adapt the environment
 
-Vendor the upstream files into our tree and rewrite each one to compile with the
-**existing** toolchain (nvcc 11.4 / GCC 10 / C++17 / sm_37, with cuBLAS or SIMT
-fallbacks where tensor cores would be used). Mirror how `ml/backend/ggml` already vendors
-and patches ggml in-tree.
+llama.cpp is no longer vendored in-tree. The build fetches the ref named by
+`LLAMA_CPP_VERSION`, applies upstream's `llama/compat/` patches, then the fork's numbered
+`llama/compat-k80/` series (see [upstream-sync.md](./upstream-sync.md)). Port the source by
+adding a patch that makes the upstream file compile and run with the **existing** toolchain
+(nvcc 11.4 / GCC 10 / C++17 / sm_37, with cuBLAS or SIMT fallbacks where tensor cores would
+be used).
 
 Do **not** change the builder image, pull upstream source unmodified, or otherwise bend
 the environment to the code. The fork exists to make code run on constrained hardware — if

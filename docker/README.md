@@ -145,12 +145,13 @@ docker/
 
 **Build stage** (FROM ollama37-builder):
 1. Clone/copy ollama37 source
-2. Configure with CMake ("CUDA 11 K80" preset — native CUBIN for sm_37–sm_86, no PTX JIT)
-3. Build C/C++/CUDA libraries (`cmake --build`)
-4. Install artifacts to `dist/` (`cmake --install` with CPU and CUDA components)
+2. Configure and build the CPU payload (`cpu` preset — `llama-server`, core libraries,
+   ggml-cpu variants) and install it to `dist/lib/ollama/`
+3. Configure and build the GPU payload (`llama_cuda_v11_linux` preset — native CUBIN for
+   sm_37–sm_86, no PTX JIT) and install it to `dist/lib/ollama/cuda_v11/`
    - Automatically bundles CUDA runtime libs (cublas, cublasLt, cudart)
    - Strips debug symbols to reduce size
-5. Build Go binary
+4. Build Go binary
 
 **Runtime stage** (FROM rockylinux/rockylinux:8-minimal):
 1. Install ca-certificates
@@ -421,9 +422,10 @@ docker images ollama37:latest
 ### Build fails with "out of memory"
 
 ```bash
-# Edit runtime/Dockerfile line for cmake build
-# Change: cmake --build build -j$(nproc)
-# To: cmake --build build -j2
+# Edit docker/runtime/Dockerfile for the CMake builds
+# Change: cmake --build build/llama-server-cpu --target llama-server ... -j$(nproc)
+# To: cmake --build build/llama-server-cpu --target llama-server ... -j2
+# (same for the build/llama-server-cuda_v11 step)
 
 # Or set Docker memory limit
 docker build --memory=8g ...
