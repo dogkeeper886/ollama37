@@ -51,10 +51,14 @@ type GPUMetrics struct {
 	// HasModelLayers is true when a loaded model placed layers on this device.
 	HasModelLayers bool `json:"has_model_layers"`
 	// Ghost flags a device carrying physical usage above idle while holding no
-	// model layers — the signature of the 93 MiB ghost allocation (#98/#138)
-	// that wakes an otherwise-idle GPU. NOTE: VRAMUsed is physical and includes
-	// any other process on the device, so treat Ghost as a flag to investigate,
-	// not proof of an ollama-created context.
+	// model layers, with at least one model loaded elsewhere — the signature of
+	// the 93 MiB ghost allocation (#98/#138) that wakes an otherwise-idle GPU.
+	// It is not set when the server is idle: the llama-server engine opens a
+	// CUDA context (~112 MB on a K80) on every device for discovery and memory
+	// queries, so the flag would otherwise fire on every card at startup.
+	// NOTE: VRAMUsed is physical and includes any other process on the device,
+	// so treat Ghost as a flag to investigate, not proof of an ollama-created
+	// context.
 	Ghost bool `json:"ghost,omitempty"`
 }
 
@@ -230,7 +234,7 @@ func attributeGPUUsage(gpus []GPUMetrics, models []ModelMetrics) {
 			g.VRAMUnaccounted = g.VRAMUsed - g.VRAMAccounted
 		}
 		g.HasModelLayers = layersByGPU[g.ID]
-		if !g.HasModelLayers && g.VRAMUsed > idleBaselineBytes {
+		if len(models) > 0 && !g.HasModelLayers && g.VRAMUsed > idleBaselineBytes {
 			g.Ghost = true
 		}
 	}
