@@ -2027,7 +2027,10 @@ func TestAppendBatchArgs(t *testing.T) {
 }
 
 func TestAppendFlashAttentionArgs(t *testing.T) {
-	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 8, ComputeMinor: 9}}
+	// Fork: this build uses CUDA 11.4 (to keep sm_37 alive), where only Volta
+	// (cc 7.0) has a fully working FA path (#385). The fixtures use Volta as
+	// the FA-capable device; Turing/Ampere are FA-incapable under 11.4.
+	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 7, ComputeMinor: 0}}
 	oldGPU := []ml.DeviceInfo{
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0},

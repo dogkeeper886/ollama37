@@ -288,19 +288,17 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 }
 
 func cudaFlashAttentionSupported(gpu DeviceInfo) bool {
-	if gpu.Library != "CUDA" ||
-		gpu.ComputeMajor < 6 ||
-		(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2) {
-		return false
-	}
-
-	if gpu.DriverMajor == 0 {
-		slog.Warn("CUDA driver version unavailable; allowing flash attention based on compute capability",
-			"device", gpu.Description, "compute", gpu.Compute())
-		return true
-	}
-
-	return gpu.DriverMajor >= 7
+	// CUDA: this fork builds with CUDA 11.4 (to keep sm_37 alive). On Turing/Ampere
+	// (cc >= 7.5) the selector routes the dominant attention shapes to MMA_F16, which
+	// needs CUDA 11.8 (movmatrix.sync.aligned) and emits NaN under 11.4 — so FA
+	// crashes there. The VEC kernel does have working sm_75+ device code, but FA is
+	// all-or-nothing per graph, so VEC cannot cover prefill; WMMA is Volta-only and
+	// tile is compiled out for >= Volta. Volta (cc 7.0) is the only cc whose selected
+	// FA path fully works under CUDA 11.4. Upstream allows cc >= 6 (it builds with
+	// CUDA >= 11.8 where MMA works); this is the fork's toolchain adaptation. The
+	// paired CUDA-layer guard is the ggml_cuda_should_use_mma_fattn predicate in
+	// llama/compat-k80. See #385.
+	return gpu.Library == "CUDA" && gpu.ComputeMajor == 7 && gpu.ComputeMinor == 0
 }
 
 type FlashAttentionType int32

@@ -186,19 +186,14 @@ func TestFlashAttentionSupported(t *testing.T) {
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0}},
 		},
 		{
-			name: "cuda compute 6.0 supported",
+			// Fork: CUDA 11.4 build (sm_37 pin) — only Volta has a fully
+			// working FA path; see #385 and cudaFlashAttentionSupported.
+			name: "cuda compute 6.0 unsupported under CUDA 11.4",
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 0}},
-			want: true,
 		},
 		{
-			name: "cuda compute 6.1 supported",
-			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 1}},
-			want: true,
-		},
-		{
-			name: "cuda compute 6.2 supported",
+			name: "cuda compute 6.2 unsupported under CUDA 11.4",
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2}},
-			want: true,
 		},
 		{
 			name: "cuda compute 7.2 unsupported",
@@ -210,14 +205,12 @@ func TestFlashAttentionSupported(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "cuda compute 7.5 supported",
+			name: "cuda compute 7.5 unsupported under CUDA 11.4",
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 7, ComputeMinor: 5}},
-			want: true,
 		},
 		{
-			name: "cuda unknown driver supported by compute",
-			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, ComputeMajor: 8, ComputeMinor: 9}},
-			want: true,
+			name: "cuda compute 8.9 unsupported under CUDA 11.4",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9}},
 		},
 		{
 			name: "cuda unknown compute unsupported",
@@ -246,25 +239,6 @@ func TestFlashAttentionSupported(t *testing.T) {
 	}
 }
 
-func TestFlashAttentionSupportedWarnsWhenCUDADriverUnknown(t *testing.T) {
-	var logs bytes.Buffer
-	oldLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() {
-		slog.SetDefault(oldLogger)
-	})
-
-	gpus := []DeviceInfo{{
-		DeviceID:     DeviceID{Library: "CUDA"},
-		Description:  "NVIDIA RTX",
-		ComputeMajor: 8,
-		ComputeMinor: 9,
-	}}
-
-	if !FlashAttentionSupported(gpus) {
-		t.Fatal("expected unknown-driver modern CUDA GPU to allow flash attention")
-	}
-	if !strings.Contains(logs.String(), "CUDA driver version unavailable") {
-		t.Fatalf("expected unknown driver warning, got %q", logs.String())
-	}
-}
+// Fork: cudaFlashAttentionSupported no longer consults the driver version
+// (Volta-only gate under CUDA 11.4, #385), so the upstream unknown-driver
+// warning test does not apply.
