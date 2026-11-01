@@ -36,11 +36,11 @@ docker run --rm \
     # Server build presets live in llama/server/CMakePresets.json.
     # cpu preset installs the llama-server binary + core libs (OLLAMA_RUNNER_DIR="").
     cmake -S llama/server --preset cpu
-    cmake --build build/llama-server-cpu --preset cpu -j"$(nproc)"
+    cmake --build build/llama-server-cpu --target llama-server --target llama-quantize -j"$(nproc)"
     cmake --install build/llama-server-cpu --component llama-server --strip
     # llama_cuda_v11_linux compiles native sm_37 code for Tesla K80 (CUDA 11.4).
     cmake -S llama/server --preset llama_cuda_v11_linux
-    cmake --build build/llama-server-cuda_v11 --preset llama_cuda_v11_linux -j"$(nproc)"
+    cmake --build build/llama-server-cuda_v11 --target ggml-cuda -j"$(nproc)"
     cmake --install build/llama-server-cuda_v11 --component llama-server --strip
     mkdir -p dist/bin
     go build -ldflags "-X github.com/ollama/ollama/version.Version=${OLLAMA_VERSION}" -o dist/bin/ollama .

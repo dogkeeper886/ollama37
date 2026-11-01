@@ -38,7 +38,7 @@ RUN echo "Build commit: ${GIT_COMMIT}" > /tmp/build-commit
 RUN bash -c 'LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH \
     CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ \
     cmake -S llama/server --preset cpu \
-    && cmake --build build/llama-server-cpu --preset cpu -j$(nproc) \
+    && cmake --build build/llama-server-cpu --target llama-server --target llama-quantize -j$(nproc) \
     && cmake --install build/llama-server-cpu --component llama-server --strip \
     && for lib in /usr/local/lib64/libgomp.so* /usr/lib64/libgomp.so*; do \
         [ -e "$lib" ] && cp -a "$lib" dist/lib/ollama/ || true; \
@@ -52,7 +52,7 @@ RUN bash -c 'LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:/usr/lib64:$LD_LIBR
 RUN bash -c 'LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH \
     CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ \
     cmake -S llama/server --preset llama_cuda_v11_linux \
-    && cmake --build build/llama-server-cuda_v11 --preset llama_cuda_v11_linux -j$(nproc) \
+    && cmake --build build/llama-server-cuda_v11 --target ggml-cuda -j$(nproc) \
     && cmake --install build/llama-server-cuda_v11 --component llama-server --strip'
 
 # Build Go binary
