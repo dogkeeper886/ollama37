@@ -42,9 +42,10 @@ CMake-gated off and filed as an issue, keeping the K80 build green.
 - Patches 0016/0019/0021/0022/0029 → embedded-runner/Windows infra, gone
   with the old engine.
 - Model architectures (qwen3.5/DeltaNet, gemma4, lfm2) → native in b11963.
-  Verify `gated_delta_net` non-MMA path covers sm_37 at Phase 5/6
-  (`ggml_cuda_gdn_mma_launch` must decline pre-Volta); port the fork's
-  `gated-delta.cu` step kernel only if it does not.
+  DeltaNet sm_37 verified: `select_gdn_mma_path` declines pre-Ampere
+  (`ampere_mma_available` false on cc 370) and falls through to the pure-FP32
+  `gated_delta_net_cuda` step kernel (no wmma/ldmatrix/cp.async/bf16) — no
+  patch needed. Re-confirm at Phase 5/6 on sm37.
 
 ## Scratch verification (no CUDA 11.4 on the workstation)
 
@@ -70,3 +71,6 @@ docker run --rm -v $PWD:/work -w /work kilo-compilecheck:cuda11.4 sh -c \
 
 Regenerating a patch after editing the scratch tree:
 `git add -N <new files> && git diff <base-commit> > ../llama/compat-k80/NNNN-*.patch`
+
+Status: 1000–1003 compile-verified together (b11963 + llama/compat + all four)
+under nvcc 11.4.3 / sm_37 — `ggml-cuda` target green.
