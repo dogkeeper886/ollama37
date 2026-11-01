@@ -1,6 +1,6 @@
 # Ollama37 Builder Image
 # This image provides the complete build environment for compiling Ollama with Tesla K80 (compute 3.7) support
-# Includes: CUDA 11.4, GCC 10, CMake 4, Go 1.25.3
+# Includes: CUDA 11.4, GCC 10, CMake 4, Go 1.26.10
 
 FROM rockylinux/rockylinux:8
 
@@ -53,10 +53,18 @@ RUN dnf -y install openssl-devel\
     && make -j $(nproc)\
     && make install
 
-# Install go 1.25.3
+# Install go 1.26.10
 RUN cd /usr/local\
-    && wget https://go.dev/dl/go1.25.3.linux-amd64.tar.gz\
-    && tar xvf go1.25.3.linux-amd64.tar.gz
+    && wget https://go.dev/dl/go1.26.10.linux-amd64.tar.gz\
+    && tar xvf go1.26.10.linux-amd64.tar.gz
+
+# FetchContent / hermetic build policy:
+# llama/server/CMakeLists.txt fetches llama.cpp via FetchContent at configure
+# time, pinned to the immutable GIT_TAG read from LLAMA_CPP_VERSION (b11963).
+# The tag is immutable so CI cannot silently drift.  Offline builds must
+# pre-seed the source: set OLLAMA_LLAMA_CPP_SOURCE to a local llama.cpp tree,
+# or set FETCHCONTENT_SOURCE_DIR_LLAMA_CPP directly — OLLAMA_LLAMA_CPP_SOURCE
+# is honoured by llama/server (see its CMakeLists.txt).
 
 # Setup Go path
 RUN echo 'export PATH="${PATH}:/usr/local/go/bin"' > /etc/profile.d/go.sh
