@@ -132,6 +132,8 @@ endif()
 # apply the patch by hand while iterating on the compat layer.
 set(_ollama_compat_patch_cmd "")
 include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
+# ollama37: K80/Kepler patch series, applied after the upstream compat layer.
+include(${CMAKE_CURRENT_SOURCE_DIR}/../compat-k80/compat-k80.cmake)
 option(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH
     "Skip llama.cpp compat patch application because the source is already prepared"
     OFF)
@@ -148,6 +150,7 @@ elseif(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
             "${_llama_cpp_source_override}")
         execute_process(
             COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND}
+            COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_K80_PATCH_COMMAND}
             WORKING_DIRECTORY "${_llama_cpp_source_override}"
             RESULT_VARIABLE _ollama_compat_patch_result
         )
@@ -157,7 +160,7 @@ elseif(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
                 "${_llama_cpp_source_override}")
         endif()
     else()
-        set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND})
+        set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND} COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_K80_PATCH_COMMAND})
     endif()
 endif()
 
