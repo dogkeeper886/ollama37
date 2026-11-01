@@ -2866,7 +2866,18 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 	}
 	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
 
-	return weights + kvCache
+	// Compute-buffer (graph) headroom: inference allocates intermediate
+	// activation buffers beyond weights + KV that a static estimate cannot
+	// enumerate. Reserve a proxy graph allocation (GQA fan-out over the KV
+	// footprint, the fork's GraphSize fallback) scaled by the K80-calibrated
+	// graph safety multiplier, tunable via OLLAMA_GRAPH_SAFETY_MULTIPLIER.
+	graph := uint64(0)
+	if headDim > 0 {
+		gqa := f.KV().HeadCountMax() / kvHeads
+		graph = uint64(float64(gqa*kvCache/6) * envconfig.GraphSafetyMultiplier())
+	}
+
+	return weights + kvCache + graph
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output
