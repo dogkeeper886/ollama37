@@ -81,6 +81,9 @@ type Scheduler struct {
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
+
+	// metrics counts load/eviction events surfaced by GET /api/metrics (#98)
+	metrics serverMetrics
 }
 
 // loadedModelsForName returns models still owned by loaded runners. The models
@@ -500,6 +503,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				}
 				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
 				runner.unload()
+				s.metrics.evictionsTotal.Add(1)
 				delete(s.loaded, runner.modelKey)
 				s.loadedMu.Unlock()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
@@ -634,6 +638,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		}
 		if err != nil {
 			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
+			s.metrics.loadFailures.Add(1)
 			req.errCh <- err
 			s.loadedMu.Unlock()
 			return false
@@ -673,7 +678,11 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
 			if !requireFull {
-				// No other models loaded, yet we still don't fit, so report an error
+				// No other models loaded, yet we still don't fit, so report an error.
+				// Only count the case that surfaces an error to the user; the retry
+				// path (requireFull=true) does not increment the counter, otherwise
+				// scheduler retries would inflate it (#98).
+				s.metrics.loadRequireFull.Add(1)
 				slog.Info("model is too large for system memory", "requireFull", requireFull)
 				s.activeLoading.Close()
 				s.activeLoading = nil
@@ -684,6 +693,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		}
 
 		slog.Info("Load failed", "model", req.model.ModelPath, "error", err)
+		s.metrics.loadOther.Add(1)
 		s.activeLoading.Close()
 		s.activeLoading = nil
 

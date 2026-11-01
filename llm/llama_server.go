@@ -171,6 +171,10 @@ type llamaServerRunner struct {
 	// Keys are device names from llama-server output (e.g., "CUDA0", "ROCm0", "MTL0").
 	vramByDevice map[string]uint64
 
+	// Per-device VRAM component breakdown (weights/KV/compute buffers) parsed
+	// from llama-server buffer log lines. Keys match vramByDevice.
+	componentsByDevice map[string]VRAMComponents
+
 	// System-reported free VRAM per device at model load time, parsed from
 	// "using device CUDA0 ... - 15221 MiB free" log lines. This reflects
 	// real system state including external VRAM consumers (on platforms where
@@ -994,21 +998,22 @@ func NewLlamaServerRunner(
 	}
 
 	s := &llamaServerRunner{
-		client:           newLlamaServerHTTPClient(),
-		status:           status,
-		options:          opts,
-		modelPath:        modelPath,
-		splitDirs:        splitModel.dirs,
-		mediaMarker:      mediaMarker,
-		vramByDevice:     make(map[string]uint64),
-		systemFreeAtLoad: make(map[string]uint64),
-		gpus:             gpus,
-		metadata:         f,
-		totalLayers:      f.KV().BlockCount() + 1,
-		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
-		sem:              semaphore.NewWeighted(int64(numParallel)),
-		launch:           launch,
-		output:           memWriter,
+		client:             newLlamaServerHTTPClient(),
+		status:             status,
+		options:            opts,
+		modelPath:          modelPath,
+		splitDirs:          splitModel.dirs,
+		mediaMarker:        mediaMarker,
+		vramByDevice:       make(map[string]uint64),
+		componentsByDevice: make(map[string]VRAMComponents),
+		systemFreeAtLoad:   make(map[string]uint64),
+		gpus:               gpus,
+		metadata:           f,
+		totalLayers:        f.KV().BlockCount() + 1,
+		rawEmbeddings:      legacyEmbeddingsWereRaw(f.KV()),
+		sem:                semaphore.NewWeighted(int64(numParallel)),
+		launch:             launch,
+		output:             memWriter,
 	}
 	// Point the memory parsing writer at this runner so values are updated as logs stream in
 	memWriter.runner = s
@@ -1182,6 +1187,9 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 	s.gpuLayerOverflow = 0
 	for k := range s.vramByDevice {
 		delete(s.vramByDevice, k)
+	}
+	for k := range s.componentsByDevice {
+		delete(s.componentsByDevice, k)
 	}
 	for k := range s.systemFreeAtLoad {
 		delete(s.systemFreeAtLoad, k)
@@ -3002,6 +3010,7 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 	var total, gpu, modelFileBacked, cpuMappedModel uint64
 	byDevice := make(map[string]uint64)
+	components := make(map[string]VRAMComponents)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
@@ -3021,7 +3030,18 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 		}
 		if isGPUBuffer(key.backend) {
 			gpu += buffer.bytes
-			byDevice[deviceName(key.backend)] += buffer.bytes
+			name := deviceName(key.backend)
+			byDevice[name] += buffer.bytes
+			c := components[name]
+			switch key.kind {
+			case "model":
+				c.Weights += buffer.bytes
+			case "KV":
+				c.KVCache += buffer.bytes
+			case "compute":
+				c.Graph += buffer.bytes
+			}
+			components[name] = c
 		}
 	}
 
@@ -3030,6 +3050,7 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 	w.runner.memModelFileBacked = modelFileBacked
 	w.runner.memCPUMappedModel = cpuMappedModel
 	w.runner.vramByDevice = byDevice
+	w.runner.componentsByDevice = components
 }
 
 // VRAMByGPU returns the VRAM used by this runner on the specified device.
@@ -3048,4 +3069,28 @@ func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
 		}
 	}
 	return 0
+}
+
+// VRAMComponents breaks a device's VRAM usage into the components
+// llama-server reports in its buffer size log lines.
+type VRAMComponents struct {
+	Weights uint64 // model buffer bytes on device
+	KVCache uint64 // KV buffer bytes
+	Graph   uint64 // compute buffer bytes
+}
+
+// VRAMComponents returns the per-device VRAM component breakdown parsed from
+// llama-server load logs, keyed by ml.DeviceID.ID. Used by the /api/metrics
+// endpoint to expose labeled memory components (#98).
+func (s *llamaServerRunner) VRAMComponents() map[string]VRAMComponents {
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
+	out := make(map[string]VRAMComponents, len(s.gpus))
+	for _, gpu := range s.gpus {
+		if c, ok := s.componentsByDevice[gpu.Name]; ok {
+			out[gpu.DeviceID.ID] = c
+		}
+	}
+	return out
 }
