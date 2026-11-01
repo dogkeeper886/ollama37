@@ -638,14 +638,24 @@ func appendBatchArgs(params []string, opts api.Options, embedding bool, numParal
 }
 
 // LlamaServerFlashAttention resolves the flash-attention mode passed to llama-server.
+//
+// The hardware gate is a safety pin, not just a default: the pre-sync engine
+// disabled flash attention whenever the GPUs could not run it, even when the
+// user asked for it (see #337, #385). Keep that behaviour — on the K80 the FA
+// path is slower at long context, and under CUDA 11.4 the MMA_F16 kernel NaNs
+// on cc >= 7.5.
 func LlamaServerFlashAttention(gpus []ml.DeviceInfo) ml.FlashAttentionType {
 	enabled := envconfig.FlashAttention(false)
 	userSet := enabled == envconfig.FlashAttention(true)
 	if userSet {
-		if enabled {
-			return ml.FlashAttentionEnabled
+		if !enabled {
+			return ml.FlashAttentionDisabled
 		}
-		return ml.FlashAttentionDisabled
+		if !ml.FlashAttentionSupported(gpus) {
+			slog.Warn("flash attention enabled but not supported by gpu; disabling")
+			return ml.FlashAttentionDisabled
+		}
+		return ml.FlashAttentionEnabled
 	}
 
 	if !ml.FlashAttentionSupported(gpus) {

@@ -2095,11 +2095,21 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 			want: []string{"base", "--flash-attn", "off"},
 		},
 		{
-			name: "explicit enable overrides old cuda default",
+			// The fork's hardware gate is a safety pin (#337, #385): an explicit
+			// request does not override it, matching the pre-sync engine which
+			// warned and disabled whenever the GPUs could not run FA.
+			name: "explicit enable is gated by gpu support",
 			env:  "1",
 			set:  true,
 			gpus: oldGPU,
-			want: []string{"base", "--flash-attn", "on"},
+			want: []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name: "invalid value is gated by gpu support",
+			env:  "random",
+			set:  true,
+			gpus: oldGPU,
+			want: []string{"base", "--flash-attn", "off"},
 		},
 	}
 
