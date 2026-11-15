@@ -1,9 +1,10 @@
 # Phase 0 delta analysis — sync to upstream v0.40.16
 
 Generated 2026-11-15 on branch `sync/upstream-v0.40.13` (in-place merge of
-`v0.40.16`, per maintainer request). Feeds Phases 1–3 of the upstream sync
-plan. All findings verified against local git objects; the llama.cpp
-`b12177` scratch re-audit is Phase 3.
+`v0.40.16`, per maintainer request; the branch was renamed
+`sync/upstream-v0.40.16` after the merge to track its target tag). Feeds
+Phases 1–3 of the upstream sync plan. All findings verified against local
+git objects and a read-only checkout of llama.cpp `b12177`.
 
 ## Verified SHAs
 
