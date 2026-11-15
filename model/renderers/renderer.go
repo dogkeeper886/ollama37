@@ -59,6 +59,8 @@ func rendererForName(name string) Renderer {
 		return constructor()
 	}
 	switch name {
+	case "ripple":
+		return &RippleRenderer{}
 	case "qwen3-coder":
 		renderer := &Qwen3CoderRenderer{}
 		return renderer
@@ -71,6 +73,8 @@ func rendererForName(name string) Renderer {
 	case "qwen3.5", "tev1":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
+	case "mimo-v2.6":
+		return &mimoRenderer{useImgTags: RenderImgTags}
 	case "qwen3.8", "d3":
 		return newQwen38Renderer()
 	case "ornith":
