@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
@@ -30,9 +29,10 @@ const (
 )
 
 type Qwen3CoderParser struct {
-	state qwenParserState
-	acc   strings.Builder
-	tools []api.Tool
+	state     qwenParserState
+	acc       strings.Builder
+	tools     []api.Tool
+	callIndex int
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -43,8 +43,20 @@ func (p *Qwen3CoderParser) HasThinkingSupport() bool {
 	return false
 }
 
-func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *Qwen3CoderParser) ThinkingClose() []string {
+	return nil
+}
+
+func (p *Qwen3CoderParser) PreservedTokens() []string {
+	return []string{
+		toolOpenTag,
+		toolCloseTag,
+	}
+}
+
+func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 	return tools // Qwen doesn't modify tools
 }
 
@@ -52,6 +64,18 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 	p.acc.WriteString(s)
 
 	events := p.parseEvents()
+	if done {
+		switch p.state {
+		case qwenParserState_LookingForToolStart:
+			if p.acc.Len() > 0 {
+				events = append(events, qwenEventContent{content: p.acc.String()})
+			}
+		case qwenParserState_CollectingToolContent:
+			events = append(events, qwenEventContent{content: toolOpenTag + p.acc.String()})
+		}
+		p.acc.Reset()
+		p.state = qwenParserState_LookingForToolStart
+	}
 
 	var toolCalls []api.ToolCall
 	var sb strings.Builder
@@ -63,6 +87,8 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
 			}
+			toolCall.Function.Index = p.callIndex
+			p.callIndex++
 			toolCalls = append(toolCalls, toolCall)
 		case qwenEventContent:
 			// TODO(drifkin): if the same turn contains multiple interleaved content
@@ -194,36 +220,6 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 	}
 }
 
-// TODO(drifkin): move this to a shared location
-// longest overlap between suffix of s and prefix of delim
-func overlap(s, delim string) int {
-	max := min(len(delim), len(s))
-	for i := max; i > 0; i-- {
-		if strings.HasSuffix(s, delim[:i]) {
-			return i
-		}
-	}
-	return 0
-}
-
-func trailingWhitespaceLen(s string) int {
-	remaining := s
-	total := 0
-	for len(remaining) > 0 {
-		r, size := utf8.DecodeLastRuneInString(remaining)
-		// if it's an invalid utf8 rune, assume it isn't whitespace
-		if r == utf8.RuneError && size == 1 {
-			break
-		}
-		if !unicode.IsSpace(r) {
-			break
-		}
-		total += size
-		remaining = remaining[:len(remaining)-size]
-	}
-	return total
-}
-
 type XMLFunctionCall struct {
 	XMLName    xml.Name       `xml:"function"`
 	Name       string         `xml:"name,attr"`
@@ -270,12 +266,12 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 		}
 	}
 
-	toolCall.Function.Arguments = make(api.ToolCallFunctionArguments)
+	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
 	for _, parameter := range functionCall.Parameters {
 		// Look up the parameter type if we found the tool
 		var paramType api.PropertyType
 		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
-			if prop, ok := matchedTool.Function.Parameters.Properties[parameter.Name]; ok {
+			if prop, ok := matchedTool.Function.Parameters.Properties.Get(parameter.Name); ok {
 				// Handle anyOf by collecting all types from the union
 				if len(prop.AnyOf) > 0 {
 					for _, anyOfProp := range prop.AnyOf {
@@ -287,7 +283,7 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 			}
 		}
 
-		toolCall.Function.Arguments[parameter.Name] = parseValue(parameter.Value, paramType)
+		toolCall.Function.Arguments.Set(parameter.Name, parseValue(parameter.Value, paramType))
 	}
 
 	return toolCall, nil
@@ -314,7 +310,10 @@ func parseValue(raw string, paramType api.PropertyType) any {
 	// they exist). This follows the reference implementation
 	raw = strings.TrimPrefix(raw, "\n")
 	raw = strings.TrimSuffix(raw, "\n")
+	return parseTypedToolValue(raw, paramType)
+}
 
+func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 	// Check for null first (case-insensitive) - this takes precedence over any type
 	if strings.ToLower(raw) == "null" {
 		return nil
@@ -432,7 +431,7 @@ func transformToXML(raw string) string {
 		groups := qwenTagRegex.FindStringSubmatch(match)
 		tag := groups[1]
 		var escapedValue strings.Builder
-		xml.EscapeText(&escapedValue, []byte(groups[2]))
+		_ = xml.EscapeText(&escapedValue, []byte(groups[2])) // error is always nil for strings.Builder
 		return fmt.Sprintf(`<%s name="%s">`, tag, escapedValue.String())
 	})
 
@@ -440,11 +439,25 @@ func transformToXML(raw string) string {
 	// xml tags we just emitted
 	var out strings.Builder
 	lastIdx := 0
+	parameterDepth := 0
 	for _, loc := range qwenXMLTagRegex.FindAllStringIndex(transformed, -1) {
 		if loc[0] > lastIdx {
 			escapeTextNode(&out, transformed[lastIdx:loc[0]])
 		}
-		out.WriteString(transformed[loc[0]:loc[1]])
+		tag := transformed[loc[0]:loc[1]]
+		switch {
+		case strings.HasPrefix(tag, "<parameter"):
+			parameterDepth++
+		case tag == "</parameter>" && parameterDepth > 0:
+			parameterDepth--
+		}
+		// Only a function-level close ends the call. A parameter can contain
+		// this literal text, but still needs its own closing tag.
+		if tag == "</function>" && parameterDepth > 0 {
+			escapeTextNode(&out, tag)
+		} else {
+			out.WriteString(tag)
+		}
 		lastIdx = loc[1]
 	}
 	if lastIdx < len(transformed) {

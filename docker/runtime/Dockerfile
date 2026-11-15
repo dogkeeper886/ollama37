@@ -21,34 +21,34 @@ RUN cd /usr/local/src \
 # Set working directory for build
 WORKDIR /usr/local/src/ollama37
 
-# Configure build with CMake
-# Use "CUDA 11 K80" preset: compiles native CUBIN for the 470-era datacenter sweep
-# (sm_37/50/52/60/61/70/75/80/86 — Kepler through Ampere), all -real so there's no
-# PTX JIT on container restart. Each GPU loads only its own cubin, so the K80 path is
-# byte-identical; the extra cubins are dead weight other cards never touch.
-# The "CUDA 11" preset embeds PTX instead, requiring ~3-4 min of JIT compilation on
-# every container restart. Native CUBIN eliminates that.
-# Set LD_LIBRARY_PATH during build so CMake can locate GCC 10 runtime libraries
-# and properly link against them (required for C++ standard library and atomics)
+# Upstream splits the payload in two builds (same installDir dist/):
+#   cpu preset (OLLAMA_RUNNER_DIR=""): llama-server binary, llama-quantize,
+#     libggml-base/libggml/libllama/mtmd + ggml-cpu variants -> dist/lib/ollama/
+#   cuda preset (OLLAMA_RUNNER_DIR=cuda_v11): libggml-cuda.so + bundled CUDA
+#     runtime libs -> dist/lib/ollama/cuda_v11/ (runner dir ml/path.go discovers)
+# Both installs merge into one dist/lib/ollama tree, as upstream's root
+# Dockerfile does across its cpu + GPU stages.
+
+# CPU/base build: provides the llama-server binary and core shared libs.
 RUN bash -c 'LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH \
     CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ \
-    cmake --preset "CUDA 11 K80"'
+    cmake -S llama/server --preset cpu \
+    && cmake --build build/llama-server-cpu --target llama-server --target llama-quantize -j$(nproc) \
+    && cmake --install build/llama-server-cpu --component llama-server --strip \
+    && for lib in /usr/local/lib64/libgomp.so* /usr/lib64/libgomp.so*; do \
+        [ -e "$lib" ] && cp -a "$lib" dist/lib/ollama/ || true; \
+    done'
 
-# Build C/C++/CUDA libraries with CMake
-# Compile all GGML CUDA kernels and Ollama native libraries
-# Use all available CPU cores (-j) for parallel compilation to speed up build
+# GPU build: llama_cuda_v11_linux sets OLLAMA_RUNNER_DIR=cuda_v11,
+# CMAKE_CUDA_ARCHITECTURES=37-real;50-real;52-real;60-real;61-real;70-real;75-real;80-real;86-real
+# (native CUBIN — no PTX JIT on container restart, same as the old fork's "CUDA 11 K80" rationale).
+# CUDA 11.4 runtime libs (cublas, cublasLt, cudart) are bundled automatically by
+# llama/server/CMakeLists.txt install(RUNTIME_DEPENDENCIES) rules.
 RUN bash -c 'LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH \
     CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++ \
-    cmake --build build -j$(nproc)'
-
-# Install compiled libraries to dist/ directory
-# cmake --install collects runtime artifacts and their dependencies:
-#   CPU component: ggml-base.so, ggml-cpu*.so variants
-#   CUDA component: ggml-cuda.so + bundled CUDA runtime libs (cublas, cublasLt, cudart)
-# --strip removes debug symbols to reduce library sizes
-# Install destination is controlled by CMakePresets.json installDir: ${sourceDir}/dist
-RUN cmake --install build --component CPU --strip \
-    && cmake --install build --component CUDA --strip
+    cmake -S llama/server --preset llama_cuda_v11_linux \
+    && cmake --build build/llama-server-cuda_v11 --target ggml-cuda -j$(nproc) \
+    && cmake --install build/llama-server-cuda_v11 --component llama-server --strip'
 
 # Build Go binary
 # VCS info is embedded automatically since we cloned from git
@@ -69,9 +69,12 @@ RUN microdnf install -y ca-certificates && microdnf clean all
 # Placed at /usr/bin/ollama so ml/path.go resolves libs at ../lib/ollama = /usr/lib/ollama
 COPY --from=builder /usr/local/src/ollama37/dist/bin/ollama /usr/bin/ollama
 
-# Copy compiled GGML/CUDA libraries (includes bundled CUDA runtime libs)
-# cmake --install already collected: ggml-base.so, ggml-cpu*.so, ggml-cuda.so,
-# libcublas.so, libcublasLt.so, libcudart.so
+# Copy compiled payload (llama-server + core libs from the cpu build, GPU backend
+# + bundled CUDA runtime libs from the cuda build)
+# dist/lib/ollama/: llama-server, llama-quantize, libggml-base.so, libllama.so,
+# libggml-cpu* variants; dist/lib/ollama/cuda_v11/: libggml-cuda.so +
+# cublas/cublasLt/cudart (the runner dir that discover/llama_server.go matches
+# via ^cuda_v\d+$).
 COPY --from=builder /usr/local/src/ollama37/dist/lib/ollama /usr/lib/ollama
 
 # Copy GCC 10 runtime libraries from the builder

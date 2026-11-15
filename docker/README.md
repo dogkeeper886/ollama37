@@ -11,7 +11,7 @@ This Docker build system uses a multi-stage architecture to build and run Ollama
    - CUDA 11.4 toolkit (required for Tesla K80)
    - GCC 10 (built from source, required by CUDA 11.4)
    - CMake 4.0 (built from source)
-   - Go 1.25.3
+   - Go 1.26.10
 
 2. **Runtime Image** (`runtime/Dockerfile`) - Multi-stage build
    - **Build stage**: Compile C/C++/CUDA libraries and Go binary in builder image
@@ -115,7 +115,7 @@ docker exec ollama37 ollama run gemma3:4b "Hello!"
 ```
 docker/
 ├── builder/
-│   └── Dockerfile          # Base image: CUDA 11.4, GCC 10, CMake 4, Go 1.25.3
+│   └── Dockerfile          # Base image: CUDA 11.4, GCC 10, CMake 4, Go 1.26.10
 ├── runtime/
 │   ├── Dockerfile          # Multi-stage: build in builder, ship slim runtime (GitHub source)
 │   └── Dockerfile.local    # Multi-stage: same as above but uses local source code
@@ -134,7 +134,7 @@ docker/
 - CUDA 11.4 toolkit (compilation only, no driver)
 - GCC 10 from source (~60 min build time)
 - CMake 4.0 from source (~8 min build time)
-- Go 1.25.3 binary
+- Go 1.26.10 binary
 - All build dependencies
 
 **Build time:** ~90 minutes (first time), cached thereafter
@@ -145,12 +145,13 @@ docker/
 
 **Build stage** (FROM ollama37-builder):
 1. Clone/copy ollama37 source
-2. Configure with CMake ("CUDA 11 K80" preset — native CUBIN for sm_37–sm_86, no PTX JIT)
-3. Build C/C++/CUDA libraries (`cmake --build`)
-4. Install artifacts to `dist/` (`cmake --install` with CPU and CUDA components)
+2. Configure and build the CPU payload (`cpu` preset — `llama-server`, core libraries,
+   ggml-cpu variants) and install it to `dist/lib/ollama/`
+3. Configure and build the GPU payload (`llama_cuda_v11_linux` preset — native CUBIN for
+   sm_37–sm_86, no PTX JIT) and install it to `dist/lib/ollama/cuda_v11/`
    - Automatically bundles CUDA runtime libs (cublas, cublasLt, cudart)
    - Strips debug symbols to reduce size
-5. Build Go binary
+4. Build Go binary
 
 **Runtime stage** (FROM rockylinux/rockylinux:8-minimal):
 1. Install ca-certificates
@@ -421,9 +422,10 @@ docker images ollama37:latest
 ### Build fails with "out of memory"
 
 ```bash
-# Edit runtime/Dockerfile line for cmake build
-# Change: cmake --build build -j$(nproc)
-# To: cmake --build build -j2
+# Edit docker/runtime/Dockerfile for the CMake builds
+# Change: cmake --build build/llama-server-cpu --target llama-server ... -j$(nproc)
+# To: cmake --build build/llama-server-cpu --target llama-server ... -j2
+# (same for the build/llama-server-cuda_v11 step)
 
 # Or set Docker memory limit
 docker build --memory=8g ...

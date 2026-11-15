@@ -2,6 +2,11 @@
 # Usage: OLLAMA_VERSION=<version> ./build-local.sh [--clean]
 #   --clean  delete build/ first: CMake reconfigures and every CUDA kernel recompiles.
 #            Absent: reuse build/; only changed sources recompile.
+# Build layout: upstream uses llama/server as the CMake source root. Two builds
+# merge into one payload (as in the upstream root Dockerfile):
+#   cpu preset -> llama-server binary + core libs in dist/lib/ollama/
+#   llama_cuda_v11_linux preset -> gpu backend in dist/lib/ollama/cuda_v11/
+# The Go module at workspace root produces the ollama binary via `go build .`.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -14,7 +19,7 @@ if pgrep -f "^$ROOT/dist/bin/ollama" >/dev/null; then
   echo "build-local: $ROOT/dist/bin/ollama is running; stop it first (systemctl --user stop ollama)" >&2
   exit 1
 fi
-[ "${1:-}" = "--clean" ] && rm -rf "$ROOT/build"
+[ "${1:-}" = "--clean" ] && rm -rf "$ROOT/build/llama-server-cpu" "$ROOT/build/llama-server-cuda_v11"
 
 docker run --rm \
   --user "$(id -u):$(id -g)" \
@@ -28,13 +33,15 @@ docker run --rm \
     mkdir -p "$HOME"
     export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64:/usr/lib64:${LD_LIBRARY_PATH:-}
     export CC=/usr/local/bin/gcc CXX=/usr/local/bin/g++
-    # A configurePresets name from CMakePresets.json: Default, CPU, CUDA, CUDA 11,
-    # CUDA 11 K80, CUDA 12, CUDA 13, JetPack 5, JetPack 6, ROCm, ROCm 6, Vulkan.
-    # Only CUDA 11 K80 compiles native sm_37 code.
-    cmake --preset "CUDA 11 K80"
-    cmake --build build -j"$(nproc)"
-    cmake --install build --component CPU --strip
-    cmake --install build --component CUDA --strip
+    # Server build presets live in llama/server/CMakePresets.json.
+    # cpu preset installs the llama-server binary + core libs (OLLAMA_RUNNER_DIR="").
+    cmake -S llama/server --preset cpu
+    cmake --build build/llama-server-cpu --target llama-server --target llama-quantize -j"$(nproc)"
+    cmake --install build/llama-server-cpu --component llama-server --strip
+    # llama_cuda_v11_linux compiles native sm_37 code for Tesla K80 (CUDA 11.4).
+    cmake -S llama/server --preset llama_cuda_v11_linux
+    cmake --build build/llama-server-cuda_v11 --target ggml-cuda -j"$(nproc)"
+    cmake --install build/llama-server-cuda_v11 --component llama-server --strip
     mkdir -p dist/bin
     go build -ldflags "-X github.com/ollama/ollama/version.Version=${OLLAMA_VERSION}" -o dist/bin/ollama .
   '

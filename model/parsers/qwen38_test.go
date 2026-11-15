@@ -44,8 +44,8 @@ Montréal
 		var content, thinking strings.Builder
 		var calls []api.ToolCall
 
-		parser := ParserForName("qwen3.8")
-		parser.Init(tools, nil)
+		parser := ParserForName("qwen3.5")
+		parser.Init(tools, nil, &api.ThinkValue{Value: true})
 		for i, chunk := range chunks {
 			chunkContent, chunkThinking, chunkCalls, err := parser.Add(chunk, i == len(chunks)-1)
 			if err != nil {
@@ -68,13 +68,13 @@ Montréal
 		if got, want := calls[0].Function.Name, "get_weather"; got != want {
 			t.Fatalf("first tool name = %q, want %q", got, want)
 		}
-		if got, ok := calls[0].Function.Arguments["city"]; !ok || got != "Montréal" {
+		if got, ok := calls[0].Function.Arguments.Get("city"); !ok || got != "Montréal" {
 			t.Fatalf("city argument = %#v, %v; want %q, true", got, ok, "Montréal")
 		}
 		if got, want := calls[1].Function.Name, "set_uv_threshold"; got != want {
 			t.Fatalf("second tool name = %q, want %q", got, want)
 		}
-		if got, ok := calls[1].Function.Arguments["index"]; !ok || got != 5 {
+		if got, ok := calls[1].Function.Arguments.Get("index"); !ok || got != 5 {
 			t.Fatalf("index argument = %#v, %v; want 5, true", got, ok)
 		}
 	}
@@ -110,14 +110,18 @@ func TestQwen38ParserMalformedAndControlLikeContent(t *testing.T) {
 			wantContent:  "ordinary <tool_calling> marker.",
 			wantThinking: "Plan",
 		},
-		// Upstream's "truncated tool call" case is omitted: it relies on the
-		// done-time flush in Qwen3CoderParser, which the fork does not carry.
+		{
+			name:         "truncated tool call",
+			continuation: "Plan</think>Before<tool_call><function=get_weather>",
+			wantContent:  "Before<tool_call><function=get_weather>",
+			wantThinking: "Plan",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := ParserForName("qwen3.8")
-			parser.Init(nil, nil)
+			parser := ParserForName("qwen3.5")
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
 			content, thinking, calls, err := parser.Add(tt.continuation, true)
 			if err != nil {
 				t.Fatal(err)

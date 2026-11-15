@@ -1,7 +1,7 @@
 # Makefile for Ollama37 Docker Build System
 #
 # This Makefile manages the Docker build process:
-#   1. Builder image: Base environment with CUDA 11.4, GCC 10, CMake 4, Go 1.25.3
+#   1. Builder image: Base environment with CUDA 11.4, GCC 10, CMake 4, Go 1.26.10
 #   2. Runtime image: Multi-stage build that compiles in builder, ships slim runtime
 #
 # The runtime Dockerfile handles:
@@ -86,7 +86,7 @@ build-runtime: ensure-builder
 	@echo ""
 	@echo "  This will:"
 	@echo "    - Clone ollama37 source from GitHub"
-	@echo "    - Configure with CMake (CUDA 11 K80 preset)"
+	@echo "    - Configure with CMake (llama_cuda_v11_linux preset)"
 	@echo "    - Compile C/C++/CUDA libraries"
 	@echo "    - Build Go binary"
 	@echo "    - Package slim runtime image (~1 GB)"
@@ -114,7 +114,7 @@ build-runtime-no-cache: ensure-builder
 	@echo "  This will:"
 	@echo "    - Force fresh clone from GitHub"
 	@echo "    - Rebuild all layers without cache"
-	@echo "    - Configure with CMake (CUDA 11 K80 preset)"
+	@echo "    - Configure with CMake (llama_cuda_v11_linux preset)"
 	@echo "    - Compile C/C++/CUDA libraries"
 	@echo "    - Build Go binary with version $(OLLAMA_VERSION)"
 	@echo "    - Package slim runtime image (~1 GB)"
@@ -141,7 +141,7 @@ build-runtime-local: ensure-builder
 	@echo ""
 	@echo "  This will:"
 	@echo "    - Copy local source code to container"
-	@echo "    - Configure with CMake (CUDA 11 K80 preset)"
+	@echo "    - Configure with CMake (llama_cuda_v11_linux preset)"
 	@echo "    - Compile C/C++/CUDA libraries"
 	@echo "    - Build Go binary with version $(OLLAMA_VERSION)"
 	@echo "    - Package slim runtime image (~1 GB)"
@@ -169,7 +169,7 @@ build-runtime-local-no-cache: ensure-builder
 	@echo "  This will:"
 	@echo "    - Copy local source code to container"
 	@echo "    - Rebuild all layers without cache"
-	@echo "    - Configure with CMake (CUDA 11 K80 preset)"
+	@echo "    - Configure with CMake (llama_cuda_v11_linux preset)"
 	@echo "    - Compile C/C++/CUDA libraries"
 	@echo "    - Build Go binary with version $(OLLAMA_VERSION)"
 	@echo "    - Package slim runtime image (~1 GB)"
@@ -236,7 +236,7 @@ help:
 	@echo "  Runtime (Local): $(RUNTIME_DOCKERFILE_LOCAL)"
 	@echo ""
 	@echo "Build Architecture:"
-	@echo "  1. Builder image: Base environment (CUDA 11.4, GCC 10, CMake 4, Go 1.25.3)"
+	@echo "  1. Builder image: Base environment (CUDA 11.4, GCC 10, CMake 4, Go 1.26.10)"
 	@echo "  2. Runtime image: Multi-stage build (compile in builder, ship slim runtime)"
 	@echo "     - Build stage: compile C/C++/CUDA/Go in builder image"
 	@echo "     - Runtime stage: copy artifacts to RockyLinux 8 minimal (~1 GB vs ~10 GB)"

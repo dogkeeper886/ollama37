@@ -26,20 +26,20 @@ const (
 	gemma4ThinkingCloseTag = "<channel|>"
 	gemma4ToolCallOpenTag  = "<|tool_call>"
 	gemma4ToolCallCloseTag = "<tool_call|>"
+	gemma4ToolResponseTag  = "<|tool_response>"
 	gemma4StringDelimiter  = `<|"|>`
 )
 
-var (
-	gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
-	gemma4BareKeyRe      = regexp.MustCompile(`([,{])(\w+):`)
-)
+var gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
 
 type Gemma4Parser struct {
 	state                 Gemma4ParserState
 	buffer                strings.Builder
 	tools                 []api.Tool
+	callIndex             int
 	hasThinkingSupport    bool
 	thinkingEnabled       bool // true when both model supports and user requested thinking
+	contentPrefill        bool // true when the prompt continues assistant content
 	needsChannelNameStrip bool // true when we just entered thinking and need to strip "thought\n"
 }
 
@@ -51,19 +51,44 @@ func (p *Gemma4Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
-func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *Gemma4Parser) ThinkingClose() []string {
+	if p.thinkingEnabled && !p.contentPrefill {
+		return []string{gemma4ThinkingCloseTag}
+	}
+	return nil
+}
+
+func (p *Gemma4Parser) PreservedTokens() []string {
+	return []string{
+		gemma4ThinkingOpenTag,
+		gemma4ThinkingCloseTag,
+		gemma4ToolCallOpenTag,
+		gemma4ToolCallCloseTag,
+		gemma4ToolResponseTag,
+		gemma4StringDelimiter,
+	}
+}
+
+func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 
-	prefill := lastMessage != nil && lastMessage.Role == "assistant"
+	p.contentPrefill = lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Content != ""
 
-	p.thinkingEnabled = p.hasThinkingSupport
+	p.thinkingEnabled = p.HasThinkingSupport() && (thinkValue != nil && thinkValue.Bool())
 
 	if !p.thinkingEnabled {
 		p.state = Gemma4CollectingContent
 		return tools
 	}
 
-	if prefill && lastMessage.Content != "" {
+	if lastMessage != nil && lastMessage.Role == "tool" {
+		p.state = Gemma4CollectingThinking
+		p.needsChannelNameStrip = false
+		return tools
+	}
+
+	if p.contentPrefill {
 		p.state = Gemma4CollectingContent
 		return tools
 	}
@@ -114,6 +139,11 @@ func (p *Gemma4Parser) Add(s string, done bool) (content string, thinking string
 		case gemma4EventContent:
 			contentSb.WriteString(event.content)
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
@@ -319,26 +349,39 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 	case Gemma4IgnoringPostToolCallNoise:
 		// We've observed Gemma 4 occasionally emitting extra <tool_call|> tags
-		// after a valid tool call. We suppress leading close tags in this immediate
-		// post-tool-call state so the extra close tags do not leak into assistant
-		// content.  The tradeoff is that if the model intentionally begins its next
-		// content span with the literal string "<tool_call|>", we will erroneously
-		// treat it as noise and drop it.
+		// after a valid tool call. We suppress those leading control tags in this
+		// immediate post-tool-call state so they do not leak into assistant
+		// content. The tradeoff is that if the model intentionally begins its next
+		// content span with one of those literal strings, we will erroneously
+		// treat it as noise and drop it. We also suppress a leading
+		// <|tool_response> marker here because the updated upstream parser/template
+		// uses it as a post-tool-call boundary.
 		bufStr = strings.TrimLeftFunc(bufStr, unicode.IsSpace)
 		p.buffer.Reset()
 		p.buffer.WriteString(bufStr)
 
-		for strings.HasPrefix(bufStr, gemma4ToolCallCloseTag) {
-			bufStr = strings.TrimLeftFunc(bufStr[len(gemma4ToolCallCloseTag):], unicode.IsSpace)
+		for {
+			switch {
+			case strings.HasPrefix(bufStr, gemma4ToolCallCloseTag):
+				bufStr = strings.TrimLeftFunc(bufStr[len(gemma4ToolCallCloseTag):], unicode.IsSpace)
+			case strings.HasPrefix(bufStr, gemma4ToolResponseTag):
+				bufStr = strings.TrimLeftFunc(bufStr[len(gemma4ToolResponseTag):], unicode.IsSpace)
+			default:
+				p.buffer.Reset()
+				p.buffer.WriteString(bufStr)
+				goto strippedPostToolCallNoise
+			}
+
 			p.buffer.Reset()
 			p.buffer.WriteString(bufStr)
 		}
 
+	strippedPostToolCallNoise:
 		if bufStr == "" {
 			return events, false
 		}
 
-		if strings.HasPrefix(gemma4ToolCallCloseTag, bufStr) {
+		if strings.HasPrefix(gemma4ToolCallCloseTag, bufStr) || strings.HasPrefix(gemma4ToolResponseTag, bufStr) {
 			if done {
 				p.buffer.Reset()
 				p.state = Gemma4CollectingContent
@@ -400,7 +443,7 @@ func gemma4ArgsToJSON(s string) string {
 		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
 	})
 
-	text = gemma4BareKeyRe.ReplaceAllString(text, `$1"$2":`)
+	text = quoteGemma4BareKeys(text)
 
 	for i, value := range quotedStrings {
 		escaped, _ := json.Marshal(value)
@@ -408,6 +451,58 @@ func gemma4ArgsToJSON(s string) string {
 	}
 
 	return text
+}
+
+func quoteGemma4BareKeys(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) + 16)
+
+	for i := 0; i < len(s); {
+		if s[i] == '"' {
+			if end := gemma4JSONQuotedStringEnd(s, i); end != -1 {
+				sb.WriteString(s[i:end])
+				i = end
+				continue
+			}
+		}
+
+		if s[i] != '{' && s[i] != ',' {
+			sb.WriteByte(s[i])
+			i++
+			continue
+		}
+
+		sb.WriteByte(s[i])
+		i++
+
+		spaceStart := i
+		i = gemma4SkipSpace(s, i)
+		sb.WriteString(s[spaceStart:i])
+
+		keyEnd := gemma4BareKeyEnd(s, i)
+		if keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':' {
+			sb.WriteByte('"')
+			sb.WriteString(s[i:keyEnd])
+			sb.WriteByte('"')
+			sb.WriteByte(':')
+			i = keyEnd + 1
+			continue
+		}
+	}
+
+	return sb.String()
+}
+
+func gemma4BareKeyEnd(s string, start int) int {
+	i := start
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			break
+		}
+		i += size
+	}
+	return i
 }
 
 // repairGemma4ToolCallArgs is a best-effort repair after strict parsing fails.
@@ -426,7 +521,7 @@ func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.T
 	return api.ToolCallFunctionArguments{}, errors.New("repair failed to produce valid JSON arguments")
 }
 
-func gemma4ToolProperties(toolName string, tools []api.Tool) map[string]api.ToolProperty {
+func gemma4ToolProperties(toolName string, tools []api.Tool) *api.ToolPropertiesMap {
 	for i := range tools {
 		if tools[i].Function.Name == toolName {
 			return tools[i].Function.Parameters.Properties
@@ -590,7 +685,7 @@ func repairGemma4RawTerminalStringValue(argsStr, toolName string, tools []api.To
 		return "", false
 	}
 
-	for key, prop := range props {
+	for key, prop := range props.All() {
 		if !gemma4PropertyAcceptsString(prop) {
 			continue
 		}
@@ -603,7 +698,7 @@ func repairGemma4RawTerminalStringValue(argsStr, toolName string, tools []api.To
 	return "", false
 }
 
-func repairGemma4RawTerminalStringValueForKey(s, key string, props map[string]api.ToolProperty) (string, bool) {
+func repairGemma4RawTerminalStringValueForKey(s, key string, props *api.ToolPropertiesMap) (string, bool) {
 	for searchStart := 0; searchStart < len(s); {
 		valueStart, ok := gemma4FindValueStartForKey(s, key, searchStart)
 		if !ok {
@@ -659,7 +754,7 @@ func gemma4FindValueStartForKey(s, key string, searchStart int) (int, bool) {
 	return 0, false
 }
 
-func gemma4RawStringValueEnd(s string, start int, props map[string]api.ToolProperty) int {
+func gemma4RawStringValueEnd(s string, start int, props *api.ToolPropertiesMap) int {
 	for i := start; i < len(s); i++ {
 		if s[i] != ',' {
 			continue
@@ -680,7 +775,7 @@ func gemma4RawStringValueEnd(s string, start int, props map[string]api.ToolPrope
 
 		colon := gemma4SkipSpace(s, keyEnd)
 		if colon < len(s) && s[colon] == ':' {
-			if _, ok := props[s[keyStart:keyEnd]]; ok {
+			if _, ok := props.Get(s[keyStart:keyEnd]); ok {
 				return i
 			}
 		}

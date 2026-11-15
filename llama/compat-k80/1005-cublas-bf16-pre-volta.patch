@@ -1,0 +1,21 @@
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index e59bea4..97659e6 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -1762,6 +1762,16 @@ static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml
+         }
+     }
+ 
++    // ollama37: cuBLAS BF16 GEMM (CUDA_R_16BF) needs compute capability >= 8.0,
++    // while the BF16 branch above keeps BF16 for small matrices on pre-Volta
++    // (src1->ne[1] <= 128), where the kernels fall back to F32 but cuBLAS does
++    // not. cublasGemmEx then fails with CUBLAS_STATUS_ARCH_MISMATCH on devices
++    // like the Tesla K80 (cc 3.7), aborting llama-server. Pre-Volta NVIDIA has
++    // no fast FP16 either, so pin the compute type to F32 there.
++    if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc < GGML_CUDA_CC_VOLTA) {
++        compute_type = GGML_TYPE_F32;
++    }
++
+     constexpr size_t max_src0_convert_size = 512ull * 1024 * 1024;
+     const size_t src0_f32_size = ggml_nelements(src0) * sizeof(float);
+ 

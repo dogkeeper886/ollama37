@@ -35,17 +35,6 @@ type Qwen35Parser struct {
 	// prompt already opened thinking. Strip at most one such tag.
 	allowLeadingThinkOpenTag bool
 	trimLeadingThinkingSpace bool
-
-	// honorThink makes Init follow the per-request think flag set through
-	// SetThinkValue. ornith leaves it off because its renderer forces thinking on.
-	honorThink bool
-	think      *api.ThinkValue
-}
-
-// SetThinkValue carries the per-request think flag, which the fork's Parser
-// interface does not pass to Init. Only used when honorThink is set.
-func (p *Qwen35Parser) SetThinkValue(think *api.ThinkValue) {
-	p.think = think
 }
 
 func (p *Qwen35Parser) HasToolSupport() bool {
@@ -56,17 +45,30 @@ func (p *Qwen35Parser) HasThinkingSupport() bool {
 	return true
 }
 
-func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
+func (p *Qwen35Parser) ThinkingClose() []string {
+	if p.state == qwen35ParserStateCollectingThinking {
+		return []string{qwen35ThinkingCloseTag}
+	}
+	return nil
+}
+
+func (p *Qwen35Parser) PreservedTokens() []string {
+	return []string{
+		qwen35ThinkingOpenTag,
+		qwen35ThinkingCloseTag,
+		toolOpenTag,
+		toolCloseTag,
+	}
+}
+
+func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.buffer.Reset()
 	p.toolParser = Qwen3CoderParser{}
-	p.toolParser.Init(tools, nil)
+	p.toolParser.Init(tools, nil, nil)
 
-	// The fork's Parser interface carries no per-request think flag, so thinking
-	// follows HasThinkingSupport() (ornith is always a thinking model), matching
-	// how the fork's other thinking parsers (e.g. LFM2Parser) initialize.
-	thinkingEnabled := p.HasThinkingSupport()
-	if p.honorThink && p.think != nil {
-		thinkingEnabled = p.think.Bool()
+	thinkingEnabled := thinkValue != nil && thinkValue.Bool()
+	if thinkValue == nil {
+		thinkingEnabled = true
 	}
 
 	assistantPrefill := lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Content != ""
@@ -142,25 +144,8 @@ func (p *Qwen35Parser) parseEvents() []qwen35Event {
 	return all
 }
 
-// splitAtTag splits p.buffer at the first occurrence of tag. The fork's
-// package-level splitAtTag is bound to *Qwen3VLParser, so this operates on the
-// parser's own buffer directly (same semantics: trim before-right, optionally
-// trim after-left, keep the remainder in the buffer).
 func (p *Qwen35Parser) splitAtTag(tag string, trimAfter bool) (string, string) {
-	split := strings.SplitN(p.buffer.String(), tag, 2)
-	if len(split) == 1 {
-		// tag absent — mirror upstream's guard instead of indexing split[1].
-		p.buffer.Reset()
-		return split[0], ""
-	}
-	before := strings.TrimRightFunc(split[0], unicode.IsSpace)
-	after := split[1]
-	if trimAfter {
-		after = strings.TrimLeftFunc(after, unicode.IsSpace)
-	}
-	p.buffer.Reset()
-	p.buffer.WriteString(after)
-	return before, after
+	return splitAtTag(&p.buffer, tag, trimAfter)
 }
 
 func (p *Qwen35Parser) eatLeadingWhitespaceAndTransitionTo(nextState qwen35ParserState) ([]qwen35Event, bool) {

@@ -18,12 +18,26 @@ type Value struct {
 	value any
 }
 
+// Any returns Value as stored, without conversion. If it is not set, it returns nil.
+func (v Value) Any() any {
+	return v.value
+}
+
 func value[T any](v Value, kinds ...reflect.Kind) (t T) {
 	vv := reflect.ValueOf(v.value)
 	if slices.Contains(kinds, vv.Kind()) {
 		t = vv.Convert(reflect.TypeOf(t)).Interface().(T)
 	}
 	return
+}
+
+func valueOK[T any](v Value, kinds ...reflect.Kind) (t T, ok bool) {
+	vv := reflect.ValueOf(v.value)
+	if !vv.IsValid() || !slices.Contains(kinds, vv.Kind()) {
+		return t, false
+	}
+
+	return vv.Convert(reflect.TypeOf(t)).Interface().(T), true
 }
 
 func values[T any](v Value, kinds ...reflect.Kind) (ts []T) {
@@ -44,6 +58,12 @@ func (v Value) Int() int64 {
 	return value[int64](v, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64)
 }
 
+// IntOK converts a signed integer value to int64 and reports whether the
+// underlying type was signed.
+func (v Value) IntOK() (int64, bool) {
+	return valueOK[int64](v, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64)
+}
+
 // Ints returns Value as a signed integer slice. If it is not a signed integer slice, it returns nil.
 func (v Value) Ints() (i64s []int64) {
 	return values[int64](v, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64)
@@ -52,6 +72,12 @@ func (v Value) Ints() (i64s []int64) {
 // Uint converts an unsigned integer value to uint64. If the value is not a unsigned integer, it returns 0.
 func (v Value) Uint() uint64 {
 	return value[uint64](v, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64)
+}
+
+// UintOK converts an unsigned integer value to uint64 and reports whether the
+// underlying type was unsigned.
+func (v Value) UintOK() (uint64, bool) {
+	return valueOK[uint64](v, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64)
 }
 
 // Uints returns Value as a unsigned integer slice. If it is not a unsigned integer slice, it returns nil.
@@ -64,23 +90,15 @@ func (v Value) Float() float64 {
 	return value[float64](v, reflect.Float32, reflect.Float64)
 }
 
+// FloatOK converts a float value to float64 and reports whether the underlying
+// type was a float.
+func (v Value) FloatOK() (float64, bool) {
+	return valueOK[float64](v, reflect.Float32, reflect.Float64)
+}
+
 // Floats returns Value as a float slice. If it is not a float slice, it returns nil.
 func (v Value) Floats() (f64s []float64) {
 	return values[float64](v, reflect.Float32, reflect.Float64)
-}
-
-// Number returns a numeric Value as a float, and false if it is not a number.
-func (v Value) Number() (float64, bool) {
-	vv := reflect.ValueOf(v.value)
-	switch {
-	case vv.CanInt():
-		return float64(vv.Int()), true
-	case vv.CanUint():
-		return float64(vv.Uint()), true
-	case vv.CanFloat():
-		return vv.Float(), true
-	}
-	return 0, false
 }
 
 // Bool returns Value as a boolean. If it is not a boolean, it returns false.

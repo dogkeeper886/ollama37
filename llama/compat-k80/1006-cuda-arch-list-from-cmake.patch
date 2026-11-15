@@ -1,0 +1,55 @@
+diff --git a/ggml/src/ggml-cuda/CMakeLists.txt b/ggml/src/ggml-cuda/CMakeLists.txt
+index 297d9ff..28ce965 100644
+--- a/ggml/src/ggml-cuda/CMakeLists.txt
++++ b/ggml/src/ggml-cuda/CMakeLists.txt
+@@ -132,6 +132,35 @@ if (CUDAToolkit_FOUND)
+                              ${GGML_SOURCES_CUDA}
+                             )
+ 
++    # ollama37: nvcc < 11.5 never defines __CUDA_ARCH_LIST__, so system_info
++    # omits "CUDA : ARCHS = ..." and ollama cannot filter out GPUs the build has
++    # no cubin for. Emit the same list from CMAKE_CUDA_ARCHITECTURES instead
++    # (3-digit form, matching __CUDA_ARCH_LIST__: cc 3.7 -> 370, 8.6 -> 860).
++    if (CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 11.5
++        AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "native"
++        AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "all")
++        set(_ollama_cuda_arch_list "")
++        foreach(_arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
++            string(REGEX REPLACE "-(real|virtual)$" "" _arch "${_arch}")
++            string(REGEX REPLACE "[a-z]+$" "" _arch "${_arch}")
++            if (_arch MATCHES "^[0-9]+$")
++                math(EXPR _arch3 "${_arch} * 10")
++                if (_ollama_cuda_arch_list STREQUAL "")
++                    set(_ollama_cuda_arch_list "${_arch3}")
++                else()
++                    set(_ollama_cuda_arch_list "${_ollama_cuda_arch_list},${_arch3}")
++                endif()
++            endif()
++        endforeach()
++        if (NOT _ollama_cuda_arch_list STREQUAL "")
++            target_compile_definitions(ggml-cuda PRIVATE
++                GGML_CUDA_ARCH_LIST_OVERRIDE="${_ollama_cuda_arch_list}")
++        endif()
++        unset(_ollama_cuda_arch_list)
++        unset(_arch)
++        unset(_arch3)
++    endif()
++
+     if (GGML_CUDA_GRAPHS)
+         add_compile_definitions(GGML_CUDA_USE_GRAPHS)
+     endif()
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 97659e6..c4a0949 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -6297,6 +6297,10 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t
+ 
+     #ifdef __CUDA_ARCH_LIST__
+         features.push_back({ "ARCHS", STRINGIFY(__CUDA_ARCH_LIST__) });
++    #elif defined(GGML_CUDA_ARCH_LIST_OVERRIDE)
++        // ollama37: nvcc < 11.5 does not define __CUDA_ARCH_LIST__; the build
++        // passes the same list via CMake (see ggml/src/ggml-cuda/CMakeLists.txt).
++        features.push_back({ "ARCHS", GGML_CUDA_ARCH_LIST_OVERRIDE });
+     #endif
+ 
+     #ifdef GGML_CUDA_FORCE_MMQ

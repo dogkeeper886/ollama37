@@ -1,0 +1,50 @@
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index fe001a0..27218b2 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -506,17 +506,41 @@ if (GGML_CPU_ALL_VARIANTS)
+         ggml_add_cpu_backend_variant(cannonlake         SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI)
+         ggml_add_cpu_backend_variant(cascadelake        SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VNNI)
+         ggml_add_cpu_backend_variant(icelake            SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI)
++        # ollama37: alderlake/sapphirerapids need -mavxvnni/-mamx-* (GCC 11+);
++        # AVX512_BF16 variants need GCC 11 intrinsics and binutils 2.36
++        # (vdpbf16ps). Guard like the POWER11/z17 variants below so older
++        # toolchains (the CUDA 11.4 pin's GCC 10) skip them instead of failing.
++        include(CheckCXXSourceCompiles)
++        set(_bf16_test "#include <immintrin.h>\nint main() { __m512 a = _mm512_set1_ps(1.0f); __m256i b = _mm256_set1_epi16(2); return (int)_mm512_reduce_add_ps(_mm512_dfp32_bf16_ps(a, b)) ; }")
++        set(_bf16_flags_save ${CMAKE_REQUIRED_FLAGS})
++        set(CMAKE_REQUIRED_FLAGS "-mavx512f -mavx512bw -mavx512vl -mavx512bf16")
++        check_cxx_source_compiles("${_bf16_test}" GGML_CXX_SUPPORTS_AVX512_BF16_CODE)
++        set(CMAKE_REQUIRED_FLAGS ${_bf16_flags_save})
+         if (NOT MSVC)
+             # MSVC 2022 doesn't support BF16 intrinsics without `/arch:AVX10.1` ?!
+             # https://learn.microsoft.com/en-us/cpp/intrinsics/x64-amd64-intrinsics-list?view=msvc-170
+             # https://learn.microsoft.com/en-us/cpp/build/reference/arch-x64?view=msvc-170
+-            ggml_add_cpu_backend_variant(cooperlake     SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VNNI AVX512_BF16)
+-            ggml_add_cpu_backend_variant(zen4           SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16)
++            if (GGML_CXX_SUPPORTS_AVX512_BF16_CODE)
++                ggml_add_cpu_backend_variant(cooperlake     SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VNNI AVX512_BF16)
++                ggml_add_cpu_backend_variant(zen4           SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16)
++            else()
++                message(STATUS "Skipping cooperlake/zen4 backends: compiler/assembler cannot emit AVX512-BF16")
++            endif()
++        endif()
++        check_cxx_compiler_flag("-mavxvnni" GGML_CXX_SUPPORTS_AVX_VNNI_FLAG)
++        if (GGML_CXX_SUPPORTS_AVX_VNNI_FLAG)
++            ggml_add_cpu_backend_variant(alderlake          SSE42 AVX F16C FMA AVX2 BMI2 AVX_VNNI)
++        else()
++            message(STATUS "Skipping alderlake backend: compiler does not support -mavxvnni")
+         endif()
+-        ggml_add_cpu_backend_variant(alderlake          SSE42 AVX F16C FMA AVX2 BMI2 AVX_VNNI)
+         if (NOT MSVC)
+             # MSVC doesn't support AMX
+-            ggml_add_cpu_backend_variant(sapphirerapids SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
++            check_cxx_compiler_flag("-mamx-tile" GGML_CXX_SUPPORTS_AMX_TILE_FLAG)
++            if (GGML_CXX_SUPPORTS_AMX_TILE_FLAG AND GGML_CXX_SUPPORTS_AVX512_BF16_CODE)
++                ggml_add_cpu_backend_variant(sapphirerapids SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
++            else()
++                message(STATUS "Skipping sapphirerapids backend: compiler does not support -mamx-tile")
++            endif()
+         endif()
+     elseif(GGML_SYSTEM_ARCH STREQUAL "ARM")
+         if (CMAKE_SYSTEM_NAME MATCHES "Linux")

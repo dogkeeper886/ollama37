@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -40,44 +41,43 @@ type GPUMetrics struct {
 	LibraryPath string `json:"library_path,omitempty"`
 
 	// Allocation attribution (derived). VRAMUsed is the physical usage on the
-	// device (total - free, from NVML). VRAMAccounted is the sum that loaded
-	// models report placing here. VRAMUnaccounted = used - accounted is
-	// allocation the model layout does not explain — CUDA primary contexts,
-	// "ghost" allocations, or other processes sharing the device.
+	// device (total - free). VRAMAccounted is the sum that loaded models
+	// report placing here. VRAMUnaccounted = used - accounted is allocation
+	// the model buffers do not explain — CUDA primary contexts, "ghost"
+	// allocations, or other processes sharing the device.
 	VRAMUsed        uint64 `json:"vram_used,omitempty"`
 	VRAMAccounted   uint64 `json:"vram_accounted,omitempty"`
 	VRAMUnaccounted uint64 `json:"vram_unaccounted,omitempty"`
 	// HasModelLayers is true when a loaded model placed layers on this device.
-	// The labeled components of the unaccounted memory (context, cuBLAS) are
-	// reported per model in ModelMetrics.VRAMBreakdown (#98), since they are
-	// only measurable in the model-runner process.
 	HasModelLayers bool `json:"has_model_layers"`
 	// Ghost flags a device carrying physical usage above idle while holding no
-	// model layers — the signature of the 93 MiB ghost allocation (#98/#138)
-	// that wakes an otherwise-idle GPU. NOTE: VRAMUsed is physical and includes
-	// any other process on the device, so treat Ghost as a flag to investigate,
-	// not proof of an ollama-created context.
+	// model layers, with at least one model loaded elsewhere — the signature of
+	// the 93 MiB ghost allocation (#98/#138) that wakes an otherwise-idle GPU.
+	// It is not set when the server is idle: the llama-server engine opens a
+	// CUDA context (~112 MB on a K80) on every device for discovery and memory
+	// queries, so the flag would otherwise fire on every card at startup.
+	// NOTE: VRAMUsed is physical and includes any other process on the device,
+	// so treat Ghost as a flag to investigate, not proof of an ollama-created
+	// context.
 	Ghost bool `json:"ghost,omitempty"`
 }
 
 type ModelMetrics struct {
 	Name          string                    `json:"name"`
-	Engine        string                    `json:"engine"`                   // "ollama" | "llamacpp"
-	GPUs          []string                  `json:"gpus"`                     // device IDs
-	VRAMTotal     uint64                    `json:"vram_total"`               // sum across GPUs
+	Engine        string                    `json:"engine"` // "llama-server"
+	GPUs          []string                  `json:"gpus"`   // device IDs
+	VRAMTotal     uint64                    `json:"vram_total"`
 	VRAMByGPU     map[string]uint64         `json:"vram_by_gpu,omitempty"`    // per-device total
-	VRAMBreakdown map[string]*VRAMBreakdown `json:"vram_breakdown,omitempty"` // ollama engine only, keyed by device ID
+	VRAMBreakdown map[string]*VRAMBreakdown `json:"vram_breakdown,omitempty"` // keyed by device ID
 	ContextLength int                       `json:"context_length,omitempty"`
 }
 
-// VRAMBreakdown decomposes VRAM usage into its three components. Only the Go
-// engine (ollamaServer) tracks this; for llamacpp models it is omitted.
+// VRAMBreakdown decomposes a device's VRAM usage into the components
+// llama-server reports at model load (model/KV/compute buffer log lines).
 type VRAMBreakdown struct {
-	Weights uint64 `json:"weights"`           // model weights on GPU
-	KVCache uint64 `json:"kv_cache"`          // K/V attention cache
-	Graph   uint64 `json:"graph"`             // scratch compute buffer
-	Context uint64 `json:"context,omitempty"` // CUDA primary context + driver/kernel baseline (#98)
-	Cublas  uint64 `json:"cublas,omitempty"`  // cuBLAS GEMM workspace (#98)
+	Weights uint64 `json:"weights"`  // model weights on GPU
+	KVCache uint64 `json:"kv_cache"` // K/V attention cache
+	Graph   uint64 `json:"graph"`    // compute buffer
 }
 
 type ErrorCounters struct {
@@ -90,6 +90,12 @@ type ErrorCounters struct {
 type ServerTotals struct {
 	LoadedModels int `json:"loaded_models"`
 	GPUCount     int `json:"gpu_count"`
+}
+
+// vramComponentsReporter is implemented by runners that can break their
+// per-device VRAM down into labeled components (weights/KV/compute).
+type vramComponentsReporter interface {
+	VRAMComponents() map[string]llm.VRAMComponents
 }
 
 func (s *Server) MetricsHandler(c *gin.Context) {
@@ -147,7 +153,8 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 
 	models := make([]ModelMetrics, 0, len(runners))
 	for _, r := range runners {
-		if r.llama == nil || r.model == nil {
+		m := r.model.Load()
+		if r.llama == nil || m == nil {
 			continue
 		}
 
@@ -158,20 +165,20 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			vramByGPU[g.ID] = r.llama.VRAMByGPU(g)
 		}
 
-		m := ModelMetrics{
-			Name:      r.model.ShortName,
-			Engine:    r.llama.Engine(),
-			GPUs:      gpuIDs,
-			VRAMTotal: r.vramSize,
-			VRAMByGPU: vramByGPU,
+		mm := ModelMetrics{
+			Name:          m.ShortName,
+			Engine:        "llama-server",
+			GPUs:          gpuIDs,
+			VRAMTotal:     r.vramSize,
+			VRAMByGPU:     vramByGPU,
+			ContextLength: r.llama.ContextLength(),
 		}
-		if r.Options != nil {
-			m.ContextLength = r.Options.NumCtx
+		if rep, ok := r.llama.(vramComponentsReporter); ok {
+			if breakdown := perGPUBreakdown(rep.VRAMComponents()); breakdown != nil {
+				mm.VRAMBreakdown = breakdown
+			}
 		}
-		if mem := r.llama.MemoryBreakdown(); mem != nil {
-			m.VRAMBreakdown = perGPUBreakdown(mem)
-		}
-		models = append(models, m)
+		models = append(models, mm)
 	}
 
 	attributeGPUUsage(gpus, models)
@@ -227,7 +234,7 @@ func attributeGPUUsage(gpus []GPUMetrics, models []ModelMetrics) {
 			g.VRAMUnaccounted = g.VRAMUsed - g.VRAMAccounted
 		}
 		g.HasModelLayers = layersByGPU[g.ID]
-		if !g.HasModelLayers && g.VRAMUsed > idleBaselineBytes {
+		if len(models) > 0 && !g.HasModelLayers && g.VRAMUsed > idleBaselineBytes {
 			g.Ghost = true
 		}
 	}
@@ -236,20 +243,13 @@ func attributeGPUUsage(gpus []GPUMetrics, models []ModelMetrics) {
 // perGPUBreakdown returns per-device weights/cache/graph. Multi-GPU layouts
 // keep device-level attribution so callers can answer "how much weight memory
 // is on GPU 0" — the reason this endpoint exists.
-func perGPUBreakdown(mem *ml.BackendMemory) map[string]*VRAMBreakdown {
-	if mem == nil || len(mem.GPUs) == 0 {
+func perGPUBreakdown(components map[string]llm.VRAMComponents) map[string]*VRAMBreakdown {
+	if len(components) == 0 {
 		return nil
 	}
-	out := make(map[string]*VRAMBreakdown, len(mem.GPUs))
-	for _, g := range mem.GPUs {
-		b := &VRAMBreakdown{Graph: g.Graph, Context: g.Context, Cublas: g.Cublas}
-		for _, w := range g.Weights {
-			b.Weights += w
-		}
-		for _, c := range g.Cache {
-			b.KVCache += c
-		}
-		out[g.DeviceID.ID] = b
+	out := make(map[string]*VRAMBreakdown, len(components))
+	for id, c := range components {
+		out[id] = &VRAMBreakdown{Weights: c.Weights, KVCache: c.KVCache, Graph: c.Graph}
 	}
 	return out
 }

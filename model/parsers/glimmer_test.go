@@ -13,7 +13,7 @@ func glimmerTestTool(name string, properties map[string]api.ToolProperty) api.To
 		Name: name,
 		Parameters: api.ToolFunctionParameters{
 			Type:       "object",
-			Properties: properties,
+			Properties: testPropsMap(properties),
 		},
 	}}
 }
@@ -27,7 +27,7 @@ func glimmerTestATEM(name, parameters string) string {
 
 func TestGlimmerParserFinalAnswer(t *testing.T) {
 	p := &GlimmerParser{}
-	p.Init(nil, nil)
+	p.Init(nil, nil, nil)
 	content, thinking, calls, err := p.Add(` to=user<|message|>Hello`, true)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestGlimmerParserFinalAnswer(t *testing.T) {
 
 func TestGlimmerParserSelfRecipientIsThinking(t *testing.T) {
 	p := &GlimmerParser{}
-	p.Init(nil, nil)
+	p.Init(nil, nil, nil)
 	content, thinking, calls, err := p.Add(` to=self<|message|>Check the facts.`, true)
 	if err != nil {
 		t.Fatal(err)
@@ -51,8 +51,7 @@ func TestGlimmerParserSelfRecipientIsThinking(t *testing.T) {
 
 func TestGlimmerParserSuppressesThinking(t *testing.T) {
 	p := &GlimmerParser{}
-	p.SetThinkValue(&api.ThinkValue{Value: false})
-	p.Init(nil, nil)
+	p.Init(nil, nil, &api.ThinkValue{Value: false})
 	content, thinking, calls, err := p.Add(
 		` to=self<|message|>Check the facts.<|eom|><|start|>assistant to=user<|message|>Answer<|eot|>`,
 		true,
@@ -77,7 +76,7 @@ func TestGlimmerParserStreamingATEMAtEveryBoundary(t *testing.T) {
 
 	for split := 0; split <= len(input); split++ {
 		p := &GlimmerParser{}
-		p.Init([]api.Tool{tool}, nil)
+		p.Init([]api.Tool{tool}, nil, nil)
 
 		var content, thinking string
 		var calls []api.ToolCall
@@ -97,7 +96,7 @@ func TestGlimmerParserStreamingATEMAtEveryBoundary(t *testing.T) {
 		if calls[0].Function.Name != "get_weather" || calls[0].Function.Index != 0 {
 			t.Fatalf("split %d: unexpected call: %#v", split, calls[0])
 		}
-		if city, ok := argGet(calls[0].Function.Arguments, "city"); !ok || city != "SF" {
+		if city, ok := calls[0].Function.Arguments.Get("city"); !ok || city != "SF" {
 			t.Fatalf("split %d: city = %#v, %v; want SF", split, city, ok)
 		}
 	}
@@ -127,7 +126,7 @@ func TestGlimmerParserATEMValueTypesAndWhitespace(t *testing.T) {
 	)
 
 	p := &GlimmerParser{}
-	p.Init([]api.Tool{tool}, nil)
+	p.Init([]api.Tool{tool}, nil, nil)
 	content, thinking, calls, err := p.Add(input, true)
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +144,7 @@ func TestGlimmerParserATEMValueTypesAndWhitespace(t *testing.T) {
 		"choice":  nil,
 	}
 	for name, expected := range want {
-		got, ok := argGet(calls[0].Function.Arguments, name)
+		got, ok := calls[0].Function.Arguments.Get(name)
 		if !ok || !reflect.DeepEqual(got, expected) {
 			t.Errorf("%s = %#v, %v; want %#v", name, got, ok, expected)
 		}
@@ -164,7 +163,7 @@ func TestGlimmerParserATEMValueMayContainControlTokenText(t *testing.T) {
 	) + `<|eot|>`
 
 	p := &GlimmerParser{}
-	p.Init([]api.Tool{tool}, nil)
+	p.Init([]api.Tool{tool}, nil, nil)
 	content, thinking, calls, err := p.Add(input, true)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +171,7 @@ func TestGlimmerParserATEMValueMayContainControlTokenText(t *testing.T) {
 	if content != "" || thinking != "" || len(calls) != 1 {
 		t.Fatalf("got content=%q thinking=%q calls=%v", content, thinking, calls)
 	}
-	if got, ok := argGet(calls[0].Function.Arguments, "text"); !ok || got != value {
+	if got, ok := calls[0].Function.Arguments.Get("text"); !ok || got != value {
 		t.Fatalf("text = %#v, %v; want %q", got, ok, value)
 	}
 }
@@ -191,7 +190,7 @@ func TestGlimmerParserMultipleMessagesAndIndices(t *testing.T) {
 
 	for split := 0; split <= len(input); split++ {
 		p := &GlimmerParser{}
-		p.Init([]api.Tool{first, second}, nil)
+		p.Init([]api.Tool{first, second}, nil, nil)
 
 		var content, thinking string
 		var calls []api.ToolCall
@@ -231,7 +230,7 @@ func TestGlimmerParserStrayMessageTagInInvokeName(t *testing.T) {
 	) + `<|eot|>`
 
 	p := &GlimmerParser{}
-	p.Init([]api.Tool{tool}, nil)
+	p.Init([]api.Tool{tool}, nil, nil)
 	content, thinking, calls, err := p.Add(input, true)
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +241,7 @@ func TestGlimmerParserStrayMessageTagInInvokeName(t *testing.T) {
 	if calls[0].Function.Name != "read" {
 		t.Fatalf("call name = %q, want %q", calls[0].Function.Name, "read")
 	}
-	if got, ok := argGet(calls[0].Function.Arguments, "path"); !ok || got != "go.mod" {
+	if got, ok := calls[0].Function.Arguments.Get("path"); !ok || got != "go.mod" {
 		t.Fatalf("path = %#v, %v; want %q", got, ok, "go.mod")
 	}
 }
@@ -271,7 +270,7 @@ func TestGlimmerParserMessageTagReplacesInvokeTerminator(t *testing.T) {
 </atem:function_calls><|eot|>`
 
 			p := &GlimmerParser{}
-			p.Init([]api.Tool{tool}, nil)
+			p.Init([]api.Tool{tool}, nil, nil)
 			content, thinking, calls, err := p.Add(input, true)
 			if err != nil {
 				t.Fatal(err)
@@ -282,7 +281,7 @@ func TestGlimmerParserMessageTagReplacesInvokeTerminator(t *testing.T) {
 			if calls[0].Function.Name != "read" {
 				t.Fatalf("call name = %q, want %q", calls[0].Function.Name, "read")
 			}
-			if got, ok := argGet(calls[0].Function.Arguments, "path"); !ok || got != "go.mod" {
+			if got, ok := calls[0].Function.Arguments.Get("path"); !ok || got != "go.mod" {
 				t.Fatalf("path = %#v, %v; want %q", got, ok, "go.mod")
 			}
 		})
@@ -304,7 +303,7 @@ func TestGlimmerParserMessageTagInParamValueUntouched(t *testing.T) {
 	) + `<|eot|>`
 
 	p := &GlimmerParser{}
-	p.Init([]api.Tool{tool}, nil)
+	p.Init([]api.Tool{tool}, nil, nil)
 	_, _, calls, err := p.Add(input, true)
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +311,7 @@ func TestGlimmerParserMessageTagInParamValueUntouched(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("calls = %v, want 1", calls)
 	}
-	if got, ok := argGet(calls[0].Function.Arguments, "text"); !ok || got != value {
+	if got, ok := calls[0].Function.Arguments.Get("text"); !ok || got != value {
 		t.Fatalf("text = %#v, %v; want %q", got, ok, value)
 	}
 }
@@ -334,7 +333,7 @@ func TestGlimmerParserNamespacedSelfReference(t *testing.T) {
 		{"read.read", "read"},
 	} {
 		p := &GlimmerParser{}
-		p.Init([]api.Tool{tool}, nil)
+		p.Init([]api.Tool{tool}, nil, nil)
 		input := ` to=` + tc.recipient + `<|message|>` + glimmerTestATEM(tc.invoke, params) + `<|eot|>`
 		content, thinking, calls, err := p.Add(input, true)
 		if err != nil {
@@ -380,7 +379,7 @@ func TestGlimmerParserNamespaceResolutionStaysStrict(t *testing.T) {
 func TestGlimmerParserRejectsMismatchedATEMInvoke(t *testing.T) {
 	tool := glimmerTestTool("get_weather", nil)
 	p := &GlimmerParser{}
-	p.Init([]api.Tool{tool}, nil)
+	p.Init([]api.Tool{tool}, nil, nil)
 	_, _, _, err := p.Add(
 		` to=get_weather<|message|>`+glimmerTestATEM("read_file", ""),
 		true,
@@ -393,7 +392,7 @@ func TestGlimmerParserRejectsMismatchedATEMInvoke(t *testing.T) {
 func TestGlimmerParserRejectsMalformedATEM(t *testing.T) {
 	tool := glimmerTestTool("get_weather", nil)
 	p := &GlimmerParser{}
-	p.Init([]api.Tool{tool}, nil)
+	p.Init([]api.Tool{tool}, nil, nil)
 	_, _, _, err := p.Add(` to=get_weather<|message|>{"city":"SF"}`, true)
 	if err == nil || !strings.Contains(err.Error(), "function_calls wrapper") {
 		t.Fatalf("error = %v, want missing wrapper", err)
@@ -435,7 +434,7 @@ func TestGlimmerParserFumbledRecipientToolCallFallback(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			p := &GlimmerParser{}
-			p.Init(tools, nil)
+			p.Init(tools, nil, nil)
 			content, thinking, calls, err := p.Add(tc.input, true)
 			if err != nil {
 				t.Fatal(err)
@@ -446,7 +445,7 @@ func TestGlimmerParserFumbledRecipientToolCallFallback(t *testing.T) {
 			if calls[0].Function.Name != "muse.bash" {
 				t.Fatalf("call name = %q, want muse.bash", calls[0].Function.Name)
 			}
-			if command, ok := argGet(calls[0].Function.Arguments, "command"); !ok || command != "pwd && ls -la" {
+			if command, ok := calls[0].Function.Arguments.Get("command"); !ok || command != "pwd && ls -la" {
 				t.Fatalf("command = %#v, %v; want pwd && ls -la", command, ok)
 			}
 		})
@@ -465,7 +464,7 @@ func TestGlimmerParserFumbledRecipientStreaming(t *testing.T) {
 
 	for split := 0; split <= len(input); split++ {
 		p := &GlimmerParser{}
-		p.Init(tools, nil)
+		p.Init(tools, nil, nil)
 
 		var content, thinking string
 		var calls []api.ToolCall
@@ -529,7 +528,7 @@ Done.<|eot|>`,
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			p := &GlimmerParser{}
-			p.Init(tc.tools, nil)
+			p.Init(tc.tools, nil, nil)
 			content, thinking, calls, err := p.Add(tc.input, true)
 			if err != nil {
 				t.Fatal(err)
@@ -543,7 +542,7 @@ Done.<|eot|>`,
 
 func TestGlimmerParserUndeclaredRecipientRemainsContent(t *testing.T) {
 	p := &GlimmerParser{}
-	p.Init(nil, nil)
+	p.Init(nil, nil, nil)
 	body := glimmerTestATEM("not_a_tool", "")
 	content, thinking, calls, err := p.Add(` to=not_a_tool<|message|>`+body, true)
 	if err != nil {
@@ -565,7 +564,7 @@ func TestGlimmerParserImplicitMessageBoundary(t *testing.T) {
 		"<|start|>assistant to=user<|message|>Done<|eot|>"
 
 	p := &GlimmerParser{}
-	p.Init([]api.Tool{tool}, nil)
+	p.Init([]api.Tool{tool}, nil, nil)
 	content, thinking, calls, err := p.Add(input, true)
 	if err != nil {
 		t.Fatal(err)
@@ -577,7 +576,7 @@ func TestGlimmerParserImplicitMessageBoundary(t *testing.T) {
 
 func TestGlimmerParserWithholdsSplitControlToken(t *testing.T) {
 	p := &GlimmerParser{}
-	p.Init(nil, nil)
+	p.Init(nil, nil, nil)
 	content, _, _, err := p.Add(" to=user<|message|>Hello<|eo", false)
 	if err != nil {
 		t.Fatal(err)
@@ -608,7 +607,7 @@ func TestGlimmerParserLiteralStartTokenInMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &GlimmerParser{}
-			p.Init(nil, nil)
+			p.Init(nil, nil, nil)
 			chunks := []string{" to=" + tt.recipient + "<|message|>Use `<", "|", "start", "|>` here."}
 			var content, thinking string
 			for i, chunk := range chunks {
@@ -646,7 +645,7 @@ func FuzzGlimmerParser(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, input string, split uint) {
 		p := &GlimmerParser{}
-		p.Init([]api.Tool{tool}, nil)
+		p.Init([]api.Tool{tool}, nil, nil)
 
 		at := 0
 		if len(input) > 0 {
@@ -673,10 +672,4 @@ func FuzzGlimmerParser(f *testing.F) {
 			lastIndex = call.Function.Index
 		}
 	})
-}
-
-// argGet reads one argument; the fork's arguments are a plain map.
-func argGet(args api.ToolCallFunctionArguments, name string) (any, bool) {
-	v, ok := args[name]
-	return v, ok
 }

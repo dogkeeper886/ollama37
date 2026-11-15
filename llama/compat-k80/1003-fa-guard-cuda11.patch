@@ -1,0 +1,48 @@
+diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
+index 1515572..2e85466 100644
+--- a/ggml/src/ggml-cuda/fattn.cu
++++ b/ggml/src/ggml-cuda/fattn.cu
+@@ -633,8 +633,15 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+     // 192 satisfies % 64 == 0 but has no vec instance (DKQ != DV); force it onto the MMA path.
+     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && Q->ne[0] != 192 && K->ne[1] % FATTN_KQ_STRIDE == 0;
+ 
++    // ollama37 (#385): MMA_F16 FA uses movmatrix.sync.aligned (CUDA 11.8+). On cc >= 750
++    // with CUDA < 11.8 the kernel emits NaN. Restrict to Volta-only or CUDA >= 11.8.
++    bool mma_f16_ok = true;
++    if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_TURING && CUDA_VERSION < 11080) {
++        mma_f16_ok = false;
++    }
++
+     // If Turing tensor cores are available, use them:
+-    if (turing_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
++    if (turing_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72 && mma_f16_ok) {
+         if (can_use_vector_kernel) {
+             if (!ggml_is_quantized(K->type) && !ggml_is_quantized(V->type)) {
+                 // the sparse gather exists only in the MMA kernel: (DKQ, DV, 1, 8) with GQA > 4
+@@ -669,7 +676,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+         gqa_ratio_eff *= 2;
+     }
+ 
+-    if (volta_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
++    if (volta_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72 && mma_f16_ok) {
+         if (can_use_vector_kernel && Q->ne[1] * gqa_ratio_eff <= 2) {
+             return BEST_FATTN_KERNEL_VEC;
+         }
+@@ -680,7 +687,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+     }
+ 
+     // AMD MFMA needs a certain minimum batch size to outscale the tile kernel for large head sizes.
+-    if (amd_mfma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
++    if (amd_mfma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72 && mma_f16_ok) {
+         if ((Q->ne[0] <= 64 && Q->ne[1] * gqa_ratio_eff > 8)) {
+             return BEST_FATTN_KERNEL_MMA_F16;
+         }
+@@ -696,7 +703,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+     }
+ 
+     // AMD WMMA is faster than the tile kernel if the wide tiles with high arithmetic intensity can be utilized.
+-    if ((amd_wmma_available(cc) && gqa_opt_applies && Q->ne[0] <= 256) && Q->ne[0] != 40 && Q->ne[0] != 72 &&
++    if ((amd_wmma_available(cc) && gqa_opt_applies && Q->ne[0] <= 256 && mma_f16_ok) && Q->ne[0] != 40 && Q->ne[0] != 72 &&
+             Q->ne[1] * gqa_ratio_eff > (Q->ne[0] <= 128 ? 8 : 16)) {
+         return BEST_FATTN_KERNEL_MMA_F16;
+     }

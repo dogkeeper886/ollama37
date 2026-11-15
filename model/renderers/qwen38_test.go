@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 const (
@@ -27,7 +28,8 @@ func TestQwen38RendererMatchesReferenceFlows(t *testing.T) {
 		t.Log("VERIFY_JINJA2=1: verifying expected values against the Qwen3.8 Jinja template")
 	}
 
-	weatherArgs := api.ToolCallFunctionArguments{"city": "Montréal"}
+	weatherArgs := api.NewToolCallFunctionArguments()
+	weatherArgs.Set("city", "Montréal")
 	weather := []api.Tool{
 		{
 			Type: "function",
@@ -35,9 +37,12 @@ func TestQwen38RendererMatchesReferenceFlows(t *testing.T) {
 				Name:        "get_weather",
 				Description: "Get weather",
 				Parameters: api.ToolFunctionParameters{
-					Type:       "object",
-					Required:   []string{"city"},
-					Properties: map[string]api.ToolProperty{"city": api.ToolProperty{Type: api.PropertyType{"string"}}},
+					Type:     "object",
+					Required: []string{"city"},
+					Properties: testPropsOrdered([]orderedProp{{
+						Key:   "city",
+						Value: api.ToolProperty{Type: api.PropertyType{"string"}},
+					}}),
 				},
 			},
 		},
@@ -47,9 +52,12 @@ func TestQwen38RendererMatchesReferenceFlows(t *testing.T) {
 				Name:        "get_uv",
 				Description: "Get UV index",
 				Parameters: api.ToolFunctionParameters{
-					Type:       "object",
-					Required:   []string{"city"},
-					Properties: map[string]api.ToolProperty{"city": api.ToolProperty{Type: api.PropertyType{"string"}}},
+					Type:     "object",
+					Required: []string{"city"},
+					Properties: testPropsOrdered([]orderedProp{{
+						Key:   "city",
+						Value: api.ToolProperty{Type: api.PropertyType{"string"}},
+					}}),
 				},
 			},
 		},
@@ -367,14 +375,15 @@ func TestQwen38RendererReasoningEffort(t *testing.T) {
 		think *api.ThinkValue
 		want  string
 	}{
-		// The fork's api.ThinkValue only admits "high", "medium" and "low", so
-		// upstream's "xhigh"/"max"/unknown-string cases cannot reach the renderer.
 		{name: "unset", want: qwen38RefXHigh},
 		{name: "true", think: &api.ThinkValue{Value: true}, want: ""},
 		{name: "false", think: &api.ThinkValue{Value: false}, want: ""},
 		{name: "low", think: &api.ThinkValue{Value: "low"}, want: qwen38RefLow},
 		{name: "medium", think: &api.ThinkValue{Value: "medium"}, want: ""},
+		{name: "xhigh", think: &api.ThinkValue{Value: "xhigh"}, want: qwen38RefXHigh},
+		{name: "future uses renderer default", think: &api.ThinkValue{Value: "future"}, want: qwen38RefXHigh},
 		{name: "high uses renderer default", think: &api.ThinkValue{Value: "high"}, want: qwen38RefXHigh},
+		{name: "max uses renderer default", think: &api.ThinkValue{Value: "max"}, want: qwen38RefXHigh},
 	}
 
 	for _, tt := range tests {
@@ -398,6 +407,11 @@ func TestQwen38RendererRejectsInvalidTranscripts(t *testing.T) {
 	}{
 		{name: "empty", wantErr: "no messages provided"},
 		{
+			name:     "no user query",
+			messages: []api.Message{{Role: "system", Content: "Hello"}},
+			wantErr:  "no user query found in messages",
+		},
+		{
 			name: "system image",
 			messages: []api.Message{
 				{Role: "system", Images: []api.ImageData{{1}}},
@@ -414,22 +428,6 @@ func TestQwen38RendererRejectsInvalidTranscripts(t *testing.T) {
 				t.Fatalf("Render() error = %v, want %q", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-// chatPrompt renders trailing suffixes of the history while fitting the
-// context window; a tool-loop suffix with no user query must still render.
-func TestQwen38RendererRendersToolLoopSuffix(t *testing.T) {
-	messages := []api.Message{
-		{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "get_current_time", Arguments: api.ToolCallFunctionArguments{}}}}},
-		{Role: "tool", Content: "14:05"},
-	}
-	got, err := newQwen38Renderer().Render(messages, nil, &api.ThinkValue{Value: false})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(got, "<tool_response>\n14:05\n</tool_response>") {
-		t.Fatalf("tool response not rendered:\n%s", got)
 	}
 }
 
@@ -468,6 +466,131 @@ Partial`
 	}
 }
 
+func TestQwen38TokenizerMatchesReference(t *testing.T) {
+	modelDir := os.Getenv("QWEN38_MODEL_DIR")
+	if modelDir == "" {
+		t.Skip("set QWEN38_MODEL_DIR to run Qwen3.8 production/reference tokenizer parity")
+	}
+	requireQwen38Jinja(t)
+
+	args := api.NewToolCallFunctionArguments()
+	args.Set("path", "résumé.go")
+	args.Set("options", map[string]any{"indent": 2, "strict": true})
+	tools := []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "read_file",
+			Description: "Read source code",
+			Parameters: api.ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"path"},
+				Properties: testPropsOrdered([]orderedProp{
+					{Key: "path", Value: api.ToolProperty{Type: api.PropertyType{"string"}}},
+					{Key: "options", Value: api.ToolProperty{Type: api.PropertyType{"object"}}},
+				}),
+			},
+		},
+	}}
+
+	renderer := newQwen38Renderer()
+	thinkFalse := &api.ThinkValue{Value: false}
+	cases := []struct {
+		name     string
+		messages []api.Message
+		tools    []api.Tool
+		think    *api.ThinkValue
+	}{
+		{
+			name: "whitespace punctuation contractions and unicode",
+			messages: []api.Message{{
+				Role:    "user",
+				Content: "Don't normalize naïve café — punctuation !\n\tline 2:  x += 1;\n世界 🌍",
+			}},
+			think: thinkFalse,
+		},
+		{
+			name: "tool JSON and source result",
+			messages: []api.Message{
+				{Role: "user", Content: "Read the file."},
+				{Role: "assistant", Thinking: "Need source.", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "read_file", Arguments: args},
+				}}},
+				{Role: "tool", Content: "{\"ok\":true,\"source\":\"func main() {\\n\\tfmt.Println(\\\"héllo\\\")\\n}\"}"},
+			},
+			tools: tools,
+		},
+		{
+			name: "special-token-looking strings",
+			messages: []api.Message{{
+				Role:    "user",
+				Content: "Literal markers: <|im_start|> <|im_end|> <think>not control</think> <|audio_start|>.",
+			}},
+			think: thinkFalse,
+		},
+	}
+
+	prompts := make([]string, 0, len(cases))
+	for _, tc := range cases {
+		prompt, err := renderer.Render(tc.messages, tc.tools, tc.think)
+		if err != nil {
+			t.Fatalf("render %q: %v", tc.name, err)
+		}
+		prompts = append(prompts, prompt)
+	}
+
+	read := func(name string) []byte {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(modelDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return data
+	}
+	production, err := tokenizer.LoadFromBytesWithConfig(read("tokenizer.json"), &tokenizer.TokenizerConfig{
+		ConfigJSON:           read("config.json"),
+		TokenizerConfigJSON:  read("tokenizer_config.json"),
+		GenerationConfigJSON: read("generation_config.json"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	promptsJSON, err := json.Marshal(prompts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `
+import json
+import sys
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(sys.argv[1])
+prompts = json.loads(sys.argv[2])
+print(json.dumps([tokenizer.encode(prompt, add_special_tokens=False) for prompt in prompts]))
+`
+	cmd := qwen38PythonCommand(t, "-c", script, modelDir, string(promptsJSON))
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("reference tokenization failed: %v", err)
+	}
+	var reference [][]int32
+	if err := json.Unmarshal(output, &reference); err != nil {
+		t.Fatalf("decode reference token IDs: %v", err)
+	}
+	if len(reference) != len(cases) {
+		t.Fatalf("reference returned %d cases, want %d", len(reference), len(cases))
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := production.Encode(prompts[i], false)
+			if diff := cmp.Diff(reference[i], got); diff != "" {
+				t.Fatalf("production token IDs differ from reference (-reference +production):\n%s", diff)
+			}
+		})
+	}
+}
+
 type qwen38JinjaMessage struct {
 	Role             string         `json:"role"`
 	Content          any            `json:"content"`
@@ -481,6 +604,10 @@ type qwen38JinjaContentPart struct {
 }
 
 func renderQwen38Jinja(t *testing.T, messages []api.Message, tools []api.Tool, think *api.ThinkValue, effort string) string {
+	return renderQwenJinja(t, qwen38Template, messages, tools, think, effort)
+}
+
+func renderQwenJinja(t *testing.T, template string, messages []api.Message, tools []api.Tool, think *api.ThinkValue, effort string) string {
 	t.Helper()
 
 	jinjaMessages := make([]qwen38JinjaMessage, 0, len(messages))
@@ -513,7 +640,7 @@ func renderQwen38Jinja(t *testing.T, messages []api.Message, tools []api.Tool, t
 		t.Fatal(err)
 	}
 
-	templatePath, err := filepath.Abs(qwen38Template)
+	templatePath, err := filepath.Abs(template)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,6 +702,9 @@ func qwen38PythonCommand(t *testing.T, args ...string) *exec.Cmd {
 }
 
 func findQwen38VenvPython() (string, bool) {
+	if python := os.Getenv("JINJA_PYTHON"); python != "" {
+		return python, true
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", false
