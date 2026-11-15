@@ -68,8 +68,8 @@ upstream.
 
 The 7-patch `llama/compat-k80/` series is **re-audited, not assumed**: clone
 b12177, apply `llama/compat/001` + `1000..1006`, `git apply --check` each,
-compile the touched targets (nvcc 11.4 / sm_37 for 1000/1002/1003/1005/1006,
-GCC 10 `cpu` preset for 1001/1004), and re-run the pre-Volta constraint
+compile the touched targets (nvcc 11.4 / sm_37 for 1000/1001/1002/1003/1005/1006,
+GCC 10 `cpu` preset for 1004), and re-run the pre-Volta constraint
 checklist in `upstream-sync.md` §5 (cublasEx cc≥5.0, BF16 F32 pin, FA
 MMA_F16 CUDA≥11.8, graphs on Kepler, `__CUDA_ARCH_LIST__`, CPU variant
 toolchain guards). Patches that no longer apply are re-based onto b12177
@@ -88,3 +88,24 @@ context; the README manifest is updated row by row.
 | `llm/llama_server_test.go` | Auto-merged. Upstream added a b12111 buffer-kinds case to `TestMemoryParsingWriter`; fork modified `TestAppendFlashAttentionArgs`. Both verified present post-merge. |
 | `server/routes.go` | Auto-merged. Upstream hunk: `autotrust-decision` renderer in `SystemOneHandler`; fork hunk: `/api/metrics` route — verified present. |
 | `server/sched.go` | Auto-merged. Upstream hunk: num_parallel guard removal; fork hunks: `serverMetrics` field + 4 counter sites — verified present. |
+
+## 5. Findings post-merge (2026-11-15)
+
+- **b12177 NCCL allreduce path.** `ggml/CMakeLists.txt` adds
+  `GGML_CUDA_NCCL` (**ON by default**); with it set, `ggml-cuda` calls
+  `ncclCommInitRankConfig` / `ncclConfig_t` (NCCL ≥ 2.17). Hosts with an
+  older distro NCCL (the `kilo-compilecheck:cuda11.4` helper ships one)
+  fail the build. The `ollama37-builder` image has **no NCCL**, so
+  `find_package(NCCL)` degrades to a warning there and the option is inert;
+  keep any rebuilt builder NCCL-free or pass `-DGGML_CUDA_NCCL=OFF`.
+  No patch filed: the K80 build never wants NCCL.
+- **`go test ./...` gate, MLX link.** The `mlx` cgo dlopen layer
+  (`mlx/dynamic.c`, present since before v0.40.13) does not link on the
+  builder's glibc 2.28 (`dlopen` needs `-ldl`; upstream CI's glibc ≥ 2.34
+  has it in libc). Reproduced on pre-merge `c293a5a6a` → **pre-existing,
+  not a merge regression**; the gate runs
+  `go test $(go list ./... | grep -vE 'mlx|mlxrunner')`.
+- **compat-k80 vs b12177.** Full chain (001 + 1000–1006) `git apply --check`
+  green on a fresh b12177 clone after re-basing 1001 (include list gained
+  `batch-get.cuh`); 1000/1002–1006 apply byte-identical. b12177 adds no new
+  x86 CPU variants, so 1004's guard set stays complete (no gcc10 rebuild).

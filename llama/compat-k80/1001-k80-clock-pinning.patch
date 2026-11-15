@@ -83,10 +83,10 @@ index 0000000..ebbedf4
 +void ggml_cuda_k80_clock_free(ggml_backend_cuda_context & ctx);
 \ No newline at end of file
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index 6b36ca9..f60a2f7 100644
+index bc83ea3..8c696f6 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
-@@ -1447,6 +1447,12 @@ struct ggml_backend_cuda_context {
+@@ -1457,6 +1457,12 @@ struct ggml_backend_cuda_context {
      std::string name;
      cudaEvent_t copy_event = nullptr;
  
@@ -100,18 +100,18 @@ index 6b36ca9..f60a2f7 100644
      cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = {};
      void * cublas_workspaces[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = {};
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 6d4e8a3..45e0551 100644
+index dcfac5e..4b72781 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -10,6 +10,7 @@
- #include "ggml-cuda/argmax.cuh"
+@@ -11,6 +11,7 @@
  #include "ggml-cuda/argsort.cuh"
+ #include "ggml-cuda/batch-get.cuh"
  #include "ggml-cuda/binbcast.cuh"
 +#include "ggml-cuda/clock-k80.cuh"
  #include "ggml-cuda/clamp.cuh"
  #include "ggml-cuda/col2im-1d.cuh"
  #include "ggml-cuda/concat.cuh"
-@@ -745,6 +746,8 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
+@@ -746,6 +747,8 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
      std::unique_lock<std::mutex> lock(ggml_cuda_lock);
      ggml_cuda_lock_cv.wait(lock, []{ return ggml_cuda_lock_counter.load(std::memory_order_relaxed) == 0; });
  
@@ -120,7 +120,7 @@ index 6d4e8a3..45e0551 100644
      if (copy_event != nullptr) {
          CUDA_CHECK(cudaEventDestroy(copy_event));
      }
-@@ -4956,6 +4959,9 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -5178,6 +5181,9 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
  
      ggml_cuda_set_device(cuda_ctx->device);
  
