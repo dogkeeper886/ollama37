@@ -66,7 +66,6 @@ In CI:
 | `test-canary.yml` (Canary) | the judge still catches garbage |
 | `test-models.yml` (Models) | every model; one model is an inference test |
 | `test-throughput.yml`, `test-mcp.yml` | run on their own, outside the pipeline |
-| `pr-check.yml` | typecheck and the structure check, on every pull request |
 
 ## The host decides the server under test
 
