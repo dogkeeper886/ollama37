@@ -251,6 +251,9 @@ var (
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
 	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
+	// CacheRAM is the host memory, in MiB, each loaded model may fill with prompt
+	// caches saved from slots that another prompt took; 0 turns them off.
+	CacheRAM = Uint("OLLAMA_CACHE_RAM", 4096)
 )
 
 func Uint64(key string, defaultValue uint64) func() uint64 {
@@ -295,6 +298,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
+		"OLLAMA_CACHE_RAM":         {"OLLAMA_CACHE_RAM", CacheRAM(), "Host memory in MiB per model for saved prompt caches; 0 turns them off (default: 4096)"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_VISION_MAX_PIXELS": {"OLLAMA_VISION_MAX_PIXELS", VisionMaxPixels(), "Max image dimension for vision reservation (default: auto, 2048 with flash, 512 without)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
