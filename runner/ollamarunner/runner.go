@@ -29,6 +29,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -445,6 +446,31 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	s.seqsSem.Release(1)
 }
 
+// promptTail is how many inputs before a prompt's end a recurrent cache also
+// takes a checkpoint, as llama-server does.
+const promptTail = 4
+
+// keepFinishedInputs records on seq's slot the inputs this batch processes for
+// it after seq finished: the token that ended a reply goes through the cache in
+// the batch built while it was sampled. The next prompt that repeats them then
+// resumes after them (#608). A slot another prompt took, or one whose inputs a
+// stop sequence cut, is left alone.
+func keepFinishedInputs(batch input.Batch, seq *Sequence) {
+	slot := seq.cache
+	if slot == nil || slot.InUse || len(seq.pendingInputs) == 0 {
+		return
+	}
+	for i, id := range batch.Sequences {
+		if id == slot.Id {
+			if batch.Positions[i] == int32(len(slot.Inputs)) {
+				slot.Inputs = append(slot.Inputs, seq.pendingInputs...)
+			}
+			break
+		}
+	}
+	seq.pendingInputs = nil
+}
+
 // track batch state between forwardBatch, computeBatch and predictForwardBatch
 
 func (s *Server) run(ctx context.Context) {
@@ -514,6 +540,10 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	var batchInputs []*input.Input
 	var batchOutputs []int32
 	var batch input.Batch
+	// promptEnds are the cache slots that take a checkpoint after this batch:
+	// their prompt ends in it, or ends promptTail inputs after it (#608).
+	var promptEnds []int
+	_, splitTail := s.cache.cache.(kvcache.CheckpointCache)
 
 	resumeSeq := -1
 	seqIdx := s.nextSeq - 1
@@ -588,6 +618,14 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 				}
 			}
 
+			// A later turn often renders the end of this prompt, its generation
+			// prompt, differently: end the batch promptTail inputs early, so a
+			// checkpoint sits just ahead of it.
+			if splitTail && seq.numPredicted == 0 && i > 0 && i == len(seq.inputs)-promptTail && inp.SameBatch == 0 {
+				promptEnds = append(promptEnds, seq.cache.Id)
+				break
+			}
+
 			batchInputs = append(batchInputs, seq.inputs[i])
 			if inp.Multimodal != nil {
 				var mm []input.Multimodal
@@ -604,6 +642,9 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			seq.iBatch = len(batchOutputs)
 			if i+1 == len(seq.inputs) || seq.embeddingOnly {
 				batchOutputs = append(batchOutputs, int32(len(batchInputs)-1))
+			}
+			if i+1 == len(seq.inputs) && seq.numPredicted == 0 {
+				promptEnds = append(promptEnds, seq.cache.Id)
 			}
 			logutil.Trace("forwardBatch iBatch", "batchID", s.batchID, "seqIdx", seqIdx, "seq.iBatch", seq.iBatch, "i+1", i+1, "len(seq.inputs)", len(seq.inputs))
 			seq.pendingInputs = append(seq.pendingInputs, inp)
@@ -637,6 +678,13 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
 	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
 	nextBatch.ctx.SetBatchSize(len(batchInputs))
+	// The next request on a slot most likely diverges after this prompt; a
+	// checkpoint at its end lets that request resume there.
+	if cc, ok := s.cache.cache.(kvcache.CheckpointCache); ok {
+		for _, id := range promptEnds {
+			cc.CheckpointNext(id)
+		}
+	}
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)
@@ -683,6 +731,9 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	iBatches := make([]int, len(s.seqs)) // Record the iBatch values before releasing the lock
 	for i, seq := range s.seqs {
 		iBatches[i] = -1
+		if old := activeBatch.seqs[i]; old != nil && old != seq {
+			keepFinishedInputs(activeBatch.batch, old)
+		}
 		if seq == nil {
 			continue
 		}

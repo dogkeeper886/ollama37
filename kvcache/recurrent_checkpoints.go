@@ -3,6 +3,7 @@ package kvcache
 import (
 	"log/slog"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
@@ -22,12 +23,16 @@ type slotCheckpointStore struct {
 	size    int
 	next    int
 	lastPos int32
+	// tail holds the entries of the latest prompt-end checkpoints, oldest first.
+	tail []int
 }
 
 type checkpointRestore struct {
 	slot int
 	idx  int
 	pos  int32
+	// live: the sequence's live state already ends at pos, so nothing is restored.
+	live bool
 }
 
 func newSlotCheckpointStore(n int) *slotCheckpointStore {
@@ -45,6 +50,7 @@ func (s *slotCheckpointStore) reset() {
 	s.size = 0
 	s.next = 0
 	s.lastPos = -1
+	s.tail = s.tail[:0]
 	for i := range s.entries {
 		s.entries[i].pos = -1
 	}
@@ -57,6 +63,28 @@ func (s *slotCheckpointStore) record(pos int32) int {
 	idx := s.next
 	s.next = (s.next + 1) % len(s.entries)
 	if s.size < len(s.entries) {
+		s.size++
+	}
+	s.entries[idx].pos = pos
+	s.lastPos = pos
+	s.tail = slices.DeleteFunc(s.tail, func(i int) bool { return i == idx })
+	return idx
+}
+
+// recordTail records a prompt-end checkpoint. Past maxTailCheckpoints it reuses
+// the oldest one's entry instead of the ring's next, so the interval checkpoints
+// that reach further back stay.
+func (s *slotCheckpointStore) recordTail(pos int32) int {
+	if len(s.tail) < maxTailCheckpoints {
+		idx := s.record(pos)
+		if idx >= 0 {
+			s.tail = append(s.tail, idx)
+		}
+		return idx
+	}
+	idx := s.tail[0]
+	s.tail = append(s.tail[1:], idx)
+	if s.entries[idx].pos < 0 {
 		s.size++
 	}
 	s.entries[idx].pos = pos
@@ -215,6 +243,7 @@ func (c *Recurrent) checkpointTag() string {
 func (c *Recurrent) planCheckpoints(batch input.Batch) {
 	if c.checkpointCount == 0 || len(c.curSeqs) == 0 {
 		c.curCheckpointPos = c.curCheckpointPos[:0]
+		c.curCheckpointTail = c.curCheckpointTail[:0]
 		for k := range c.curCheckpointSlots {
 			delete(c.curCheckpointSlots, k)
 		}
@@ -228,6 +257,10 @@ func (c *Recurrent) planCheckpoints(batch input.Batch) {
 	}
 	for i := range c.curCheckpointPos {
 		c.curCheckpointPos[i] = -1
+	}
+	c.curCheckpointTail = slices.Grow(c.curCheckpointTail[:0], len(c.curSeqs))[:len(c.curSeqs)]
+	for i := range c.curCheckpointTail {
+		c.curCheckpointTail[i] = false
 	}
 	for k := range c.curCheckpointSlots {
 		delete(c.curCheckpointSlots, k)
@@ -246,16 +279,25 @@ func (c *Recurrent) planCheckpoints(batch input.Batch) {
 		if !ok {
 			continue
 		}
+		tail := !c.reserveCheckpoints && c.checkpointNext[seq]
+		if tail {
+			delete(c.checkpointNext, seq)
+		}
 		if pos < c.checkpointMinPos {
 			continue
 		}
 		slot := c.curSlots[i]
 		store := c.checkpointStore(slot)
 		lastPos := store.lastPos
-		if lastPos < 0 || pos-lastPos >= c.checkpointInterval {
+		if tail || lastPos < 0 || pos-lastPos >= c.checkpointInterval {
 			c.curCheckpointPos[i] = pos
+			c.curCheckpointTail[i] = tail
 		}
 	}
+}
+
+func (c *Recurrent) CheckpointNext(seq int) {
+	c.checkpointNext[seq] = true
 }
 
 func (c *Recurrent) checkpointStore(slot int) *slotCheckpointStore {
@@ -268,7 +310,7 @@ func (c *Recurrent) checkpointStore(slot int) *slotCheckpointStore {
 	return store
 }
 
-func (c *Recurrent) checkpointIndexForSlot(slot int, pos int32) int {
+func (c *Recurrent) checkpointIndexForSlot(slot int, pos int32, tail bool) int {
 	if c.checkpointCount == 0 {
 		return -1
 	}
@@ -276,7 +318,12 @@ func (c *Recurrent) checkpointIndexForSlot(slot int, pos int32) int {
 		return idx
 	}
 	store := c.checkpointStore(slot)
-	idx := store.record(pos)
+	var idx int
+	if tail {
+		idx = store.recordTail(pos)
+	} else {
+		idx = store.record(pos)
+	}
 	if idx >= 0 {
 		c.curCheckpointSlots[slot] = idx
 	}
@@ -307,6 +354,13 @@ func (c *Recurrent) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 	if !ok {
 		return 0, false
 	}
+	// The prompt extends everything the sequence has processed: resume on the
+	// live state instead of re-reading from the checkpoint below it.
+	if pos, ok := c.statePos[seq]; ok && pos == targetPos {
+		c.pendingRestore[seq] = checkpointRestore{slot: slot, idx: -1, pos: targetPos - 1, live: true}
+		slog.Debug(c.checkpointTag()+": live resume", "seq", seq, "slot", slot, "target", targetPos)
+		return targetPos, true
+	}
 	store, ok := c.checkpoints[slot]
 	if !ok {
 		slog.Debug(c.checkpointTag()+": checkpoint miss", "seq", seq, "slot", slot, "target", targetPos, "size", 0)
@@ -329,6 +383,9 @@ func (c *Recurrent) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 }
 
 func (c *Recurrent) applyCheckpointRestore(restore checkpointRestore) error {
+	if restore.live {
+		return nil
+	}
 	entry, ok := c.restoreEntry(restore)
 	if !ok {
 		return ErrNotSupported
@@ -358,6 +415,9 @@ func (c *Recurrent) applyCheckpointRestore(restore checkpointRestore) error {
 }
 
 func (c *Recurrent) restoreComplete(restore checkpointRestore) bool {
+	if restore.live {
+		return true
+	}
 	_, ok := c.restoreEntry(restore)
 	return ok
 }
@@ -415,6 +475,7 @@ func (c *Recurrent) copyCheckpoints(ctx ml.Context, srcSlot, dstSlot int) {
 	dstStore.size = srcStore.size
 	dstStore.next = srcStore.next
 	dstStore.lastPos = srcStore.lastPos
+	dstStore.tail = append(dstStore.tail[:0], srcStore.tail...)
 
 	for i := range srcStore.entries {
 		srcEntry := &srcStore.entries[i]
@@ -457,7 +518,7 @@ func (c *Recurrent) captureConvCheckpoint(ctx ml.Context, layer int, src ml.Tens
 			continue
 		}
 		slot := c.curSlots[i]
-		idx := c.checkpointIndexForSlot(slot, pos)
+		idx := c.checkpointIndexForSlot(slot, pos, c.curCheckpointTail[i])
 		if idx < 0 {
 			continue
 		}
@@ -484,7 +545,7 @@ func (c *Recurrent) captureRecurrentCheckpoint(ctx ml.Context, layer int, src ml
 			continue
 		}
 		slot := c.curSlots[i]
-		idx := c.checkpointIndexForSlot(slot, pos)
+		idx := c.checkpointIndexForSlot(slot, pos, c.curCheckpointTail[i])
 		if idx < 0 {
 			continue
 		}
