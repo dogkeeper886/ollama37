@@ -446,6 +446,10 @@ func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	s.seqsSem.Release(1)
 }
 
+// promptTail is how many inputs before a prompt's end a recurrent cache also
+// takes a checkpoint, as llama-server does.
+const promptTail = 4
+
 // keepFinishedInputs records on seq's slot the inputs this batch processes for
 // it after seq finished: the token that ended a reply goes through the cache in
 // the batch built while it was sampled. The next prompt that repeats them then
@@ -536,8 +540,10 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	var batchInputs []*input.Input
 	var batchOutputs []int32
 	var batch input.Batch
-	// promptEnds are the cache slots whose prompt ends in this batch (#608).
+	// promptEnds are the cache slots that take a checkpoint after this batch:
+	// their prompt ends in it, or ends promptTail inputs after it (#608).
 	var promptEnds []int
+	_, splitTail := s.cache.cache.(kvcache.CheckpointCache)
 
 	resumeSeq := -1
 	seqIdx := s.nextSeq - 1
@@ -610,6 +616,14 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 						return
 					}
 				}
+			}
+
+			// A later turn often renders the end of this prompt, its generation
+			// prompt, differently: end the batch promptTail inputs early, so a
+			// checkpoint sits just ahead of it.
+			if splitTail && seq.numPredicted == 0 && i > 0 && i == len(seq.inputs)-promptTail && inp.SameBatch == 0 {
+				promptEnds = append(promptEnds, seq.cache.Id)
+				break
 			}
 
 			batchInputs = append(batchInputs, seq.inputs[i])

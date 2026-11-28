@@ -90,7 +90,7 @@ func TestPlanCheckpointsCheckpointNext(t *testing.T) {
 // #608: prompt-end checkpoints reuse their own entries, so a run of requests
 // leaves the interval checkpoints that reach further back.
 func TestSlotCheckpointStoreRecordTail(t *testing.T) {
-	store := newSlotCheckpointStore(4)
+	store := newSlotCheckpointStore(8)
 	store.record(1000)
 	store.record(2664)
 	for pos := int32(3000); pos < 3100; pos += 10 {
@@ -108,8 +108,8 @@ func TestSlotCheckpointStoreRecordTail(t *testing.T) {
 	if _, got, ok := store.bestIndex(3090); !ok || got != 3080 {
 		t.Fatalf("best for 3090 = %d, %v; want the tail before it, 3080", got, ok)
 	}
-	if store.size != 4 {
-		t.Fatalf("size = %d, want 4", store.size)
+	if store.size != 2+maxTailCheckpoints {
+		t.Fatalf("size = %d, want %d", store.size, 2+maxTailCheckpoints)
 	}
 
 	// An interval checkpoint that lands on a tail entry takes it over.

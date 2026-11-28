@@ -15,9 +15,10 @@ const (
 	DefaultCheckpointCount    = 24
 	DefaultCheckpointMinPos   = int32(16)
 	DefaultCheckpointInterval = int32(1664)
-	// maxTailCheckpoints is how many prompt-end checkpoints a slot keeps; they
-	// reuse their own entries, so the interval checkpoints keep their reach.
-	maxTailCheckpoints = 2
+	// maxTailCheckpoints is how many prompt-end checkpoints a slot keeps, two
+	// per prompt for its last two prompts; they reuse their own entries, so the
+	// interval checkpoints keep their reach.
+	maxTailCheckpoints = 4
 )
 
 var ErrInvalidRecurrentShape = errors.New("kvcache: invalid recurrent state shape")
