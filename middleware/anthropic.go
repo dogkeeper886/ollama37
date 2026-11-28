@@ -6,11 +6,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/anthropic"
 	"github.com/ollama/ollama/api"
+)
+
+// A streamed request that has had no response for startDelay, while the model loads
+// or reads the prompt, gets message_start and then a ping every pingInterval, so the
+// client sees the stream alive (#608). A quicker failure keeps its HTTP status.
+var (
+	startDelay   = 5 * time.Second
+	pingInterval = 10 * time.Second
 )
 
 // AnthropicWriter wraps the response writer to transform Ollama responses to Anthropic format
@@ -20,6 +30,80 @@ type AnthropicWriter struct {
 	id        string
 	model     string
 	converter *anthropic.StreamConverter
+
+	// mu serializes the handler's writes with keepAlive's.
+	mu sync.Mutex
+	// started: message_start went out with status 200 before the handler responded.
+	started bool
+	// responded: the handler has written its first response; keepAlive stops.
+	responded bool
+	// status is what the handler asked for after started, when 200 was already sent.
+	status int
+}
+
+// keepAlive sends message_start after startDelay without a response, then pings,
+// until the handler responds or done closes.
+func (w *AnthropicWriter) keepAlive(done <-chan struct{}) {
+	wait := startDelay
+	for {
+		select {
+		case <-done:
+			return
+		case <-time.After(wait):
+		}
+
+		w.mu.Lock()
+		// A handler that chose a failure status answers with it.
+		if w.responded || (w.status != 0 && w.status != http.StatusOK) {
+			w.mu.Unlock()
+			return
+		}
+		events := []anthropic.StreamEvent{{Event: "ping", Data: anthropic.PingEvent{Type: "ping"}}}
+		if !w.started {
+			w.started = true
+			w.ResponseWriter.WriteHeader(http.StatusOK)
+			events = w.converter.Start()
+		}
+		for _, e := range events {
+			if err := w.writeEvent(e.Event, e.Data); err != nil {
+				w.mu.Unlock()
+				return
+			}
+		}
+		w.mu.Unlock()
+		wait = pingInterval
+	}
+}
+
+// WriteHeader keeps the status the handler asks for, so that once 200 is sent
+// Write can report a failure as an error event.
+func (w *AnthropicWriter) WriteHeader(code int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.status = code
+	if !w.started {
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (w *AnthropicWriter) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ResponseWriter.Flush()
+}
+
+// writeStreamError sends a failure that came after message_start as an error event.
+func (w *AnthropicWriter) writeStreamError(data []byte) (int, error) {
+	var errData struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &errData); err != nil {
+		return 0, err
+	}
+	if err := w.writeEvent("error", anthropic.NewError(w.status, errData.Error)); err != nil {
+		return 0, err
+	}
+	return len(data), nil
 }
 
 func (w *AnthropicWriter) writeError(data []byte) (int, error) {
@@ -79,6 +163,14 @@ func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
 }
 
 func (w *AnthropicWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.responded = true
+
+	if w.started && w.status != 0 && w.status != http.StatusOK {
+		return w.writeStreamError(data)
+	}
+
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(data)
@@ -144,6 +236,20 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 
 		c.Writer = w
 
+		if !req.Stream {
+			c.Next()
+			return
+		}
+
+		done := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w.keepAlive(done)
+		}()
 		c.Next()
+		close(done)
+		wg.Wait()
 	}
 }

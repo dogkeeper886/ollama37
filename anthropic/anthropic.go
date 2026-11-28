@@ -558,31 +558,40 @@ type StreamEvent struct {
 	Data  any
 }
 
+// Start returns the message_start event the first time it is called, and nothing after.
+// A caller can send it before the model's first response, which then skips it.
+func (c *StreamConverter) Start() []StreamEvent {
+	if !c.firstWrite {
+		return nil
+	}
+	c.firstWrite = false
+
+	return []StreamEvent{{
+		Event: "message_start",
+		Data: MessageStartEvent{
+			Type: "message_start",
+			Message: MessagesResponse{
+				ID:      c.ID,
+				Type:    "message",
+				Role:    "assistant",
+				Model:   c.Model,
+				Content: []ContentBlock{},
+				Usage: Usage{
+					InputTokens:  c.inputTokens,
+					OutputTokens: 0,
+				},
+			},
+		},
+	}}
+}
+
 // Process converts an Ollama ChatResponse to Anthropic streaming events
 func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	var events []StreamEvent
 
 	if c.firstWrite {
-		c.firstWrite = false
 		c.inputTokens = r.Metrics.PromptEvalCount
-
-		events = append(events, StreamEvent{
-			Event: "message_start",
-			Data: MessageStartEvent{
-				Type: "message_start",
-				Message: MessagesResponse{
-					ID:      c.ID,
-					Type:    "message",
-					Role:    "assistant",
-					Model:   c.Model,
-					Content: []ContentBlock{},
-					Usage: Usage{
-						InputTokens:  c.inputTokens,
-						OutputTokens: 0,
-					},
-				},
-			},
-		})
+		events = append(events, c.Start()...)
 	}
 
 	if r.Message.Thinking != "" && !c.thinkingDone {
