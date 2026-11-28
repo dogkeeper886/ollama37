@@ -9,6 +9,8 @@
 #             retag ollama37:latest as dogkeeper886/ollama37:latest. Without it,
 #             only the toolchain and the existing image are checked, and nothing
 #             is retagged: retagging a stale image makes compose serve old code.
+#             It then removes the build cache entries the build wrote: --no-cache
+#             never reads them back, and every other build's cache stays.
 #
 # Knobs:
 #   OLLAMA_VERSION   required with --build; baked into the binary. A build without
@@ -22,6 +24,18 @@ failed=0
 ok()   { printf '  ok    %s\n' "$*"; }
 fail() { printf '  FAIL  %s\n' "$*"; failed=1; }
 in_builder() { docker run --rm ollama37-builder:latest "$@" 2>&1; }
+cache_ids() { docker buildx du --verbose 2>/dev/null | awk '/^ID:/{print $2}' | sort; }
+# Remove the cache entries that are not in $1, one ID per call (the only filter that
+# names one build's entries). An entry goes only after the entries built on it, so
+# repeat until a pass removes nothing. Prints how many are left.
+drop_new_cache() {
+  local left n prev=-1
+  while left=$(comm -13 <(printf '%s\n' "$1") <(cache_ids)); n=$(wc -w <<<"$left"); [ "$n" -gt 0 ] && [ "$n" -ne "$prev" ]; do
+    prev=$n
+    for id in $left; do docker builder prune -a -f --filter "id=$id" >/dev/null 2>&1; done
+  done
+  echo "$n"
+}
 
 echo "builder image"
 docker image inspect ollama37-builder:latest >/dev/null 2>&1 && ok "ollama37-builder:latest exists" || fail "ollama37-builder:latest missing"
@@ -32,6 +46,7 @@ v=$(in_builder go version);                                 [[ "$v" =~ go1\.2[0-
 if [ "${1:-}" = "--build" ]; then
   [ -n "${OLLAMA_VERSION:-}" ] || { echo "build-image: OLLAMA_VERSION is unset; refusing to build a 0.0.0 image" >&2; exit 1; }
   echo "runtime image (building ${OLLAMA_VERSION})"
+  before=$(cache_ids)
   log=$(mktemp)
   if (cd "$ROOT/docker" && OLLAMA_VERSION="$OLLAMA_VERSION" make build-runtime-local-no-cache) >"$log" 2>&1 \
      && grep -q 'Runtime image built successfully' "$log" && ! grep -qE '[Ee]rror:' "$log"; then
@@ -40,6 +55,9 @@ if [ "${1:-}" = "--build" ]; then
     fail "build failed; last lines:"; tail -20 "$log" | sed 's/^/        /'
   fi
   rm -f "$log"
+  new=$(comm -13 <(printf '%s\n' "$before") <(cache_ids) | wc -l)
+  left=$(drop_new_cache "$before")
+  printf '  info  build cache: removed %s entries this build wrote, %s left\n' "$((new - left))" "$left"
 else
   echo "runtime image"
 fi

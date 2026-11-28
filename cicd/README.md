@@ -61,7 +61,7 @@ In CI:
 | Workflow | What it runs |
 |---|---|
 | `pipeline.yml` (Build + Test Pipeline) | build → deploy → canary → models, each only after the one before passed |
-| `build.yml` (Build) | toolchain check; with `build_image`, compile and retag |
+| `build.yml` (Build) | toolchain check; with `build_image`, compile, retag and remove the build cache it wrote |
 | `deploy.yml` (Deploy) | GPU hand-over, container up, health checks, GPU back |
 | `test-canary.yml` (Canary) | the judge still catches garbage |
 | `test-models.yml` (Models) | every model; one model is an inference test |
