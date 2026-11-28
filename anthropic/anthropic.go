@@ -671,6 +671,19 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			}
 		}
 
+		// A thinking model can go from thinking straight to a tool call (#605).
+		if c.thinkingStarted && !c.thinkingDone {
+			c.thinkingDone = true
+			events = append(events, StreamEvent{
+				Event: "content_block_stop",
+				Data: ContentBlockStopEvent{
+					Type:  "content_block_stop",
+					Index: c.contentIndex,
+				},
+			})
+			c.contentIndex++
+		}
+
 		if c.textStarted {
 			events = append(events, StreamEvent{
 				Event: "content_block_stop",
