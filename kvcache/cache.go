@@ -81,4 +81,9 @@ type Cache interface {
 // The returned position is the number of tokens that can be kept (prefix length).
 type CheckpointCache interface {
 	PrepareRestore(seq int, targetPos int32) (int32, bool)
+
+	// CheckpointNext asks for a checkpoint after seq's inputs in the next forward
+	// batch, outside the regular interval: the runner calls it for the batch that
+	// ends a prompt, where the next request on the slot most likely diverges.
+	CheckpointNext(seq int)
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -514,6 +515,8 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	var batchInputs []*input.Input
 	var batchOutputs []int32
 	var batch input.Batch
+	// promptEnds are the cache slots whose prompt ends in this batch (#608).
+	var promptEnds []int
 
 	resumeSeq := -1
 	seqIdx := s.nextSeq - 1
@@ -605,6 +608,9 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			if i+1 == len(seq.inputs) || seq.embeddingOnly {
 				batchOutputs = append(batchOutputs, int32(len(batchInputs)-1))
 			}
+			if i+1 == len(seq.inputs) && seq.numPredicted == 0 {
+				promptEnds = append(promptEnds, seq.cache.Id)
+			}
 			logutil.Trace("forwardBatch iBatch", "batchID", s.batchID, "seqIdx", seqIdx, "seq.iBatch", seq.iBatch, "i+1", i+1, "len(seq.inputs)", len(seq.inputs))
 			seq.pendingInputs = append(seq.pendingInputs, inp)
 		}
@@ -637,6 +643,13 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 	batch.Inputs = nextBatch.ctx.Input().Empty(ml.DTypeI32, len(batchInputs))
 	batch.Outputs = nextBatch.ctx.Input().FromInts(batchOutputs, len(batchOutputs))
 	nextBatch.ctx.SetBatchSize(len(batchInputs))
+	// The next request on a slot most likely diverges after this prompt; a
+	// checkpoint at its end lets that request resume there.
+	if cc, ok := s.cache.cache.(kvcache.CheckpointCache); ok {
+		for _, id := range promptEnds {
+			cc.CheckpointNext(id)
+		}
+	}
 	nextBatch.modelOutput, err = model.Forward(nextBatch.ctx, s.model, batch)
 	if err != nil {
 		err = fmt.Errorf("failed to build graph: %w", err)

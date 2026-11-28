@@ -15,6 +15,9 @@ const (
 	DefaultCheckpointCount    = 24
 	DefaultCheckpointMinPos   = int32(16)
 	DefaultCheckpointInterval = int32(1664)
+	// maxTailCheckpoints is how many prompt-end checkpoints a slot keeps; they
+	// reuse their own entries, so the interval checkpoints keep their reach.
+	maxTailCheckpoints = 2
 )
 
 var ErrInvalidRecurrentShape = errors.New("kvcache: invalid recurrent state shape")
@@ -84,6 +87,13 @@ type Recurrent struct {
 	checkpointConvCtxs  map[int]ml.Context
 	checkpointRecurCtxs map[int]ml.Context
 	checkpointReserved  map[int]struct{}
+	checkpointNext      map[int]bool
+	curCheckpointTail   []bool
+
+	// statePos is, per sequence, the position its live recurrent state has
+	// reached: the next position to process. A restore to that position needs no
+	// checkpoint.
+	statePos map[int]int32
 
 	// current forward batch (derived in StartForward)
 	curSeqs       []int
@@ -118,6 +128,8 @@ func NewRecurrentCache(config RecurrentConfig) *Recurrent {
 		checkpointConvCtxs:  make(map[int]ml.Context),
 		checkpointRecurCtxs: make(map[int]ml.Context),
 		checkpointReserved:  make(map[int]struct{}),
+		checkpointNext:      make(map[int]bool),
+		statePos:            make(map[int]int32),
 	}
 }
 
@@ -130,6 +142,8 @@ func (c *Recurrent) Init(backend ml.Backend, dtype ml.DType, maxSequences, capac
 	c.curCheckpointPos = c.curCheckpointPos[:0]
 	c.curCheckpointSlots = make(map[int]int)
 	c.checkpointReserved = make(map[int]struct{})
+	c.checkpointNext = make(map[int]bool)
+	c.statePos = make(map[int]int32)
 	c.checkpointCtxSize = c.checkpointCount * c.maxSequences
 	if c.checkpointCtxSize < 8 {
 		c.checkpointCtxSize = 8
@@ -304,6 +318,12 @@ func (c *Recurrent) finalizeStartForward(ctx ml.Context, batch input.Batch, rese
 	c.writableError = nil
 	c.reserveCheckpoints = reserve
 	c.planCheckpoints(batch)
+	if !reserve {
+		// A batch holds each sequence's positions in order, so the last one wins.
+		for i, seq := range batch.Sequences {
+			c.statePos[seq] = batch.Positions[i] + 1
+		}
+	}
 }
 
 func (c *Recurrent) setCurSlotsInput(ctx ml.Context) {
@@ -424,6 +444,7 @@ func (c *Recurrent) copyRecurrentState(ctx ml.Context, srcSlot, dstSlot int) {
 func (c *Recurrent) CopyPrefix(srcSeq, dstSeq int, prefixLen int32) {
 	c.kv.CopyPrefix(srcSeq, dstSeq, prefixLen)
 
+	delete(c.statePos, dstSeq)
 	if dstSlot, ok := c.slotForSeq[dstSeq]; ok {
 		if c.validSlot(dstSlot) {
 			c.refCount[dstSlot]--
@@ -443,6 +464,9 @@ func (c *Recurrent) CopyPrefix(srcSeq, dstSeq int, prefixLen int32) {
 	if c.validSlot(srcSlot) {
 		c.slotForSeq[dstSeq] = srcSlot
 		c.refCount[srcSlot]++
+		if pos, ok := c.statePos[srcSeq]; ok {
+			c.statePos[dstSeq] = pos
+		}
 	}
 }
 
@@ -462,6 +486,7 @@ func (c *Recurrent) Remove(seq int, beginIndex, endIndex int32) error {
 			return err
 		}
 		delete(c.pendingRestore, seq)
+		delete(c.statePos, seq)
 
 		slot, ok := c.slotForSeq[seq]
 		if !ok || !c.validSlot(slot) {
@@ -529,11 +554,16 @@ func (c *Recurrent) Remove(seq int, beginIndex, endIndex int32) error {
 	if beginIndex > 0 {
 		restore := c.pendingRestore[seq]
 		delete(c.pendingRestore, seq)
-		return c.applyCheckpointRestore(restore)
+		if err := c.applyCheckpointRestore(restore); err != nil {
+			return err
+		}
+		c.statePos[seq] = restore.pos + 1
+		return nil
 	}
 
 	slot, ok := c.slotForSeq[seq]
 	delete(c.pendingRestore, seq)
+	delete(c.statePos, seq)
 	if !ok {
 		return nil
 	}
