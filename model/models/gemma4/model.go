@@ -70,6 +70,13 @@ func New(c fs.Config) (model.Model, error) {
 
 	vocabulary.EOS = append(vocabulary.EOS, int32(c.Uint("tokenizer.ggml.eot_token_id", 106)))
 
+	// Gemma 4 writes <|tool_response> after <tool_call|> to hand the turn back
+	// for the tool to run. Without it as a stop, the model invents the tool's
+	// output (#600). llama.cpp lists it as an end-of-generation token too.
+	if id := slices.Index(vocabulary.Values, "<|tool_response>"); id >= 0 {
+		vocabulary.EOS = append(vocabulary.EOS, int32(id))
+	}
+
 	// Gemma 4 uses BPE with SentencePiece-style ▁ space markers (not GPT-2 byte-level encoding).
 	// The tokenizer.json has merges and a Replace normalizer (space → ▁), with no pre-tokenizer.
 	t := model.NewBytePairEncodingWithOptions(&vocabulary, []string{},

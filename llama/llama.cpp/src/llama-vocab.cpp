@@ -2385,6 +2385,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                     || t.first == "<|call|>"   // o200k_harmony
                     || t.first == "<end_of_turn>"
                     || t.first == "<turn|>" // gemma4 end-of-turn
+                    || t.first == "<|tool_response>" // gemma4 end of tool call (#600)
                     || t.first == "<|endoftext|>"
                     || t.first == "<|eom_id|>"
                     || t.first == "<EOT>"
